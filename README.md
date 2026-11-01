@@ -62,6 +62,13 @@ The wizard calls the Cloudflare API from the Worker. It does not store the token
 
 Each wizard step checks the current state in Cloudflare, applies the change through the API, and checks again. If the API cannot complete a step, the wizard shows the exact action to take, a link to that Cloudflare dashboard page, and a link to the Cloudflare docs. The admin completes the action and clicks **Check again**, so the wizard never assumes that a manual step worked.
 
+### Updates
+
+The Deploy button copies the repository, so a deployment has no link back to this one. Security patches, such as Better Auth fixes, reach a deployment only when its admin applies them.
+
+- The admin screen compares the running version with the latest GitHub release and links to the written update steps.
+- The admin applies the update by hand. CloudySuite never changes itself.
+
 ### Simplicity goal
 
 Deploying CloudySuite must take fewer steps and fewer decisions than comparable tools such as [QuickInbox](https://github.com/DivinPrince/quickinbox). That means:
@@ -88,11 +95,20 @@ Mail includes:
 - Sending and receiving, threads, search, and attachments.
 - Personal mailboxes, shared mailboxes such as `support@`, and aliases.
 - Labels and rules.
-- Built-in spam filtering.
+- Built-in spam filtering, which works without a key (see [Spam filtering](#spam-filtering)).
 - A short undo window after sending.
 - An installable PWA with web push and offline reading.
 
 Scheduled send and snooze are not in the first release. Native mail apps such as Apple Mail and Outlook are not supported, because they need IMAP and SMTP servers that run outside Workers.
+
+### Spam filtering
+
+Spam filtering works without a Jev key and adds no dependency.
+
+- Each message gets a score from its SPF, DKIM, and DMARC results and a few simple signals in the message.
+- Each mailbox has its own block list and allow list.
+- Each mailbox learns from the messages its users mark as spam.
+- CloudySuite never rejects mail. A message that looks like spam goes to the Spam folder, so a wrong guess loses nothing.
 
 ### Mail import
 
@@ -111,6 +127,10 @@ New import sources add only a reader that yields raw messages. IMAP is the likel
 An admin can add a [Jev](https://docs.typesafe.ai/introduction) API key to enable better spam scoring and advanced rule conditions. Mail, spam filtering, and rules all work without a key. The first release has no other AI features.
 
 Jev is a third-party service. When an admin enables it, CloudySuite sends message content to that service, and the admin screen must say so before the key is saved.
+
+- CloudySuite calls `POST https://api.typesafe.ai/v1/systemone` with a plain `fetch` and the admin's key as a bearer token. It adds no SDK.
+- Jev charges $0.042 per million input tokens, as of November 2026.
+- Jev has no fixed retention period. Zero retention is for enterprise customers only. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you enable it.
 
 ## Design
 
@@ -195,6 +215,8 @@ We build around the TanStack libraries, so that the product is fast for end user
 - Bun as the package manager, workspace manager, script runner, test runner (`bun test`), and formatter (`bun fmt`)
 - oxc for linting
 - Tabler icons
+- postal-mime, to parse raw messages. Writing a MIME parser by hand is error-prone, and this one runs on Workers.
+- Web push uses WebCrypto, with no library.
 - portless for named local development URLs. It needs Node 24 or later and is a development tool only.
 
 Bun is a development tool here. Production code runs on the Workers runtime, so it cannot use Bun-specific APIs. `bun test` also runs on Bun, so a passing test does not prove behaviour that depends on the Workers runtime, such as Durable Objects or the `email()` handler. Run that behaviour on the Workers runtime as well.
@@ -202,9 +224,7 @@ Bun is a development tool here. Production code runs on the Workers runtime, so 
 ## Open questions
 
 - Which wizard steps work through the API with one token, which permissions does that token need, and which steps need a guide instead?
-- How do updates reach a deployment? The Deploy button copies the repository into the deployer's GitHub account, and Better Auth security patches must reach every copy.
-- What does built-in spam filtering use when no Jev key is set?
-- What are Jev's API, pricing, and data-retention terms?
+- Does Cloudflare allow person-to-person mailbox mail on Email Service? Its [FAQ](https://developers.cloudflare.com/email-service/reference/faq/) answers "Can I use Email Service for marketing emails?" with "No. Email Service supports transactional email only." It does not say whether mailbox mail is allowed. Confirm with Cloudflare before the public release.
 - Should an admin also be able to turn an app off for one person or group? The first release turns an app off for the whole organisation.
 
 ## License
