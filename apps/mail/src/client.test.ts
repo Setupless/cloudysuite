@@ -75,10 +75,14 @@ test("the client offers no way to add mail or reach the raw stub", async () => {
     "getBody",
     "getRaw",
     "getThread",
+    "inlineAttachments",
     "listThreads",
     "moveToFolder",
     "moveToTrash",
+    "restore",
     "setFlags",
+    "summary",
+    "threadOfMessage",
   ]);
 });
 
@@ -155,7 +159,7 @@ test("trash, then delete for good, removes every object and can repeat", async (
   expect(await mailbox.deleteForever(selection)).toBe(0);
   expect(bucket.keys()).toHaveLength(2);
 
-  expect(await mailbox.moveToTrash(selection)).toBe(1);
+  expect(await mailbox.moveToTrash(selection)).toHaveLength(1);
   const trash = await mailbox.listThreads({ view: { folder: "trash" } });
   expect(trash.threads.map((thread) => thread.id)).toEqual([result.threadId]);
 

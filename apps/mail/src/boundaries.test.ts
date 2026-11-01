@@ -33,10 +33,19 @@ test("only the access-checked client and ingest import the stub", () => {
   expect(users).toEqual(["apps/mail/src/client.ts", "apps/mail/src/ingest.ts"]);
 });
 
+test("only the access check's own module opens a mailbox for a person", () => {
+  const users = productionFiles()
+    .filter((file) => /\bopenMailbox\(/.test(readFileSync(file, "utf8")))
+    .map((file) => relative(ROOT, file))
+    .sort();
+  expect(users).toEqual(["apps/mail/src/access.ts", "apps/mail/src/client.ts"]);
+});
+
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
     "./client",
+    "./download",
     "./import",
     "./import-api",
     "./ingest",

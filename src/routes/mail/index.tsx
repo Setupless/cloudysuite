@@ -1,4 +1,7 @@
-import { MailHome } from "@cloudysuite/mail";
+import { NoMailbox, redirectToFirstMailbox } from "@cloudysuite/mail";
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/mail/")({ component: MailHome });
+export const Route = createFileRoute("/mail/")({
+  loader: () => redirectToFirstMailbox(),
+  component: () => <NoMailbox user={Route.useRouteContext().user} />,
+});

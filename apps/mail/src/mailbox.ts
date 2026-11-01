@@ -11,6 +11,7 @@ import type {
   BodyRef,
   CommitResult,
   Folder,
+  MailboxSummary,
   MessageFlags,
   MessageId,
   MessageRef,
@@ -64,8 +65,24 @@ export class Mailbox extends DurableObject<Env> {
     return this.#store.setFlags(selection, flags);
   }
 
-  moveToFolder(selection: MessageSelection, folder: Folder): number {
+  moveToFolder(selection: MessageSelection, folder: Folder): MessageRef[] {
     return this.#store.moveToFolder(selection, folder);
+  }
+
+  restore(selection: MessageSelection): MessageRef[] {
+    return this.#store.restore(selection);
+  }
+
+  threadOfMessage(messageId: MessageId): ThreadId | null {
+    return this.#store.threadOfMessage(messageId);
+  }
+
+  summary(): MailboxSummary {
+    return this.#store.summary();
+  }
+
+  inlineAttachmentRefs(messageId: MessageId): AttachmentRef[] {
+    return this.#store.inlineAttachmentRefs(messageId);
   }
 
   bodyRefs(messageId: MessageId): BodyRef[] {

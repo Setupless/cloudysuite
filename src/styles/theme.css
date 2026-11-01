@@ -30,6 +30,11 @@
   --color-qr-ink: #000000;
   --color-qr-paper: #ffffff;
 
+  /* The page a message with its own colours sits on. It stays light in dark mode. */
+  --color-mail-paper: #ffffff;
+  --color-mail-ink: #1c1c1e;
+  --color-mail-link: #0a66d6;
+
   --color-on-avatar: #ffffff;
   --color-avatar-1: #3a6ea5;
   --color-avatar-2: #8a5a83;

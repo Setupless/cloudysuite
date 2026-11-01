@@ -1,0 +1,37 @@
+<!-- Every load here is hostile. canary.localhost:9911 is the sender's server. mail.__DOMAIN__:9912 and auth.__DOMAIN__:9912 stand in for this deployment's own hosts: same hostname as the session cookie, on a port that logs what arrives. Paths starting cred- must never be requested. -->
+<style>
+  .remote { background: url(http://canary.localhost:9911/ref-css.png); }
+  .own-css { background: url(http://mail.__DOMAIN__:9912/cred-css-url.png); }
+  .own-css-relative { background: url(/cred-css-relative.png); }
+  .own-css-bare { background: url("cred-css-bare.png"); }
+  .own-css-scheme { background: url('//auth.__DOMAIN__:9912/cred-css-protocol-relative.png'); }
+  .own-set { background: image-set("http://auth.__DOMAIN__:9912/cred-image-set.png" 1x); }
+  .own-escaped { background: \75 rl(http://mail.__DOMAIN__:9912/cred-css-escaped.png); }
+  .remote-escaped { background: \75 rl(http://canary.localhost:9911/css-escaped.png); }
+  @import url(http://canary.localhost:9911/css-import.css);
+</style>
+<p class="remote">A stylesheet background from the sender's server.</p>
+<table background="http://canary.localhost:9911/ref-table.png"><tr><td>A table background from the sender's server.</td></tr></table>
+<img src="http://canary.localhost:9911/ref-img.png" alt="An image from the sender's server">
+<div style="background:url(http://canary.localhost:9911/ref-style.png);height:4px"></div>
+
+<div class="own-css own-css-relative own-css-bare own-css-scheme own-set own-escaped remote-escaped" style="height:4px"></div>
+<img src="http://mail.__DOMAIN__:9912/cred-img.png" alt="own host">
+<img src="HTTP://MAIL.__DOMAIN_UPPER__:9912/cred-img-upper.png" alt="own host in capitals">
+<img src="http://mail.__DOMAIN__.:9912/cred-img-trailing-dot.png" alt="own host with a final dot">
+<img src="http://someone@auth.__DOMAIN__:9912/cred-img-userinfo.png" alt="own host with a user name">
+<img src="http://mail%2E__DOMAIN__:9912/cred-img-percent.png" alt="own host percent encoded">
+<img src="http:\\mail.__DOMAIN__:9912\cred-img-backslash.png" alt="own host with backslashes">
+<img src="http://mail&#46;__DOMAIN__:9912/cred-img-entity.png" alt="own host hidden with a number entity">
+<img src="http://mail&period;__DOMAIN__:9912/cred-img-named-entity.png" alt="own host hidden with a named entity">
+<img src="//mail.__DOMAIN__:9912/cred-img-protocol-relative.png" alt="no scheme">
+<img src="/cred-img-relative.png" alt="relative to the page">
+<img src="cred-img-bare.png" alt="relative with no slash">
+<img srcset="http://mail.__DOMAIN__:9912/cred-srcset.png 1x" alt="candidate list">
+<img srcset="/cred-srcset-relative.png 1x" alt="relative candidate list">
+<table background="http://auth.__DOMAIN__:9912/cred-table.png"><tr><td>own host</td></tr></table>
+<table background="/cred-table-relative.png"><tr><td>relative</td></tr></table>
+<div style="background:url(http://mail&#46;__DOMAIN__:9912/cred-style-entity.png);height:4px"></div>
+<div style="background:url&lpar;http://mail.__DOMAIN__:9912/cred-style-named-entity.png&rpar;;height:4px"></div>
+<div style="background:url(/cred-style-relative.png);height:4px"></div>
+<img src="http://canary.localhost:9911/redirect-to-own.png?host=mail.__DOMAIN__" alt="the sender's server, which redirects to our own host">

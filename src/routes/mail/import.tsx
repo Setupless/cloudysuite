@@ -7,6 +7,9 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail/import")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    mailbox: typeof search.mailbox === "string" ? search.mailbox : undefined,
+  }),
   loader: () => getManagedMailboxes(),
   component: () => (
     <SuiteShell
@@ -15,7 +18,10 @@ export const Route = createFileRoute("/mail/import")({
       navigationLabel="Mail"
       navigation={<ImportNavigation />}
     >
-      <ImportPage mailboxes={Route.useLoaderData()} />
+      <ImportPage
+        mailboxes={Route.useLoaderData()}
+        preferredMailboxId={Route.useSearch().mailbox}
+      />
     </SuiteShell>
   ),
 });

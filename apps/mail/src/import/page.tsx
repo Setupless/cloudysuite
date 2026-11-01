@@ -462,8 +462,19 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
   );
 }
 
-export function ImportPage({ mailboxes }: { mailboxes: ManagedMailbox[] }) {
-  const [mailboxId, setMailboxId] = useState(mailboxes[0]?.id ?? null);
+export function ImportPage({
+  mailboxes,
+  preferredMailboxId,
+}: {
+  mailboxes: ManagedMailbox[];
+  preferredMailboxId?: string | undefined;
+}) {
+  const [mailboxId, setMailboxId] = useState(
+    (
+      mailboxes.find((candidate) => candidate.id === preferredMailboxId) ??
+      mailboxes[0]
+    )?.id ?? null,
+  );
   const mailbox = mailboxes.find((candidate) => candidate.id === mailboxId);
 
   return (

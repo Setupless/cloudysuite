@@ -1,8 +1,13 @@
-import { requireUser } from "@cloudysuite/auth/session";
-import { createFileRoute } from "@tanstack/react-router";
+import { MailRoot, requireMailUser } from "@cloudysuite/mail";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail")({
   beforeLoad: async ({ location }) => ({
-    user: await requireUser("mail", location),
+    user: await requireMailUser(location),
   }),
+  component: () => (
+    <MailRoot>
+      <Outlet />
+    </MailRoot>
+  ),
 });

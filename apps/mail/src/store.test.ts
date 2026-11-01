@@ -451,10 +451,80 @@ test("moving a whole thread can leave the sent mail in Sent", () => {
 
   expect(
     store.moveToFolder({ threadIds: [threadId], inFolder: "inbox" }, "archive"),
-  ).toBe(1);
+  ).toEqual([{ messageId: first.messageId, threadId, folder: "inbox" }]);
   expect(inView("inbox")).toEqual([]);
   expect(inView("sent")).toEqual([threadId]);
   expect(inView("archive")).toEqual([threadId]);
+});
+
+test("restoring sends each message back to where its kind of mail lands", () => {
+  const inbound = store.commit(message({ rfcMessageId: "a@x" }));
+  const sent = store.commit(
+    message({ source: "sent", references: ["a@x"], rfcMessageId: "b@x" }),
+  );
+  const imported = store.commit(message({ source: "import" }));
+  const selection = {
+    messageIds: [inbound.messageId, sent.messageId, imported.messageId],
+  };
+  store.moveToFolder(selection, "trash");
+
+  const before = store.restore(selection);
+  expect(before.map((ref) => ref.folder)).toEqual(["trash", "trash", "trash"]);
+  const folderOf = (ref: { threadId: ThreadId; messageId: MessageId }) =>
+    store
+      .getThread(ref.threadId)!
+      .messages.find((one) => one.id === ref.messageId)!.folder;
+  expect(folderOf(inbound)).toBe("inbox");
+  expect(folderOf(sent)).toBe("sent");
+  expect(folderOf(imported)).toBe("archive");
+});
+
+test("a message can find its thread after that thread merged into another", () => {
+  const first = store.commit(message({ rfcMessageId: "a@x" }));
+  const second = store.commit(message({ rfcMessageId: "b@x" }));
+  expect(second.threadId).not.toBe(first.threadId);
+  store.commit(message({ rfcMessageId: "c@x", references: ["a@x", "b@x"] }));
+
+  expect(store.getThread(second.threadId)).toBeNull();
+  expect(store.threadOfMessage(second.messageId)).toBe(first.threadId);
+  expect(store.threadOfMessage(999 as MessageId)).toBeNull();
+});
+
+test("the summary counts unread conversations in each folder and label", () => {
+  const unread = store.commit(message());
+  const read = store.commit(message());
+  store.setFlags({ messageIds: [read.messageId] }, { read: true });
+  store.commit(message({ subject: "Older" }));
+  const moved = store.commit(message());
+  store.moveToFolder({ messageIds: [moved.messageId] }, "spam");
+  db.exec(
+    "INSERT INTO labels (name, created_at) VALUES ('work', 1), ('Admin', 2)",
+  );
+  const [work] = db
+    .exec<{ id: number }>("SELECT id FROM labels WHERE name = 'work'")
+    .toArray();
+  db.exec(
+    "INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)",
+    unread.messageId,
+    work!.id,
+  );
+  store.refreshThread(unread.threadId);
+
+  const summary = store.summary();
+  expect(summary.folderUnread).toEqual({
+    inbox: 2,
+    sent: 0,
+    drafts: 0,
+    spam: 1,
+    trash: 0,
+    archive: 0,
+  });
+  expect(
+    summary.labels.map(({ name, unread: count }) => [name, count]),
+  ).toEqual([
+    ["Admin", 0],
+    ["work", 1],
+  ]);
 });
 
 test("an unknown folder is refused and changes nothing", () => {
