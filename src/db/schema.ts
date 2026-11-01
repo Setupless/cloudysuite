@@ -278,6 +278,8 @@ export const orgSettings = sqliteTable(
     vapidPublicKey: text("vapid_public_key"),
     vapidPrivateKey: text("vapid_private_key"),
     jevApiKey: text("jev_api_key"),
+    // Null means no limit. An admin sets it, and there is no default.
+    storageLimitBytes: integer("storage_limit_bytes"),
   },
   (table) => [check("org_settings_one_row", sql`${table.id} = 1`)],
 );
@@ -328,6 +330,8 @@ export const drives = sqliteTable(
     ownerId: text("owner_id")
       .$type<UserId>()
       .references(() => user.id, { onDelete: "set null" }),
+    // Null means no limit. Only a personal drive can have one.
+    limitBytes: integer("limit_bytes"),
     usedBytes: integer("used_bytes").notNull().default(0),
     fileCount: integer("file_count").notNull().default(0),
     changedAt: timestamp("changed_at").notNull().default(now),
@@ -338,6 +342,10 @@ export const drives = sqliteTable(
     check(
       "drives_owner_only_when_personal",
       sql`${table.ownerId} IS NULL OR ${table.kind} = 'personal'`,
+    ),
+    check(
+      "drives_limit_only_when_personal",
+      sql`${table.limitBytes} IS NULL OR ${table.kind} = 'personal'`,
     ),
     uniqueIndex("drives_one_personal_per_owner")
       .on(table.ownerId)

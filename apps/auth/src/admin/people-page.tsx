@@ -1,3 +1,4 @@
+import { formatBytes } from "@cloudysuite/transfer";
 import {
   Avatar,
   Badge,
@@ -17,6 +18,7 @@ import { useAction } from "../account/use-action";
 import type { Outcome } from "../outcome";
 import {
   cancelInvite,
+  changeMyFilesLimit,
   changeRole,
   inviteMember,
   type InviteDelivery,
@@ -29,6 +31,7 @@ import {
 import { AddressField } from "./address-field";
 import { AdminPage } from "./admin-page";
 import type { InviteRow, PersonRow } from "./people";
+import { StorageLimitForm } from "./storage-limit-form";
 
 type PeopleView = {
   youId: UserId;
@@ -326,6 +329,51 @@ function PersonActions({ person }: { person: PersonRow }) {
   );
 }
 
+function myFilesText({ myFiles }: PersonRow): string {
+  const used = `My files: ${formatBytes(myFiles?.usedBytes ?? 0)} used`;
+  return myFiles?.limitBytes
+    ? `${used} of the ${formatBytes(myFiles.limitBytes)} limit`
+    : `${used}, no limit`;
+}
+
+function MyFilesLimit({ person }: { person: PersonRow }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const limitBytes = person.myFiles?.limitBytes ?? null;
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <p className="flex-1 text-sm text-secondary">{myFilesText(person)}</p>
+      <Button variant="quiet" onClick={() => setOpen(true)}>
+        {limitBytes === null ? "Set limit" : "Change limit"}
+      </Button>
+      {open && (
+        <Modal
+          title={`My files limit for ${person.name}`}
+          onClose={() => setOpen(false)}
+        >
+          <p className="text-sm text-secondary">
+            This limits what {person.name} can keep in My files. Team folders
+            count only towards the organisation's limit.
+          </p>
+          <StorageLimitForm
+            label="Limit for My files, in GB"
+            limitBytes={limitBytes}
+            onChange={async (next) => {
+              const outcome = await changeMyFilesLimit({
+                data: { userId: person.id, limitBytes: next },
+              });
+              if (!outcome.ok) return outcome.message;
+              setOpen(false);
+              await router.invalidate();
+              return null;
+            }}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function PersonItem({ person, isYou }: { person: PersonRow; isYou: boolean }) {
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
@@ -344,6 +392,7 @@ function PersonItem({ person, isYou }: { person: PersonRow; isYou: boolean }) {
           {!person.hasSecondWay && <Badge>Password only</Badge>}
         </div>
       </div>
+      <MyFilesLimit person={person} />
       {!isYou && <PersonActions person={person} />}
     </li>
   );

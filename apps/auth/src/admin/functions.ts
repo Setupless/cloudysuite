@@ -37,6 +37,7 @@ import {
 import {
   readFlag,
   readJevAcknowledgement,
+  readLimitBytes,
   readMailboxId,
   readMailboxRole,
   readOrgRole,
@@ -63,8 +64,12 @@ import {
 } from "./mailboxes";
 import {
   countPeopleWithoutSecondWay,
+  readStorageOverview,
   setAppEnabled,
+  setMyFilesLimit,
   setRequire2fa,
+  setStorageLimit,
+  type StorageOverview,
   TOGGLEABLE_APPS,
 } from "./organisation";
 import {
@@ -246,6 +251,18 @@ export const removeMember = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const changeMyFilesLimit = createServerFn({ method: "POST" })
+  .middleware([adminOnly])
+  .validator((input: { userId: string; limitBytes: number | null }) => ({
+    userId: readUserId(input),
+    limitBytes: readLimitBytes(input),
+  }))
+  .handler(async ({ data }): Promise<Outcome> => {
+    if (!(await personExists(data.userId))) return PERSON_GONE;
+    await setMyFilesLimit(env.DB, data.userId, data.limitBytes);
+    return { ok: true };
+  });
+
 // Organisation.
 
 export type OrganisationView = {
@@ -254,19 +271,27 @@ export type OrganisationView = {
   apps: { id: ToggleableApp; enabled: boolean }[];
   runningVersion: string;
   jev: { keySet: boolean; usage: JevUsage };
+  storage: StorageOverview;
 };
 
 export const getOrganisation = createServerFn({ method: "GET" })
   .middleware([adminOnly])
   .handler(async (): Promise<OrganisationView> => {
-    const [require2fa, peopleWithoutSecondWay, settings, keySet, usage] =
-      await Promise.all([
-        readRequire2fa(env.DB),
-        countPeopleWithoutSecondWay(env.DB),
-        readSettings(env.DB),
-        jevKeyIsSet(env.DB),
-        readJevUsage(env.DB, Date.now()),
-      ]);
+    const [
+      require2fa,
+      peopleWithoutSecondWay,
+      settings,
+      keySet,
+      usage,
+      storage,
+    ] = await Promise.all([
+      readRequire2fa(env.DB),
+      countPeopleWithoutSecondWay(env.DB),
+      readSettings(env.DB),
+      jevKeyIsSet(env.DB),
+      readJevUsage(env.DB, Date.now()),
+      readStorageOverview(env.DB),
+    ]);
     return {
       require2fa,
       peopleWithoutSecondWay,
@@ -276,6 +301,7 @@ export const getOrganisation = createServerFn({ method: "GET" })
       })),
       runningVersion: RUNNING_VERSION,
       jev: { keySet, usage },
+      storage,
     };
   });
 
@@ -296,6 +322,15 @@ export const changeAppEnabled = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }): Promise<void> => {
     await setAppEnabled(env.DB, data.app, data.enabled);
+  });
+
+export const changeStorageLimit = createServerFn({ method: "POST" })
+  .middleware([adminOnly])
+  .validator((input: { limitBytes: number | null }) => ({
+    limitBytes: readLimitBytes(input),
+  }))
+  .handler(async ({ data }): Promise<void> => {
+    await setStorageLimit(env.DB, data.limitBytes);
   });
 
 // The key goes in and is never sent back. getOrganisation says only that one is set.

@@ -21,16 +21,16 @@ import type {
   NewFolderResult,
   UploadView,
 } from "./types";
-import { writeDriveUsage } from "./usage";
+import { claimDriveSpace, writeDriveUsage } from "./usage";
 
 const SWEEP_LIMIT = 50;
 const SWEEP_RETRY_MS = 60 * 60 * 1000;
 
 export class Drive extends DurableObject<Env> {
   readonly #store: DriveStore;
-  // One write at a time and each reads the truth when it starts, so a slow early
-  // write can't land after a later one and leave D1 behind.
-  #usageWrites: Promise<void> = Promise.resolve();
+  // One write to D1 at a time and each reads the truth when it starts, so a slow early
+  // write can't land after a later one and leave D1 behind, or wipe out a claim.
+  #d1Writes: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -105,8 +105,26 @@ export class Drive extends DurableObject<Env> {
     return this.#store.completionPlan(id);
   }
 
-  async commitUpload(id: ItemId, driveId: DriveId): Promise<CommitResult> {
-    const result = this.#store.commitUpload(id, driveId, Date.now());
+  // With no limit set, a D1 failure can't hold up a file. The flag retries the totals.
+  async commitUpload(
+    id: ItemId,
+    driveId: DriveId,
+    limited: boolean,
+  ): Promise<CommitResult> {
+    const result = await this.#oneAtATime(async (): Promise<CommitResult> => {
+      const size = limited ? this.#store.uncommittedSize(id) : null;
+      if (size !== null) {
+        this.#store.flagUsageWrite(driveId, Date.now());
+        await this.#scheduleNextWakeUp();
+        const used = this.#store.usage()?.usedBytes ?? 0;
+        if (!(await claimDriveSpace(this.env.DB, driveId, used + size))) {
+          this.#store.closeRefusedUpload(id, Date.now());
+          await this.#scheduleNextWakeUp();
+          return { status: "overLimit" };
+        }
+      }
+      return this.#store.commitUpload(id, driveId, Date.now());
+    });
     if (result.status === "committed") await this.#afterChange();
     return result;
   }
@@ -117,8 +135,14 @@ export class Drive extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
   }
 
+  #oneAtATime<Result>(job: () => Promise<Result>): Promise<Result> {
+    const run = this.#d1Writes.then(job);
+    this.#d1Writes = run.catch(() => {});
+    return run;
+  }
+
   #writeUsage(): Promise<void> {
-    this.#usageWrites = this.#usageWrites.then(async () => {
+    return this.#oneAtATime(async () => {
       const usage = this.#store.usage();
       if (!usage) return;
       try {
@@ -129,7 +153,6 @@ export class Drive extends DurableObject<Env> {
         this.#store.postponeUsageWrite(Date.now() + USAGE_RETRY_MS);
       }
     });
-    return this.#usageWrites;
   }
 
   // The alarm is always the earliest due time of the jobs below, each kept in its own
