@@ -5,6 +5,9 @@ const FIRST_RETRY_MS = 1000;
 const LONGEST_RETRY_MS = 30_000;
 const FINGERPRINT_SAMPLE_BYTES = 1024 * 1024;
 
+const FILE_CHANGED =
+  "This file changed or moved while it was being sent. Choose it again to start over.";
+
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";
 
@@ -33,17 +36,19 @@ export async function transferRequest<Value>(
 }
 
 // The name and size can match by chance, and hashing all of a large file would take
-// minutes. The start and end of the file tell two files apart in practice.
+// minutes. The start and end tell two files apart, and the modified time catches an
+// edit to the middle, which would otherwise mix old parts into the new file.
 export async function fingerprintOf(file: File): Promise<string> {
   const sample = new Blob([
     file.slice(0, FINGERPRINT_SAMPLE_BYTES),
     file.slice(Math.max(0, file.size - FINGERPRINT_SAMPLE_BYTES)),
     String(file.size),
+    String(file.lastModified),
   ]);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    await sample.arrayBuffer(),
-  );
+  const bytes = await sample.arrayBuffer().catch(() => {
+    throw new UploadRefused(FILE_CHANGED);
+  });
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
@@ -104,6 +109,14 @@ export async function sendParts({
         ) {
           throw error;
         }
+        // A browser reports a file it can no longer read the same way as a dropped
+        // connection, and retrying that would never end.
+        await body
+          .slice(0, 1)
+          .arrayBuffer()
+          .catch(() => {
+            throw new UploadRefused(FILE_CHANGED);
+          });
         onRetrying?.();
         await new Promise((resolve) =>
           setTimeout(resolve, retryDelayMs(tries)),

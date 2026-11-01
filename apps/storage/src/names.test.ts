@@ -53,3 +53,23 @@ test("a numbered copy of the longest name is still a valid name", () => {
   expect(numbered.endsWith(" (12).pdf")).toBe(true);
   expect(parseItemName(numbered).ok).toBe(true);
 });
+
+test.each([
+  ["invoice‮fdp.exe", "a direction override"],
+  ["Re​port.pdf", "a zero-width space"],
+  ["​", "only an invisible character"],
+])("%j is refused because it holds %s", (raw) => {
+  expect(parseItemName(raw).ok).toBe(false);
+});
+
+test("the joiners that Persian and emoji need are allowed", () => {
+  expect(parseItemName("می‌خواهم 👩‍💻.txt").ok).toBe(true);
+});
+
+test("a numbered name stays within the limit, even with a very long ending", () => {
+  const numbered = numberedName(`a.${"x".repeat(253)}`, 2);
+  expect(new TextEncoder().encode(numbered).byteLength).toBeLessThanOrEqual(
+    255,
+  );
+  expect(parseItemName(numbered).ok).toBe(true);
+});

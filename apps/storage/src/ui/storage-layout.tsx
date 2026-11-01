@@ -103,7 +103,8 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       sidebarFooter={
         directory && (
           <p className="p-2.5 text-xs text-secondary">
-            {formatBytes(directory.usedBytes)} used
+            {formatBytes(directory.usedBytes)} of your organisation's storage
+            used
           </p>
         )
       }

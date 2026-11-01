@@ -41,6 +41,12 @@ test("only the access check's own module opens a drive for a person", () => {
   ]);
 });
 
+test("Storage's code reaches the sign-in rule only through the Storage-on check", () => {
+  expect(
+    usersOf(/\brequireReadyUser\(/).filter((f) => f.startsWith("apps/storage")),
+  ).toEqual(["apps/storage/src/access.ts"]);
+});
+
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",

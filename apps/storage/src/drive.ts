@@ -95,6 +95,12 @@ export class Drive extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
   }
 
+  // R2 no longer has this upload, so choosing the file again must start a new one.
+  async forgetUpload(id: ItemId): Promise<void> {
+    this.#store.removeUpload(id);
+    await this.#scheduleNextWakeUp();
+  }
+
   completionPlan(id: ItemId): CompletionPlan {
     return this.#store.completionPlan(id);
   }
@@ -145,11 +151,12 @@ export class Drive extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
   }
 
-  // A finished item never has an upload row, so this can't touch a kept file. Deleting
-  // the key clears the object left by a crash between R2 finishing and the commit.
+  // A finished item has no upload row and a closed upload can't become one, so this
+  // can't touch a kept file. Deleting the key clears the object left by a crash between
+  // R2 finishing and the commit.
   async #sweepUploads(): Promise<void> {
     const now = Date.now();
-    for (const stale of this.#store.staleUploads(now, SWEEP_LIMIT)) {
+    for (const stale of this.#store.closeStaleUploads(now, SWEEP_LIMIT)) {
       try {
         await this.env.BUCKET.resumeMultipartUpload(
           stale.r2Key,

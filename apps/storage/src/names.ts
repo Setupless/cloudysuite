@@ -1,6 +1,10 @@
 // Names follow one rule everywhere, because WebDAV will later need one path per item.
 const MAX_NAME_BYTES = 255;
-const FORBIDDEN = /[/\\\p{Cc}\p{Zl}\p{Zp}]/u;
+const MAX_EXTENSION_BYTES = 32;
+// Direction marks can show "exe.pdf" for a file that ends in .exe, and invisible ones
+// make twins of a name. The joiners U+200C and U+200D stay: Persian and emoji need them.
+const FORBIDDEN =
+  /[/\\\p{Cc}\p{Zl}\p{Zp}\u00AD\u061C\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/u;
 const encoder = new TextEncoder();
 
 const byteLength = (text: string) => encoder.encode(text).byteLength;
@@ -36,8 +40,11 @@ export function parseItemName(raw: string): ParsedName {
 // be too long, so that a name that was allowed stays allowed.
 export function numberedName(name: string, number: number): string {
   const dot = name.lastIndexOf(".");
-  const hasExtension = dot > 0 && dot < name.length - 1;
-  const extension = hasExtension ? name.slice(dot) : "";
+  const dotted = dot > 0 && dot < name.length - 1 ? name.slice(dot) : "";
+  // Something this long isn't really an extension, and it must leave room for the number.
+  const hasExtension =
+    dotted !== "" && byteLength(dotted) <= MAX_EXTENSION_BYTES;
+  const extension = hasExtension ? dotted : "";
   const suffix = ` (${number})${extension}`;
   const characters = [...(hasExtension ? name.slice(0, dot) : name)];
   while (

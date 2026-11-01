@@ -145,7 +145,10 @@ export function createDriveUploads(
         await stub.recordPart(id, partNumber, part.etag);
         return { ok: true, value: null };
       } catch (error) {
-        if (isUploadGone(error)) return UPLOAD_ENDED;
+        if (isUploadGone(error)) {
+          await stub.forgetUpload(id);
+          return UPLOAD_ENDED;
+        }
         throw error;
       }
     },
@@ -177,7 +180,10 @@ export function createDriveUploads(
         } catch (error) {
           const stored = await bucket.head(plan.r2Key);
           if (stored?.size !== plan.size) {
-            if (isUploadGone(error)) return UPLOAD_ENDED;
+            if (isUploadGone(error)) {
+              await stub.forgetUpload(id);
+              return UPLOAD_ENDED;
+            }
             throw error;
           }
         }

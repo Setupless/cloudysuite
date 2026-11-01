@@ -38,9 +38,10 @@ export const MIGRATIONS: Migrations = [
       r2_upload_id TEXT NOT NULL,
       created_by TEXT NOT NULL,
       created_at INTEGER NOT NULL,
-      touched_at INTEGER NOT NULL
+      touched_at INTEGER NOT NULL,
+      closing INTEGER NOT NULL DEFAULT 0
     )`,
-    `CREATE UNIQUE INDEX uploads_resume ON uploads(coalesce(parent_id, ''), name, size, fingerprint, created_by)`,
+    `CREATE UNIQUE INDEX uploads_resume ON uploads(coalesce(parent_id, ''), name, size, fingerprint, created_by) WHERE closing = 0`,
     `CREATE INDEX uploads_touched ON uploads(touched_at)`,
     // R2 can't list a multipart upload's parts, and finishing one needs every etag.
     `CREATE TABLE upload_parts (

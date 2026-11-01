@@ -404,6 +404,48 @@ test("a recently touched upload isn't removed by another's clean-up", async () =
   expect(left).toEqual(["new"]);
 });
 
+test("an upload R2 has lost starts over when the file is chosen again", async () => {
+  const lost = await started(details({ size: 5 }));
+  kit.bucket.uploads.clear();
+  const refused = await kit.drive.uploads.putPart(
+    lost.id,
+    1,
+    partBody(new Uint8Array(5)),
+  );
+  expect(refused.ok).toBe(false);
+
+  const again = await started(details({ size: 5 }));
+  expect(again.id).not.toBe(lost.id);
+  await sent(again, new Uint8Array(5));
+  expect((await kit.drive.uploads.complete(again.id)).ok).toBe(true);
+});
+
+test("once clean-up has begun, an upload can't finish or be joined", async () => {
+  const view = await started(details());
+  await sent(view, new Uint8Array(5));
+  const { db, object } = kit.instance();
+  db.exec("UPDATE uploads SET touched_at = 1 WHERE id = ?", view.id);
+  const realDelete = kit.bucket.delete.bind(kit.bucket);
+  let during:
+    Awaited<ReturnType<typeof kit.drive.uploads.complete>> | undefined;
+  let joined: UploadView | undefined;
+  kit.bucket.delete = async (keys) => {
+    during = await kit.drive.uploads.complete(view.id);
+    joined = await started(details());
+    await realDelete(keys);
+  };
+  await object.alarm();
+
+  expect(during?.ok).toBe(false);
+  expect(joined?.id).not.toBe(view.id);
+  const [totals] = db
+    .exec<{ files: number }>(
+      "SELECT COUNT(*) AS files FROM items WHERE kind = 'file'",
+    )
+    .toArray();
+  expect(totals?.files).toBe(0);
+});
+
 test("recent files come newest first and leave out folders", async () => {
   await folder("Not a file");
   const first = await upload({ name: "first" });

@@ -352,7 +352,7 @@ Storage replaces Google Drive. A person lands on Home, which shows their team fo
 Uploads split a file into the same 10 MB parts as [Mail import](#mail-import), up to 100 GB.
 
 - If the connection drops, the upload retries with a growing delay and the tray says it is waiting. Parts already stored are never sent again.
-- After a reload, choosing the same file in the same folder carries on where it stopped. A match needs the folder, name, size, and person, plus a hash of the start and end of the file, so a different file that happens to have the same name and size can't be joined to the first one's parts.
+- After a reload, choosing the same file in the same folder carries on where it stopped. A match needs the folder, name, size, and person, plus a hash of the start and end of the file and its modified time. So a different file with the same name and size, or an edited copy of the first, starts over instead of joining the first one's parts. An edit that changes neither the modified time nor the start or end of the file would go unnoticed.
 - Closing the tray stops the upload. What was stored stays, so choosing the file again carries on.
 - An upload with no new part for 3 days is removed, ahead of R2's own 7-day clean-up.
 - A finished file takes its upload's id, so finishing twice finds the file and changes nothing. If a crash came after R2 joined the parts, the retry checks the stored file's size.

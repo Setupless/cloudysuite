@@ -1,12 +1,11 @@
 import { env } from "cloudflare:workers";
 import type { DriveId, UserId } from "@cloudysuite/access";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, user } from "../../../src/db/schema";
-import { openDriveAs } from "./access";
+import { openDriveAs, requireStorageUser } from "./access";
 import { parseItemName } from "./names";
 import {
   type DriveSummary,
@@ -63,7 +62,7 @@ async function peopleOf(ids: Iterable<string>): Promise<People> {
 // Reads D1 only, so Home and the sidebar wake no Durable Object.
 export const getDirectory = createServerFn({ method: "GET" }).handler(
   async (): Promise<Directory> => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const db = drizzle(env.DB);
     const fellow = sql`${driveAccess.driveId} IN (SELECT drive_id FROM drive_access WHERE user_id = ${me.id})`;
     const [mine, members, totals] = await db.batch([
@@ -114,7 +113,7 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
 // Idempotent under the unique index, so two tabs can't make two.
 export const ensureMyFiles = createServerFn({ method: "POST" }).handler(
   async (): Promise<DriveId> => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const db = drizzle(env.DB);
     const owned = and(eq(drives.ownerId, me.id), eq(drives.kind, "personal"));
     const [, , found] = await db.batch([
@@ -139,7 +138,7 @@ export const ensureMyFiles = createServerFn({ method: "POST" }).handler(
 export const createTeamFolder = createServerFn({ method: "POST" })
   .validator(parseNewTeamFolderInput)
   .handler(async ({ data }): Promise<DriveId> => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const parsed = parseItemName(data.name);
     if (!parsed.ok) throw refusal(400, parsed.message);
     const db = drizzle(env.DB);
@@ -172,7 +171,7 @@ export type FolderPage = FolderListing & {
 export const getFolder = createServerFn({ method: "GET" })
   .validator(parseFolderInput)
   .handler(async ({ data }): Promise<FolderPage> => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
     const listing = await drive.list(data.folderId, data.cursor);
     if (!listing) throw refusal(404, NO_SUCH_FOLDER);
@@ -218,7 +217,7 @@ export const getFolder = createServerFn({ method: "GET" })
 export const getFile = createServerFn({ method: "GET" })
   .validator(parseFileInput)
   .handler(async ({ data }) => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
     const file = await drive.file(data.fileId);
     return file ? { file, people: await peopleOf([file.createdBy]) } : null;
@@ -227,7 +226,7 @@ export const getFile = createServerFn({ method: "GET" })
 export const createFolder = createServerFn({ method: "POST" })
   .validator(parseNewFolderInput)
   .handler(async ({ data }): Promise<FolderItem> => {
-    const me = await requireReadyUser(getRequest());
+    const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
     const parsed = parseItemName(data.name);
     if (!parsed.ok) throw refusal(400, parsed.message);
@@ -249,7 +248,7 @@ export const getRecent = createServerFn({ method: "GET" })
   .validator(parseRecentInput)
   .handler(
     async ({ data }): Promise<{ files: RecentFile[]; people: People }> => {
-      const me = await requireReadyUser(getRequest());
+      const me = await requireStorageUser(getRequest());
       const rows = await drizzle(env.DB)
         .select({
           id: drives.id,

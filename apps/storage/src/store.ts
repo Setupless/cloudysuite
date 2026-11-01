@@ -307,7 +307,7 @@ export class DriveStore {
   findUpload(found: FoundUpload, now: number): UploadView | null {
     const [row] = this.#rows<UploadRow>(
       `SELECT * FROM uploads
-       WHERE coalesce(parent_id, '') = ? AND name = ? AND size = ? AND fingerprint = ? AND created_by = ?`,
+       WHERE closing = 0 AND coalesce(parent_id, '') = ? AND name = ? AND size = ? AND fingerprint = ? AND created_by = ?`,
       found.parentId ?? "",
       found.name,
       found.size,
@@ -360,7 +360,10 @@ export class DriveStore {
   }
 
   #upload(id: ItemId): UploadRow | undefined {
-    return this.#rows<UploadRow>("SELECT * FROM uploads WHERE id = ?", id)[0];
+    return this.#rows<UploadRow>(
+      "SELECT * FROM uploads WHERE id = ? AND closing = 0",
+      id,
+    )[0];
   }
 
   partPlan(id: ItemId, partNumber: number): PartPlan {
@@ -467,12 +470,18 @@ export class DriveStore {
     return row?.r2_key ?? null;
   }
 
-  staleUploads(now: number, limit: number): StaleUpload[] {
-    return this.#rows<UploadRow>(
+  // R2 calls let other requests run in between, so a stale upload is closed before any
+  // of them. Once closed, nothing can finish it, and removing its object is safe.
+  closeStaleUploads(now: number, limit: number): StaleUpload[] {
+    const stale = this.#rows<UploadRow>(
       "SELECT * FROM uploads WHERE touched_at <= ? ORDER BY touched_at LIMIT ?",
       now - UPLOAD_EXPIRY_MS,
       limit,
-    ).map((row) => ({
+    );
+    for (const row of stale) {
+      this.#db.exec("UPDATE uploads SET closing = 1 WHERE id = ?", row.id);
+    }
+    return stale.map((row) => ({
       id: row.id,
       r2Key: row.r2_key,
       r2UploadId: row.r2_upload_id,
