@@ -49,7 +49,9 @@ function dayStart(value: string, offsetMinutes: number): number | null {
     number,
     number,
   ];
-  const utc = new Date(Date.UTC(year, month - 1, day));
+  // Date.UTC reads the years 0 to 99 as 1900 to 1999, and setUTCFullYear does not.
+  const utc = new Date(0);
+  utc.setUTCFullYear(year, month - 1, day);
   if (utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
   return utc.getTime() + offsetMinutes * 60_000;
 }

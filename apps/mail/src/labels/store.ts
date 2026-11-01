@@ -13,9 +13,12 @@ export type LabelWrite =
 
 // Names are shown beside other people's mail. Characters that are invisible or
 // that reorder text could make one label pass for another, so they go here.
+// Default-ignorable characters (U+034F, zero-widths, variation selectors) are cut
+// out rather than spaced, so `Work` and `Work` plus one of them are the same name.
 export function cleanLabelName(raw: string): string | null {
   const name = raw
     .normalize("NFC")
+    .replace(/\p{Default_Ignorable_Code_Point}+/gu, "")
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();

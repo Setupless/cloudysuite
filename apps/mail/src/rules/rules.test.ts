@@ -218,6 +218,22 @@ test("an out-of-date order changes nothing", () => {
   expect(rules.list().map((rule) => rule.id)).toEqual([one.id, two.id]);
 });
 
+test("an unreadable stored rule neither blocks a reorder nor counts toward the limit", () => {
+  const broken = add();
+  const one = add();
+  const two = add();
+  db.exec("UPDATE rules SET conditions = 'not json' WHERE id = ?", broken.id);
+  expect(rules.list().map((rule) => rule.id)).toEqual([one.id, two.id]);
+  expect(rules.reorder([two.id, one.id])).toBe(true);
+  expect(rules.list().map((rule) => rule.id)).toEqual([two.id, one.id]);
+  expect(rules.reorder([two.id, one.id, broken.id])).toBe(false);
+  for (let index = 0; index < MAX_RULES - 2; index += 1) add();
+  expect(rules.create(draft())).toMatchObject({ ok: false, status: 409 });
+  expect(
+    db.exec("SELECT id FROM rules WHERE id = ?", broken.id).toArray(),
+  ).toHaveLength(1);
+});
+
 test("a rule that is off does nothing", () => {
   add({ enabled: false });
   expect(stored(message()).starred).toBe(false);

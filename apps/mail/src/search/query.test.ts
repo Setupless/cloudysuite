@@ -45,6 +45,15 @@ test("a date means the reader's own day", () => {
   );
 });
 
+test("a year before 100 stays in that year", () => {
+  const early = new Date(0);
+  early.setUTCFullYear(99, 0, 1);
+  expect(queryOf("before:0099-01-01").receivedBefore).toBe(early.getTime());
+  expect(queryOf("after:0099-01-01").receivedAfter).not.toBe(
+    Date.UTC(1999, 0, 1),
+  );
+});
+
 test("no hostile text can reach the index as syntax", () => {
   for (const text of [
     'foo"bar',

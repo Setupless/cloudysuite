@@ -112,6 +112,15 @@ test("names lose what could disguise them and stay as typed otherwise", () => {
   expect(cleanLabelName("x".repeat(65))).toBeNull();
 });
 
+test("an invisible character can't make a second label that looks the same", () => {
+  expect(cleanLabelName("Work\u034F")).toBe("Work");
+  expect(cleanLabelName("Wo\u200Brk\uFE0F\u00AD")).toBe("Work");
+  const first = labels.create(cleanLabelName("Work")!, "accent");
+  const second = labels.create(cleanLabelName("Work\u034F")!, "accent");
+  expect(first.ok).toBe(true);
+  expect(second).toMatchObject({ ok: false, status: 409 });
+});
+
 test("applying and removing a label shows in its list and its count", () => {
   const id = created("Work");
   const { threadId } = deliver();

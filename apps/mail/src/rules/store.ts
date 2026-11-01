@@ -84,11 +84,13 @@ export class RuleStore {
   create(draft: RuleDraft): RuleWrite {
     return this.#db.transaction(() => {
       const [counts] = this.#db
-        .exec<{ total: number; last: number | null }>(
-          "SELECT COUNT(*) AS total, MAX(position) AS last FROM rules",
+        .exec<{ last: number | null }>(
+          "SELECT MAX(position) AS last FROM rules",
         )
         .toArray();
-      if ((counts?.total ?? 0) >= MAX_RULES) {
+      // Rows that can't be read are inert: nobody can see or delete them, so they
+      // neither count toward the limit nor block a reorder.
+      if (this.list().length >= MAX_RULES) {
         return {
           ok: false,
           status: 409,
@@ -138,10 +140,7 @@ export class RuleStore {
   // means the ids aren't this mailbox's rules any more.
   reorder(ids: RuleId[]): boolean {
     return this.#db.transaction(() => {
-      const current = this.#db
-        .exec<{ id: number }>("SELECT id FROM rules")
-        .toArray()
-        .map((row) => row.id as RuleId);
+      const current = this.list().map((rule) => rule.id);
       const same =
         ids.length === current.length &&
         new Set(ids).size === ids.length &&
