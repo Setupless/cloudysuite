@@ -82,11 +82,24 @@ export async function completeReset(
   const problem = passwordProblem(input.password);
   if (problem) return refuse(problem);
 
-  const context = await auth.$context;
-  const hashed = await context.password.hash(input.password);
   const db = drizzle(database);
   const identifier = `${IDENTIFIER}${await hashToken(input.token)}`;
-  // The single atomic step. Only one concurrent request gets the row.
+  // Nobody is signed in here, so a wrong token must not cost a password hash.
+  const [current] = await db
+    .select({ id: verification.id })
+    .from(verification)
+    .where(
+      and(
+        eq(verification.identifier, identifier),
+        gt(verification.expiresAt, now),
+      ),
+    );
+  if (!current) return refuse(LINK_FINISHED);
+
+  const context = await auth.$context;
+  const hashed = await context.password.hash(input.password);
+  // The single atomic step, which still decides the winner when several
+  // requests passed the check above. Only one concurrent request gets the row.
   const [claimed] = await db
     .delete(verification)
     .where(

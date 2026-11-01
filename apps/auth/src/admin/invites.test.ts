@@ -7,7 +7,7 @@ import {
   readInvite,
   sendInviteEmail,
 } from "./invites";
-import { createKit, type Kit, PASSWORD, signIn } from "./test-kit";
+import { countHashes, createKit, type Kit, PASSWORD, signIn } from "./test-kit";
 
 let kit: Kit;
 
@@ -116,6 +116,13 @@ test("a made-up token is refused", async () => {
     state: "unknown",
   });
   expect((await accept("made-up")).ok).toBe(false);
+});
+
+test("a wrong or used invite is refused without hashing a password", async () => {
+  const token = await invite();
+  expect(await countHashes(kit, () => accept("made-up"))).toBe(0);
+  expect(await countHashes(kit, () => accept(token))).toBe(1);
+  expect(await countHashes(kit, () => accept(token))).toBe(0);
 });
 
 test("a short password leaves the link usable", async () => {

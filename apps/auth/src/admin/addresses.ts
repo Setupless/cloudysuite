@@ -76,10 +76,15 @@ export async function checkNewAddress(
       .from(addresses)
       .where(eq(addresses.address, parsed.address)),
     db
-      .select({ address: invites.mailboxAddress })
+      .select({ id: invites.id })
       .from(invites)
-      .where(and(isNull(invites.usedAt), gt(invites.expiresAt, now)))
-      .then((rows) => rows.filter((row) => row.address === parsed.address)),
+      .where(
+        and(
+          eq(invites.mailboxAddress, parsed.address),
+          isNull(invites.usedAt),
+          gt(invites.expiresAt, now),
+        ),
+      ),
     db.select({ id: user.id }).from(user).where(eq(user.email, parsed.address)),
   ]);
   if (!domainNames.includes(parsed.domain)) {

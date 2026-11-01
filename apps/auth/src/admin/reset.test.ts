@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { UserId } from "../../../../src/db/schema";
 import { completeReset, issueResetLink, readResetLink } from "./reset";
-import { createKit, type Kit, PASSWORD, signIn } from "./test-kit";
+import { countHashes, createKit, type Kit, PASSWORD, signIn } from "./test-kit";
 
 const NEW_PASSWORD = "a brand new password";
 
@@ -114,4 +114,26 @@ test("the link's token is not what the database stores", async () => {
   const token = await issueResetLink(kit.database, member);
   const stored = JSON.stringify(kit.rows("SELECT * FROM verification"));
   expect(stored).not.toContain(token);
+});
+
+test("a wrong, used, or expired link is refused without hashing a password", async () => {
+  const token = await issueResetLink(kit.database, member);
+  const later = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+  expect(
+    await countHashes(kit, async () => {
+      expect((await finish("not a real token")).ok).toBe(false);
+      expect(
+        (
+          await completeReset(
+            kit.auth,
+            kit.database,
+            { token, password: NEW_PASSWORD },
+            later,
+          )
+        ).ok,
+      ).toBe(false);
+    }),
+  ).toBe(0);
+  expect(await countHashes(kit, () => finish(token))).toBe(1);
+  expect(await countHashes(kit, () => finish(token))).toBe(0);
 });

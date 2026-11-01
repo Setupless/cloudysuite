@@ -59,3 +59,21 @@ export function signIn(kit: Kit, email: string, password = PASSWORD) {
     }),
   );
 }
+
+// Nobody is signed in on the reset and invite links, so a wrong guess there must
+// not cost a password hash.
+export async function countHashes(kit: Kit, run: () => Promise<unknown>) {
+  const { password } = await kit.auth.$context;
+  const hash = password.hash;
+  let calls = 0;
+  password.hash = (value) => {
+    calls += 1;
+    return hash(value);
+  };
+  try {
+    await run();
+  } finally {
+    password.hash = hash;
+  }
+  return calls;
+}
