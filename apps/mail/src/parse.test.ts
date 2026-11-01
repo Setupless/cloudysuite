@@ -67,6 +67,28 @@ test("a message of only HTML still gets readable text", async () => {
   expect(snippetOf(readableText(message))).toBe("Hello & welcome");
 });
 
+test("a file name cannot carry a quote or control character into a download header", async () => {
+  for (const [header, expected] of [
+    ['filename="a\\"; evil=\\"b.pdf"', "a; evil=b.pdf"],
+    ["filename*=UTF-8\'\'it%27s%22%07.pdf", "its.pdf"],
+  ] as const) {
+    const message = await parse(
+      [
+        "From: a@example.org",
+        "Content-Type: multipart/mixed; boundary=b",
+        "",
+        "--b",
+        "Content-Type: application/pdf",
+        `Content-Disposition: attachment; ${header}`,
+        "",
+        "payload",
+        "--b--",
+      ].join("\r\n"),
+    );
+    expect(message.attachments[0]?.filename).toBe(expected);
+  }
+});
+
 test("attachment details from a hostile sender are cleaned", async () => {
   const message = await parse(
     [
