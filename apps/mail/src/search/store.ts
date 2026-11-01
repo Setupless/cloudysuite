@@ -1,4 +1,4 @@
-import type { SqlDriver, SqlRow, SqlValue } from "../sql";
+import type { SqlDriver, SqlRow, SqlValue } from "@cloudysuite/object-sql";
 import {
   describeMembers,
   encodeCursor,

@@ -52,6 +52,8 @@
         "@cloudysuite/access": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/jev": "workspace:*",
+        "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/transfer": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-hotkeys": "0.20.1",
@@ -74,6 +76,12 @@
       "dependencies": {
         "drizzle-orm": "1.0.0-rc.5",
       },
+    },
+    "packages/object-sql": {
+      "name": "@cloudysuite/object-sql",
+    },
+    "packages/transfer": {
+      "name": "@cloudysuite/transfer",
     },
     "packages/ui": {
       "name": "@cloudysuite/ui",
@@ -159,6 +167,10 @@
     "@cloudysuite/jev": ["@cloudysuite/jev@workspace:packages/jev"],
 
     "@cloudysuite/mail": ["@cloudysuite/mail@workspace:apps/mail"],
+
+    "@cloudysuite/object-sql": ["@cloudysuite/object-sql@workspace:packages/object-sql"],
+
+    "@cloudysuite/transfer": ["@cloudysuite/transfer@workspace:packages/transfer"],
 
     "@cloudysuite/ui": ["@cloudysuite/ui@workspace:packages/ui"],
 

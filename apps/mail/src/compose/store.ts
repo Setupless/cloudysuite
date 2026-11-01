@@ -1,5 +1,5 @@
 import type { MailboxId } from "@cloudysuite/access";
-import type { SqlDriver, SqlRow } from "../sql";
+import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import type { MailboxStore } from "../store";
 import type {
   Address,

@@ -16,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { safeFileName } from "../../attachment-headers";
+import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
 import { useOffline } from "../../pwa/connectivity";
 import {

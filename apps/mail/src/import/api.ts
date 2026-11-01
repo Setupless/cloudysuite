@@ -1,10 +1,15 @@
 import { env } from "cloudflare:workers";
 import { checkMailboxAccess, parseMailboxId } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
+import { isFromApp } from "@cloudysuite/auth/origins";
+import {
+  declaredBytes,
+  drain,
+  type Outcome,
+  readUpTo,
+} from "@cloudysuite/transfer";
 import { readSettings } from "../../../../src/settings";
 import { openMailboxImports } from "../client";
-import { isFromMailApp } from "./origin";
-import { type Outcome, readUpTo } from "./uploads";
 
 const JOB_ID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
@@ -19,17 +24,12 @@ const refusal = (status: number, message: string) => json({ message }, status);
 const reply = <Value>(outcome: Outcome<Value>) =>
   outcome.ok ? json(outcome.value) : refusal(outcome.status, outcome.message);
 
-function declaredBytes(request: Request): number | null {
-  const header = request.headers.get("Content-Length");
-  return header !== null && /^\d{1,12}$/.test(header) ? Number(header) : null;
-}
-
 async function respond(request: Request, path: string): Promise<Response> {
   const user = await requireReadyUser(request);
   if (request.method !== "GET") {
     // The hostname router sends every request to /setup until a domain is stored.
     const { primaryDomain } = await readSettings(env.DB);
-    if (primaryDomain === null || !isFromMailApp(request, primaryDomain)) {
+    if (primaryDomain === null || !isFromApp(request, primaryDomain, "mail")) {
       return refusal(403, "This request didn't come from CloudySuite.");
     }
   }
@@ -69,16 +69,6 @@ async function respond(request: Request, path: string): Promise<Response> {
   if (action === "finish") return reply(await imports.finishUpload(rawJobId));
   if (action === "cancel") return reply(await imports.cancel(rawJobId));
   return notFound;
-}
-
-// A refusal sent while the browser is still sending a 10 MB part reaches it as a
-// dropped connection, and the person sees "check your connection" instead of the
-// reason. Reading to the end costs little, because nothing keeps the bytes and the
-// platform caps a request's size.
-async function drain(request: Request): Promise<void> {
-  if (request.body && !request.bodyUsed) {
-    await request.body.pipeTo(new WritableStream());
-  }
 }
 
 // Every call checks the session and the mailbox role again, including each part of

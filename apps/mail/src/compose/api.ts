@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
 import { parseMailboxId } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
+import { isFromApp } from "@cloudysuite/auth/origins";
+import { declaredBytes, drain, readUpTo } from "@cloudysuite/transfer";
 import { readSettings } from "../../../../src/settings";
 import { NO_ACCESS_MESSAGE, openMailboxAs } from "../access";
-import { isFromMailApp } from "../import/origin";
-import { readUpTo } from "../import/uploads";
 import { mailboxSenderFacts } from "./addresses";
 import { parseOutgoingId } from "./wire";
 
@@ -16,18 +16,13 @@ const json = (body: unknown, status = 200) =>
 
 const refusal = (status: number, message: string) => json({ message }, status);
 
-function declaredBytes(request: Request): number | null {
-  const header = request.headers.get("Content-Length");
-  return header !== null && /^\d{1,12}$/.test(header) ? Number(header) : null;
-}
-
 // Only uploads need a route of their own, because a file's bytes can't pass through a
 // server function. PUT /api/compose/<mailbox>/<outgoing>/attachments?name=<file name>
 async function respond(request: Request, path: string): Promise<Response> {
   const user = await requireReadyUser(request);
   // The hostname router sends every request to /setup until a domain is stored.
   const { primaryDomain } = await readSettings(env.DB);
-  if (primaryDomain === null || !isFromMailApp(request, primaryDomain)) {
+  if (primaryDomain === null || !isFromApp(request, primaryDomain, "mail")) {
     return refusal(403, "This request didn't come from CloudySuite.");
   }
 
@@ -61,14 +56,6 @@ async function respond(request: Request, path: string): Promise<Response> {
   return result.status === "added"
     ? json(result.attachment)
     : refusal(result.httpStatus, result.message);
-}
-
-// A refusal sent while the browser is still sending the file reaches it as a dropped
-// connection, so the rest is read and thrown away first.
-async function drain(request: Request): Promise<void> {
-  if (request.body && !request.bodyUsed) {
-    await request.body.pipeTo(new WritableStream());
-  }
 }
 
 export async function handleComposeRequest(

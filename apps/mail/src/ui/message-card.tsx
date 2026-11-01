@@ -9,7 +9,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { safeFileName } from "../attachment-headers";
+import { safeFileName } from "@cloudysuite/transfer";
 import { linkify } from "../email/linkify";
 import type { RenderedBody } from "../email/render-body";
 import { FOLDER_DISPLAY } from "../model";

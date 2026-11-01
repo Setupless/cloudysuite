@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
-import { applyMigrations } from "./migrations";
-import type { SqlDriver } from "./sql";
+import { applyMigrations } from "@cloudysuite/object-sql";
+import { MIGRATIONS } from "./migrations";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { MailboxStore, sweepDeletions } from "./store";
 import { createSqlDriver, FakeBucket } from "./test-support";
 import type { LabelId, MessageId, NewMessage, ThreadId } from "./types";
@@ -11,7 +12,7 @@ let nextHash = 0;
 
 beforeEach(() => {
   ({ db } = createSqlDriver());
-  applyMigrations(db);
+  applyMigrations(db, MIGRATIONS);
   store = new MailboxStore(db);
 });
 
@@ -117,7 +118,7 @@ function permutations<Item>(items: Item[]): Item[][] {
 function expectConvergence(messages: NewMessage[], expected: string[][]): void {
   for (const order of permutations(messages)) {
     ({ db } = createSqlDriver());
-    applyMigrations(db);
+    applyMigrations(db, MIGRATIONS);
     store = new MailboxStore(db);
     for (const item of order) store.commit(item);
     expect(threadGroups(messages.map((m) => m.rfcMessageId!))).toEqual(

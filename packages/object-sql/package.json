@@ -1,0 +1,10 @@
+{
+  "name": "@cloudysuite/object-sql",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-driver": "./src/test-driver.ts"
+  }
+}

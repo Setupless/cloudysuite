@@ -1,5 +1,5 @@
 import type { RuleStore } from "../rules/store";
-import type { SqlDriver } from "../sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { type LabelColour, type LabelId, parseColour } from "../types";
 
 export const MAX_LABELS = 500;

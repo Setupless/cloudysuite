@@ -1,4 +1,4 @@
-import { downloadHeaders } from "./attachment-headers";
+import { downloadHeaders } from "@cloudysuite/transfer";
 import { openMailboxFor } from "./access";
 import type { AttachmentId, MessageId } from "./types";
 import { requireMailboxId } from "./wire";

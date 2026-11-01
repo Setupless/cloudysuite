@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { downloadHeaders, safeFileName } from "./attachment-headers";
+import { downloadHeaders, safeFileName } from "./download-headers";
 
 test("every download is an attachment that cannot be sniffed into something else", () => {
   const headers = downloadHeaders("report.pdf", "application/pdf", 3, "x");

@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
-import { applyMigrations } from "../migrations";
-import type { SqlDriver } from "../sql";
+import { applyMigrations } from "@cloudysuite/object-sql";
+import { MIGRATIONS } from "../migrations";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { RuleStore } from "../rules/store";
 import { MailboxStore } from "../store";
 import { createSqlDriver } from "../test-support";
@@ -14,7 +15,7 @@ let serial = 0;
 
 beforeEach(() => {
   ({ db } = createSqlDriver());
-  applyMigrations(db);
+  applyMigrations(db, MIGRATIONS);
   store = new MailboxStore(db);
   labels = new LabelStore(db, new RuleStore(db));
 });

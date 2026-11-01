@@ -7,7 +7,7 @@ import {
 } from "./placement";
 import { SpamStore } from "./spam/store";
 import { parseStoredVerdict, type SpamTraining } from "./spam/types";
-import type { SqlDriver, SqlRow } from "./sql";
+import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import {
   normalizeSubject,
   participantsOf,

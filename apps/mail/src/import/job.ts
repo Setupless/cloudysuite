@@ -2,7 +2,7 @@ import { prepareImported } from "../ingest";
 import { importAttemptPrefix, importMessagePrefix } from "../r2-keys";
 import type { MailboxStore } from "../store";
 import { type MboxItem, type RangeReader, readMbox } from "./mbox";
-import { isUploadGone } from "./r2-errors";
+import { isUploadGone } from "@cloudysuite/transfer";
 import type { FinishedBatch, ImportStore, JobRow } from "./store";
 import type { UnreadableItem } from "./types";
 

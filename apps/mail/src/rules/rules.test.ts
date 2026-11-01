@@ -9,9 +9,10 @@ import { createTestDatabase } from "../../../../src/db/test-database";
 import { openMailbox, openMailboxRuleEditor } from "../client";
 import { ingest } from "../ingest";
 import { LabelStore } from "../labels/store";
-import { applyMigrations } from "../migrations";
+import { applyMigrations } from "@cloudysuite/object-sql";
+import { MIGRATIONS } from "../migrations";
 import { placementFor } from "../placement";
-import type { SqlDriver } from "../sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { MailboxStore } from "../store";
 import {
   createSqlDriver,
@@ -41,7 +42,7 @@ let serial = 0;
 
 beforeEach(() => {
   ({ db } = createSqlDriver());
-  applyMigrations(db);
+  applyMigrations(db, MIGRATIONS);
   store = new MailboxStore(db);
   rules = new RuleStore(db);
   labels = new LabelStore(db, rules);
