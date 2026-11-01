@@ -51,5 +51,6 @@ test("released migrations do not change", async () => {
   expect(digests).toEqual([
     "64d76cc75a9c4fde8212b0e492e008d51d777bc8ff7397f0a6531049efb0bb04",
     "3521e4d8fa8b43d605caf0c3e41498076d269bbc497ac13f036966d1f90e2117",
+    "e45855e92d326470830ff91d585e07ae4c4bb2ff1d7eb7709cab55c20382f42d",
   ]);
 });

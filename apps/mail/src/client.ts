@@ -5,10 +5,13 @@ import { mailboxStub } from "./stub";
 import type {
   AttachmentId,
   AttachmentInfo,
+  AttachmentRef,
   Folder,
+  MailboxSummary,
   MessageBody,
   MessageFlags,
   MessageId,
+  MessageRef,
   MessageSelection,
   ThreadDetail,
   ThreadId,
@@ -23,10 +26,13 @@ export type {
   AuthResults,
   Folder,
   LabelId,
+  LabelSummary,
+  MailboxSummary,
   MessageBody,
   MessageDetail,
   MessageFlags,
   MessageId,
+  MessageRef,
   MessageSelection,
   ThreadDetail,
   ThreadId,
@@ -43,13 +49,20 @@ export type AttachmentDownload = {
 };
 
 export type MailboxClient = {
+  summary(): Promise<MailboxSummary>;
   listThreads(query: ThreadQuery): Promise<ThreadPage>;
   getThread(threadId: ThreadId): Promise<ThreadDetail | null>;
+  threadOfMessage(messageId: MessageId): Promise<ThreadId | null>;
   setFlags(selection: MessageSelection, flags: MessageFlags): Promise<number>;
-  moveToFolder(selection: MessageSelection, folder: Folder): Promise<number>;
-  moveToTrash(selection: MessageSelection): Promise<number>;
+  moveToFolder(
+    selection: MessageSelection,
+    folder: Folder,
+  ): Promise<MessageRef[]>;
+  moveToTrash(selection: MessageSelection): Promise<MessageRef[]>;
+  restore(selection: MessageSelection): Promise<MessageRef[]>;
   deleteForever(selection: MessageSelection): Promise<number>;
   getBody(messageId: MessageId): Promise<MessageBody | null>;
+  inlineAttachments(messageId: MessageId): Promise<AttachmentInfo[]>;
   getAttachment(
     messageId: MessageId,
     attachmentId: AttachmentId,
@@ -63,16 +76,21 @@ export type MailboxClient = {
 // Durable Object and hold up everyone else using the mailbox.
 export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
   const stub = mailboxStub(env, grant.mailboxId);
-  const moveToFolder = (selection: MessageSelection, folder: Folder) =>
-    stub.moveToFolder(selection, folder);
+  const moveToFolder = async (selection: MessageSelection, folder: Folder) =>
+    (await stub.moveToFolder(selection, folder)) as MessageRef[];
 
   return {
+    summary: async () => (await stub.summary()) as MailboxSummary,
     listThreads: async (query) => (await stub.listThreads(query)) as ThreadPage,
     getThread: async (threadId) =>
       (await stub.getThread(threadId)) as ThreadDetail | null,
+    threadOfMessage: async (messageId) =>
+      (await stub.threadOfMessage(messageId)) as ThreadId | null,
     setFlags: (selection, flags) => stub.setFlags(selection, flags),
     moveToFolder,
     moveToTrash: (selection) => moveToFolder(selection, "trash"),
+    restore: async (selection) =>
+      (await stub.restore(selection)) as MessageRef[],
     deleteForever: (selection) => stub.deleteForever(selection),
 
     async getBody(messageId) {
@@ -85,6 +103,13 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
             : ((await (await env.BUCKET.get(part.r2Key))?.text()) ?? null);
       }
       return body;
+    },
+
+    async inlineAttachments(messageId) {
+      const refs = (await stub.inlineAttachmentRefs(
+        messageId,
+      )) as AttachmentRef[];
+      return refs.map(({ r2Key: _, ...info }) => info);
     },
 
     async getAttachment(messageId, attachmentId) {

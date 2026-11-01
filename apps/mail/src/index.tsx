@@ -1,10 +1,6 @@
-import { Page } from "@cloudysuite/ui";
-import { IconMail } from "@tabler/icons-react";
-
-export function MailHome() {
-  return (
-    <Page icon={IconMail} title="Mail">
-      Your mailbox will live here. There is nothing to do on this page yet.
-    </Page>
-  );
-}
+export { MailboxLayout, NoMailbox } from "./ui/mailbox-layout";
+export { MailRoot } from "./ui/mail-root";
+export { requireMailUser } from "./ui/session";
+export { NoThreadOpen, ThreadPane } from "./ui/thread-pane";
+export { MailViewScreen } from "./ui/view-screen";
+export { prefetchMailboxes, prefetchThreads } from "./queries";

@@ -157,6 +157,14 @@ export type MessageDetail = {
 
 export type ThreadDetail = { id: ThreadId; messages: MessageDetail[] };
 
+export type LabelSummary = { id: LabelId; name: string; unread: number };
+
+// Unread counts conversations, the same rows a person sees in the list.
+export type MailboxSummary = {
+  folderUnread: Record<Folder, number>;
+  labels: LabelSummary[];
+};
+
 export type MessageSelection =
   | { messageIds: MessageId[] }
   | { threadIds: ThreadId[]; inFolder?: Folder | undefined };

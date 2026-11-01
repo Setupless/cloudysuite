@@ -171,6 +171,11 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
       PRIMARY KEY (job_id, byte_offset)
     ) WITHOUT ROWID`,
   ],
+  // The sidebar's unread counts refresh all day, so they read only unread rows
+  // and never scan a large folder.
+  [
+    `CREATE INDEX thread_views_unread ON thread_views(view) WHERE unread_count > 0`,
+  ],
 ];
 
 export function applyMigrations(

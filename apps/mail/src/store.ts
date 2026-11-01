@@ -6,6 +6,7 @@ import {
   sameConversation,
   SUBJECT_FALLBACK_WINDOW_MS,
 } from "./threading";
+import { FOLDERS } from "./types";
 import type {
   Address,
   AttachmentId,
@@ -17,6 +18,7 @@ import type {
   CommitResult,
   Folder,
   LabelId,
+  MailboxSummary,
   MessageDetail,
   MessageFlags,
   MessageId,
@@ -596,7 +598,9 @@ export class MailboxStore {
     });
   }
 
-  moveToFolder(selection: MessageSelection, folder: Folder): number {
+  // Returns where each message was, so an undo can put back exactly those messages
+  // and not an older message of the thread that was already in the target folder.
+  moveToFolder(selection: MessageSelection, folder: Folder): MessageRef[] {
     return this.#db.transaction(() => {
       const rows = this.#select(selection);
       this.#db.exec(
@@ -605,8 +609,61 @@ export class MailboxStore {
         JSON.stringify(rows.map((row) => row.id)),
       );
       this.#refreshThreadsOf(rows);
-      return rows.length;
+      return rows.map(toRef);
     });
+  }
+
+  // Sends each message back to where mail of its kind lands, so restoring a thread
+  // from Trash does not put the mailbox's own sent replies in the Inbox.
+  restore(selection: MessageSelection): MessageRef[] {
+    return this.#db.transaction(() => {
+      const rows = this.#select(selection);
+      this.#db.exec(
+        `UPDATE messages
+         SET folder = CASE source WHEN 'sent' THEN 'sent' WHEN 'import' THEN 'archive' ELSE 'inbox' END
+         WHERE id IN (SELECT value FROM json_each(?))`,
+        JSON.stringify(rows.map((row) => row.id)),
+      );
+      this.#refreshThreadsOf(rows);
+      return rows.map(toRef);
+    });
+  }
+
+  threadOfMessage(messageId: MessageId): ThreadId | null {
+    const [row] = this.#db
+      .exec<{ thread_id: number }>(
+        "SELECT thread_id FROM messages WHERE id = ?",
+        messageId,
+      )
+      .toArray();
+    return row ? (row.thread_id as ThreadId) : null;
+  }
+
+  summary(): MailboxSummary {
+    const unread = new Map(
+      this.#db
+        .exec<{ view: ViewKey; unread: number }>(
+          "SELECT view, COUNT(*) AS unread FROM thread_views WHERE unread_count > 0 GROUP BY view",
+        )
+        .toArray()
+        .map((row) => [row.view, row.unread]),
+    );
+    const unreadIn = (view: ThreadView) => unread.get(viewKey(view)) ?? 0;
+    return {
+      folderUnread: Object.fromEntries(
+        FOLDERS.map((folder) => [folder, unreadIn({ folder })]),
+      ) as Record<Folder, number>,
+      labels: this.#db
+        .exec<{ id: number; name: string }>(
+          "SELECT id, name FROM labels ORDER BY name COLLATE NOCASE",
+        )
+        .toArray()
+        .map((row) => ({
+          id: row.id as LabelId,
+          name: row.name,
+          unread: unreadIn({ labelId: row.id as LabelId }),
+        })),
+    };
   }
 
   // Only trash and spam can be deleted for good, so a wrong id elsewhere cannot
@@ -707,6 +764,18 @@ export class MailboxStore {
       )
       .toArray();
     return row ? { ...toAttachmentInfo(row), r2Key: row.r2_key } : null;
+  }
+
+  inlineAttachmentRefs(messageId: MessageId): AttachmentRef[] {
+    return this.#db
+      .exec<AttachmentRow>(
+        `SELECT * FROM attachments
+         WHERE message_id = ? AND is_inline = 1 AND content_id IS NOT NULL
+         ORDER BY position`,
+        messageId,
+      )
+      .toArray()
+      .map((row) => ({ ...toAttachmentInfo(row), r2Key: row.r2_key }));
   }
 
   storagePrefix(messageId: MessageId): string | null {
