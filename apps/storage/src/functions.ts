@@ -1,15 +1,12 @@
 import { env } from "cloudflare:workers";
-import {
-  type DriveId,
-  ensurePersonalDrive,
-  type UserId,
-} from "@cloudysuite/access";
+import type { DriveId, UserId } from "@cloudysuite/access";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
 import { openDriveAs, requireStorageUser } from "./access";
+import { ensureMyDrive } from "./my-drive";
 import { parseItemName } from "./names";
 import {
   type DriveSummary,
@@ -131,15 +128,7 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
 export const ensureMyFiles = createServerFn({ method: "POST" }).handler(
   async (): Promise<DriveId> => {
     const me = await requireStorageUser(getRequest());
-    const db = drizzle(env.DB);
-    const owned = and(eq(drives.ownerId, me.id), eq(drives.kind, "personal"));
-    const [, , found] = await db.batch([
-      ...ensurePersonalDrive(db, me.id),
-      db.select({ id: drives.id }).from(drives).where(owned),
-    ]);
-    const id = found[0]?.id;
-    if (!id) throw new Error("A personal drive should exist by now.");
-    return id;
+    return ensureMyDrive(me.id);
   },
 );
 

@@ -32,14 +32,18 @@ export function formatChanged(timestamp: number, now: Date): string {
     : word;
 }
 
+// For the middle of a sentence: "today", "yesterday", "Monday", "Oct 3".
+export function dayInSentence(timestamp: number, now: Date): string {
+  const word = dayWord(new Date(timestamp), now);
+  return word === "Today" || word === "Yesterday" ? word.toLowerCase() : word;
+}
+
 export function folderSummary(
   fileCount: number,
   changedAt: number,
   now: Date,
 ): string {
   if (fileCount === 0) return "No files yet";
-  const word = dayWord(new Date(changedAt), now);
-  const when =
-    word === "Today" || word === "Yesterday" ? word.toLowerCase() : word;
+  const when = dayInSentence(changedAt, now);
   return `${fileCount} ${fileCount === 1 ? "file" : "files"}, ${when}`;
 }

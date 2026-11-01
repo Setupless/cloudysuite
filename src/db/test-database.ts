@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 const MIGRATIONS = join(import.meta.dir, "../../migrations");
 
+// What `env` from "cloudflare:workers" is under test. Bun keeps the first mock of that
+// module for the whole run, so every test support has to hand out this one object.
+export const testWorkerEnv = {} as Env;
+
 // An in-memory database built from the real migrations, behind the parts of
 // the D1 API that Drizzle calls. It proves query behaviour, not D1 itself.
 export function createTestDatabase(): { sqlite: Database; d1: D1Database } {

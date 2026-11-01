@@ -315,4 +315,10 @@ export const MIGRATIONS: Migrations = [
       claimed_at INTEGER NOT NULL
     ) WITHOUT ROWID`,
   ],
+  // Storage's Home asks each mailbox for its newest attachments on every visit. Holding
+  // only the mail that can be listed keeps that a read of a few rows at any mailbox size.
+  [
+    `CREATE INDEX messages_recent_attachments ON messages(received_at, id)
+     WHERE has_attachments = 1 AND folder IN ('inbox', 'sent', 'archive')`,
+  ],
 ];

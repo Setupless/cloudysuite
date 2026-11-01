@@ -17,6 +17,7 @@ import {
 import { call, directoryQuery, recentQuery, storageKeys } from "../queries";
 import { FilePreview } from "./file-visuals";
 import { folderSummary, formatChanged } from "./format";
+import { MailAttachments } from "./mail-attachments";
 import { DropZone, FolderLink, PageActions, PageTop } from "./page-parts";
 import { personOf } from "./people";
 import { teamColour } from "./team-colour";
@@ -89,7 +90,7 @@ function RecentCard({
   );
 }
 
-function Home() {
+function Home({ mailHref }: { mailHref: string | undefined }) {
   const client = useQueryClient();
   const navigate = useNavigate();
   const directory = useQuery(directoryQuery());
@@ -163,18 +164,21 @@ function Home() {
           </p>
         )
       )}
+      {mailHref && <MailAttachments mailHref={mailHref} />}
     </DropZone>
   );
 }
 
 export function HomeScreen({
   prefetched,
+  mailHref,
 }: {
   prefetched: DehydratedState | undefined;
+  mailHref: string | undefined;
 }) {
   return (
     <HydrationBoundary state={prefetched}>
-      <Home />
+      <Home mailHref={mailHref} />
     </HydrationBoundary>
   );
 }

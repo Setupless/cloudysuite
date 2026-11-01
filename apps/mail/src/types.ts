@@ -233,4 +233,14 @@ export type BodyRef = { kind: BodyKind } & (
 
 export type AttachmentRef = AttachmentInfo & { r2Key: string };
 
+export type RecentAttachment = {
+  messageId: MessageId;
+  attachmentId: AttachmentId;
+  filename: string | null;
+  mimeType: string;
+  fromName: string | null;
+  fromAddress: string | null;
+  receivedAt: number;
+};
+
 export type MessageBody = { text: string | null; html: string | null };

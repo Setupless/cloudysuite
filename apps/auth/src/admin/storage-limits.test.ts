@@ -2,6 +2,7 @@ import { beforeEach, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UserId } from "../../../../src/db/schema";
+import { testWorkerEnv } from "../../../../src/db/test-database";
 import { readLimitBytes } from "./input";
 import {
   readStorageOverview,
@@ -20,7 +21,7 @@ let kit: Kit;
 let member: UserId;
 
 const workers = {
-  env: {} as Record<string, unknown>,
+  env: testWorkerEnv as unknown as Record<string, unknown>,
   DurableObject: class {},
 };
 mock.module("cloudflare:workers", () => workers);

@@ -47,6 +47,16 @@ test("Storage's code reaches the sign-in rule only through the Storage-on check"
   ).toEqual(["apps/storage/src/access.ts"]);
 });
 
+test("Storage reads mail in one module, and only through Mail's access check", () => {
+  const importers = usersOf(/from "@cloudysuite\/mail\/access"/);
+  expect(importers).toEqual(["apps/storage/src/mail-attachments.ts"]);
+  expect(
+    usersOf(/\bopenMailboxFor\(|\bopenMailbox\(/).filter((f) =>
+      f.startsWith("apps/storage"),
+    ),
+  ).toEqual([]);
+});
+
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",

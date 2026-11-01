@@ -46,6 +46,7 @@ test("only the access check's own module opens a mailbox for a person", () => {
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
+    "./access",
     "./client",
     "./compose-api",
     "./device-session",

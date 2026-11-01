@@ -372,3 +372,40 @@ export const driveAccess = sqliteTable(
     index("drive_access_user_id_idx").on(table.userId),
   ],
 );
+
+// Which mail attachments a person has copied into their files, so a repeat stores
+// nothing. It holds ids only, never a name or a sender. A save holds claimed_until
+// while it runs, and item_id is written before the file can exist, so a retry after any
+// crash finds the file rather than making a second one.
+export const savedMailAttachments = sqliteTable(
+  "saved_mail_attachments",
+  {
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .$type<MailboxId>()
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    messageId: integer("message_id").notNull(),
+    attachmentId: integer("attachment_id").notNull(),
+    driveId: text("drive_id")
+      .$type<DriveId>()
+      .notNull()
+      .references(() => drives.id, { onDelete: "cascade" }),
+    itemId: text("item_id"),
+    savedAt: timestamp("saved_at"),
+    claimedUntil: timestamp("claimed_until").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.userId,
+        table.mailboxId,
+        table.messageId,
+        table.attachmentId,
+      ],
+    }),
+  ],
+);

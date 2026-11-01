@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { nameKeyOf, numberedName, parseItemName } from "./names";
+import {
+  cleanItemName,
+  nameKeyOf,
+  numberedName,
+  parseItemName,
+  withoutHiddenCharacters,
+} from "./names";
 
 test("a name is trimmed and put in NFC", () => {
   const parsed = parseItemName("  Café notes.txt ");
@@ -72,4 +78,29 @@ test("a numbered name stays within the limit, even with a very long ending", () 
     255,
   );
   expect(parseItemName(numbered).ok).toBe(true);
+});
+
+test.each([
+  [null, "Attachment"],
+  ["", "Attachment"],
+  ["   ", "Attachment"],
+  ["..", "Attachment"],
+  ["‮", "Attachment"],
+  ["../../etc/passwd", ".._.._etc_passwd"],
+  ["..\\..\\a.exe", ".._.._a.exe"],
+  ["invoice‮fdp.exe", "invoicefdp.exe"],
+  ["a\r\nb.pdf", "ab.pdf"],
+  ["  Report.pdf ", "Report.pdf"],
+])("cleanItemName turns %j into %j", (raw, expected) => {
+  expect(cleanItemName(raw)).toBe(expected);
+});
+
+test("cleanItemName shortens a long name, keeps its extension, and passes the rule", () => {
+  const name = cleanItemName(`${"é".repeat(400)}.pdf`);
+  expect(name.endsWith(".pdf")).toBe(true);
+  expect(parseItemName(name).ok).toBe(true);
+});
+
+test("withoutHiddenCharacters keeps what a person can read, slashes included", () => {
+  expect(withoutHiddenCharacters(" A/B‮ Ltd\n")).toBe("A/B Ltd");
 });
