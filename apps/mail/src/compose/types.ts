@@ -138,12 +138,36 @@ export type KeptDraft = DraftForEditor & {
   id: OutgoingId;
   mailboxId: MailboxId;
   keptAt: number;
+  // The server's copy can be gone by the time this is reopened, or out of reach.
+  quoteHtml: string | null;
+};
+
+// What the server's draft still has, so a device can tell what no longer came along.
+export type DraftHolds = {
+  attachmentIds: number[];
+  quote: boolean;
+  threaded: boolean;
+};
+
+export type LeftOut = { files: string[]; quote: boolean; reply: boolean };
+
+// Stays on the device until the person has seen it. A toast could go unread.
+export type KeptNote = {
+  id: OutgoingId;
+  mailboxId: MailboxId;
+  subject: string;
+  leftOut: LeftOut;
 };
 
 export type Editor = { id: string; name: string };
 
 export type SaveResult =
-  | { status: "saved"; revision: number; overwrote: string | null }
+  | {
+      status: "saved";
+      revision: number;
+      overwrote: string | null;
+      holds: DraftHolds;
+    }
   | { status: "locked"; state: OutgoingState };
 
 export const UNDO_WINDOW_MS = 10_000;

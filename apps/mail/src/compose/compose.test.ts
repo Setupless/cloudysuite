@@ -753,6 +753,51 @@ const startFrom = (
     editor: EDITOR,
   });
 
+test("a save tells the device what the draft still holds", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const { draft } = await startFrom(kit, parent, "reply");
+  const id = newId();
+  await startFrom(kit, parent, "reply", id);
+  const result = await kit.mailbox.outgoing.save({
+    id,
+    baseRevision: draft.revision,
+    content: { ...draft.content, html: "<p>Still here</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(result).toMatchObject({
+    status: "saved",
+    holds: { attachmentIds: [], quote: true, threaded: true },
+  });
+  const detail = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(detail?.content.includeQuote).toBe(true);
+});
+
+test("words saved after their draft was discarded keep what they can and say what they can't", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const id = newId();
+  const { draft } = await startFrom(kit, parent, "forward", id);
+  await kit.mailbox.outgoing.discard(id);
+  const result = await kit.mailbox.outgoing.save({
+    id,
+    baseRevision: draft.revision,
+    content: { ...draft.content, html: "<p>Words from a train</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(result).toMatchObject({
+    status: "saved",
+    holds: { attachmentIds: [], quote: false, threaded: false },
+  });
+  const detail = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(detail?.content.html).toContain("Words from a train");
+  // It can't ask for a quote it doesn't have.
+  expect(detail?.content.includeQuote).toBe(false);
+  expect(detail?.mode).toBe("new");
+});
+
 test("a reply answers the sender, reply all the others, and neither includes us", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);

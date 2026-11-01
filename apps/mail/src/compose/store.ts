@@ -93,6 +93,13 @@ const SELECT_ROW = `
 
 const addressesIn = (json: string) => JSON.parse(json) as Address[];
 
+// Words from a device can ask for a quote that only the row it was written on had.
+const withQuoteOnlyIfHeld = (
+  content: DraftContent,
+  row: OutgoingRow | null,
+): DraftContent =>
+  row?.quote_bytes == null ? { ...content, includeQuote: false } : content;
+
 const toAttachment = (row: AttachmentRow): OutgoingAttachment => ({
   id: row.id,
   filename: row.filename,
@@ -321,8 +328,9 @@ export class OutgoingStore {
     now = Date.now(),
   ): SaveResult {
     return this.#db.transaction(() => {
-      const { id, baseRevision, content, plainText, editor, r2Prefix } = input;
+      const { id, baseRevision, plainText, editor, r2Prefix } = input;
       const row = this.#row(id);
+      const content = withQuoteOnlyIfHeld(input.content, row);
       if (!row) {
         this.#insert(
           {
@@ -341,6 +349,7 @@ export class OutgoingStore {
           status: "saved",
           revision: this.#writeContent(id, content, plainText, editor, now),
           overwrote: null,
+          holds: { attachmentIds: [], quote: false, threaded: false },
         };
       }
       if (row.state !== "draft") return { status: "locked", state: row.state };
@@ -352,6 +361,11 @@ export class OutgoingStore {
         status: "saved",
         revision: this.#writeContent(id, content, plainText, editor, now),
         overwrote,
+        holds: {
+          attachmentIds: this.#attachments(id).map((file) => file.id),
+          quote: row.quote_bytes !== null,
+          threaded: row.parent_message_id !== null,
+        },
       };
     });
   }
@@ -371,9 +385,9 @@ export class OutgoingStore {
     now = Date.now(),
   ): ScheduleResult {
     return this.#db.transaction(() => {
-      const { id, content, plainText, editor, r2Prefix, fromName, mailboxId } =
-        input;
+      const { id, plainText, editor, r2Prefix, fromName, mailboxId } = input;
       const row = this.#row(id);
+      const content = withQuoteOnlyIfHeld(input.content, row);
       if (row?.state === "scheduled") return { status: "scheduled" };
       if (row && row.state !== "draft") {
         return { status: "locked", state: row.state };

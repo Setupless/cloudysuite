@@ -4,7 +4,7 @@ import { createTestDatabase } from "../../../../src/db/test-database";
 import { addresses, domains, mailboxes } from "../../../../src/db/schema";
 import { MAILBOX_A, MAILBOX_B } from "../test-support";
 import { recipientLabel } from "../ui/format";
-import type { MessageDetail } from "../types";
+import type { MessageDetail, MessageId } from "../types";
 import { drizzle } from "drizzle-orm/d1";
 import { buildQuote, htmlToPlainText } from "./body";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
@@ -12,11 +12,26 @@ import { replyRecipients, composeSubject, defaultFromAddress } from "./reply";
 import { judgeSendError } from "./send-outcome";
 import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
-import { moveToDrafts } from "./kept";
+import { isEditorLink } from "./editor-tags";
 import {
+  isLeftOut,
+  keptAsText,
+  leftOutOf,
+  leftOutText,
+  lockedCopyId,
+  moveToDrafts,
+  parseKeptDraft,
+  parseKeptNote,
+  withoutAccess,
+} from "./kept";
+import { parseOutgoingId } from "./wire";
+import {
+  type DraftHolds,
   fitsSendLimit,
   type KeptDraft,
+  type KeptNote,
   type OutgoingId,
+  type SaveResult,
   writtenBytes,
 } from "./types";
 import { isValidAddress, parseAddressList } from "./validate";
@@ -31,6 +46,7 @@ const keptDraft: KeptDraft = {
   mode: "new",
   parent: null,
   quote: null,
+  quoteHtml: null,
   attachments: [],
   content: {
     from: "alex@example.com",
@@ -43,46 +59,183 @@ const keptDraft: KeptDraft = {
   },
 };
 
+const HOLDS_ALL = (draft: KeptDraft) => ({
+  attachmentIds: draft.attachments.map((file) => file.id),
+  quote: draft.quote !== null,
+  threaded: draft.parent !== null,
+});
+
+const savedHolding = (holds: DraftHolds): SaveResult => ({
+  status: "saved",
+  revision: 4,
+  overwrote: null,
+  holds,
+});
+
+const keptForward: KeptDraft = {
+  ...keptDraft,
+  id: "00000000-0000-4000-8000-000000000001" as OutgoingId,
+  mode: "forward",
+  parent: { messageId: 9 as MessageId, rfcMessageId: "a@b", references: [] },
+  quote: { bytes: 20, designed: false },
+  quoteHtml: "<p>Original</p>",
+  attachments: [
+    { id: 1, filename: "alpha.pdf", mimeType: "a/b", size: 1 },
+    { id: 2, filename: "beta.pdf", mimeType: "a/b", size: 1 },
+  ],
+  content: { ...keptDraft.content, includeQuote: true },
+};
+
 test("words kept on a device go to their own draft", async () => {
   const savedTo: string[] = [];
-  const savedAs = await moveToDrafts(
-    keptDraft,
-    async (id) => {
-      savedTo.push(id);
-      return { status: "saved", revision: 4, overwrote: null };
-    },
-    () => "unused" as OutgoingId,
-  );
+  const { savedAs, leftOut } = await moveToDrafts(keptDraft, async (id) => {
+    savedTo.push(id);
+    return savedHolding(HOLDS_ALL(keptDraft));
+  });
   expect(savedAs).toBe(keptDraft.id);
   expect(savedTo).toEqual([keptDraft.id]);
+  expect(isLeftOut(leftOut)).toBe(false);
 });
 
 test("words kept for a message someone has since sent become a new draft", async () => {
   const savedTo: string[] = [];
-  const savedAs = await moveToDrafts(
-    keptDraft,
-    async (id) => {
-      savedTo.push(id);
-      return id === keptDraft.id
-        ? { status: "locked", state: "sent" }
-        : { status: "saved", revision: 1, overwrote: null };
-    },
-    () => "fresh-id" as OutgoingId,
+  const { savedAs, leftOut } = await moveToDrafts(keptForward, async (id) => {
+    savedTo.push(id);
+    return id === keptForward.id
+      ? { status: "locked", state: "sent" }
+      : savedHolding({ attachmentIds: [], quote: false, threaded: false });
+  });
+  expect(savedAs).not.toBe(keptForward.id);
+  expect(savedTo).toEqual([keptForward.id, savedAs]);
+  expect(leftOut).toEqual({
+    files: ["alpha.pdf", "beta.pdf"],
+    quote: true,
+    reply: false,
+  });
+});
+
+test("trying again for the same kept words reaches the same new draft", async () => {
+  const first = await lockedCopyId(keptForward.id, 7);
+  expect(await lockedCopyId(keptForward.id, 7)).toBe(first);
+  expect(await lockedCopyId(keptForward.id, 8)).not.toBe(first);
+  expect(parseOutgoingId(first)).toBe(first);
+});
+
+test("a draft removed elsewhere reports the files and quote it can no longer have", async () => {
+  const { savedAs, leftOut } = await moveToDrafts(keptForward, async () =>
+    savedHolding({ attachmentIds: [], quote: false, threaded: false }),
   );
-  expect(savedAs).toBe("fresh-id" as OutgoingId);
-  expect(savedTo).toEqual([keptDraft.id, "fresh-id"]);
+  expect(savedAs).toBe(keptForward.id);
+  const text = leftOutText(leftOut);
+  expect(text).toContain("2 attached files (alpha.pdf, beta.pdf)");
+  expect(text).toContain("the original message");
+  expect(text).toContain("Attach the files again");
+});
+
+test("one file removed elsewhere is the only one reported", () => {
+  const leftOut = leftOutOf(
+    { ...keptForward, includeQuote: true },
+    { attachmentIds: [2], quote: true, threaded: true },
+  );
+  expect(leftOut).toEqual({ files: ["alpha.pdf"], quote: false, reply: false });
+  expect(leftOutText(leftOut)).toContain("the attached file alpha.pdf");
+});
+
+test("a quote the person left out isn't reported as lost", () => {
+  const leftOut = leftOutOf(
+    { ...keptForward, includeQuote: false },
+    { attachmentIds: [1, 2], quote: false, threaded: true },
+  );
+  expect(isLeftOut(leftOut)).toBe(false);
+});
+
+test("a reply that lost its conversation says it will go as a new message", () => {
+  const leftOut = leftOutOf(
+    { ...keptForward, mode: "reply", attachments: [], includeQuote: false },
+    { attachmentIds: [], quote: false, threaded: false },
+  );
+  expect(leftOut.reply).toBe(true);
+  expect(leftOutText(leftOut)).toContain("not as a reply");
 });
 
 test("a kept draft that can't reach the server isn't reported as moved", async () => {
   await expect(
-    moveToDrafts(
-      keptDraft,
-      async () => {
-        throw new Error("offline");
-      },
-      () => "unused" as OutgoingId,
-    ),
+    moveToDrafts(keptDraft, async () => {
+      throw new Error("offline");
+    }),
   ).rejects.toThrow("offline");
+});
+
+test("a row read from the device is checked like a request", () => {
+  expect(parseKeptDraft(keptForward)).toEqual(keptForward);
+  for (const broken of [
+    null,
+    "words",
+    { ...keptForward, id: "../other" },
+    { ...keptForward, keptAt: "soon" },
+    { ...keptForward, mode: "everyone" },
+    { ...keptForward, attachments: 7 },
+    { ...keptForward, attachments: [{ id: "1" }] },
+    { ...keptForward, quote: { bytes: "big" } },
+    { ...keptForward, quoteHtml: 1 },
+    { ...keptForward, parent: { messageId: "x" } },
+    { ...keptForward, content: "text" },
+    { ...keptForward, content: { ...keptForward.content, to: "a@b" } },
+    { ...keptForward, content: { ...keptForward.content, html: 3 } },
+  ]) {
+    expect(parseKeptDraft(broken)).toBeNull();
+  }
+});
+
+test("a note read from the device is checked too", () => {
+  const note = {
+    id: keptForward.id,
+    mailboxId: MAILBOX_A,
+    subject: "Words",
+    leftOut: { files: ["a"], quote: true, reply: false },
+  };
+  expect(parseKeptNote(note)).toEqual(note as KeptNote);
+  expect(
+    parseKeptNote({
+      ...note,
+      leftOut: { files: [1], quote: true, reply: false },
+    }),
+  ).toBeNull();
+  expect(parseKeptNote({ ...note, id: "nope" })).toBeNull();
+});
+
+test("only words from a mailbox missing from the server's list count as out of reach", () => {
+  const drafts = [keptForward];
+  expect(withoutAccess(drafts, undefined)).toEqual([]);
+  expect(withoutAccess(drafts, [{ id: MAILBOX_A }])).toEqual([]);
+  expect(withoutAccess(drafts, [{ id: MAILBOX_B }])).toEqual(drafts);
+  expect(withoutAccess(drafts, [])).toEqual(drafts);
+});
+
+test("the copy someone can take from a lost mailbox is plain and complete", () => {
+  const text = keptAsText(
+    {
+      ...keptDraft,
+      content: {
+        ...keptDraft.content,
+        to: [{ name: "Pat", address: "pat@example.org" }],
+        cc: [{ name: "", address: "cc@example.org" }],
+      },
+    },
+    "Written on a train",
+  );
+  expect(text).toBe(
+    "To: pat@example.org\nCc: cc@example.org\nSubject: Words\n\nWritten on a train",
+  );
+});
+
+test("links in a device's copy keep to the schemes the sanitizer allows", () => {
+  expect(isEditorLink("https://example.org/a")).toBe(true);
+  expect(isEditorLink("mailto:a@example.org")).toBe(true);
+  expect(isEditorLink("javascript:alert(1)")).toBe(false);
+  expect(isEditorLink(" JaVaScRiPt:alert(1)")).toBe(false);
+  expect(isEditorLink("data:text/html,x")).toBe(false);
+  expect(isEditorLink("/relative")).toBe(false);
 });
 
 test("the From check accepts this mailbox's addresses and refuses any other", async () => {

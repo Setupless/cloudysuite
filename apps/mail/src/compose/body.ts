@@ -1,22 +1,7 @@
 import { sanitizeEmailHtml } from "../email/sanitize";
 import type { Address, MessageBody, MessageDetail } from "../types";
+import { EDITOR_TAGS } from "./editor-tags";
 import type { ComposeMode } from "./types";
-
-const EDITOR_TAGS = new Set([
-  "a",
-  "b",
-  "blockquote",
-  "br",
-  "div",
-  "em",
-  "i",
-  "li",
-  "ol",
-  "p",
-  "strong",
-  "u",
-  "ul",
-]);
 
 const REMOVED_WITH_CONTENT = ["img", "style", "title"];
 

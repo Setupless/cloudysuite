@@ -224,7 +224,11 @@ Turning Mail off clears nothing, so turning it back on restores the same device.
 
 **Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A message already handed to CloudySuite still goes, and Undo comes back with the connection.
 
-**Words that can't be saved stay on the device.** A draft already open keeps working offline. What can't reach the server is kept in the same IndexedDB database as saved mail, so someone can move elsewhere or close the tab, and a band in that mailbox offers it back. When the connection returns, it goes to Drafts and the device's copy goes, but it is never sent then. Only these unsaved words are kept, not drafts in general, and signing out clears them along with everything else, even if they never reached the server.
+**Words that can't be saved stay on the device.** A draft already open keeps working offline. What can't reach the server is kept in the same IndexedDB database as saved mail, along with the quote the person was replying to, so someone can move elsewhere or close the tab, and a band in that mailbox offers it back. When the connection returns, it goes to Drafts and the device's copy goes, but it is never sent then. The device forgets a copy only after the server has accepted that copy, so a newer one from another tab stays. Only these unsaved words are kept, not drafts in general, and signing out clears them along with everything else, even if they never reached the server.
+
+**A device's copy is treated as hostile.** Anything on the origin can write to IndexedDB. A kept body enters the live editor only through a browser-side allow list of what the formatting bar can make, and a kept quote is stripped and goes in the same sandboxed frame as mail. A row of the wrong shape is ignored.
+
+**Nothing is dropped without saying so.** If the message was sent or discarded elsewhere, the words still become a draft. The files, the quote, and the link to the conversation belong to the original, so they can't come along, and the page names what was left out and what to do next. That notice stays on the device until it is opened or dismissed, because a toast can go unread. If someone loses access to a mailbox, their words are not written to it: a card says so, on every Mail screen, and lets them copy the text or remove it.
 
 [Privacy](#privacy) says what saved mail means for a lost device.
 
