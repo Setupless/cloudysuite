@@ -1,4 +1,4 @@
-import { eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
   addresses,
@@ -58,6 +58,7 @@ export async function checkNewAddress(
   database: D1Database,
   raw: string,
   owner?: UserId,
+  now = new Date(),
 ): Promise<AddressCheck> {
   const parsed = parseAddress(raw);
   if (!parsed) {
@@ -77,7 +78,7 @@ export async function checkNewAddress(
     db
       .select({ address: invites.mailboxAddress })
       .from(invites)
-      .where(isNull(invites.usedAt))
+      .where(and(isNull(invites.usedAt), gt(invites.expiresAt, now)))
       .then((rows) => rows.filter((row) => row.address === parsed.address)),
     db.select({ id: user.id }).from(user).where(eq(user.email, parsed.address)),
   ]);

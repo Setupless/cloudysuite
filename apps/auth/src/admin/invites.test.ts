@@ -152,6 +152,69 @@ test("an invite refuses an address that's taken, even by another pending invite"
   });
 });
 
+const EIGHT_DAYS_MS = 8 * 24 * 60 * 60 * 1000;
+
+async function expiredInvite(email: string, mailboxAddress: string) {
+  const created = await createInvite(
+    kit.database,
+    { email, role: "user", mailboxAddress, invitedBy: kit.admin },
+    new Date(Date.now() - EIGHT_DAYS_MS),
+  );
+  if (!created.ok) throw new Error(created.message);
+  return created.token;
+}
+
+test("an expired invite stops holding its address, so another invite can use it", async () => {
+  await expiredInvite("first@home.example", "team@example.com");
+  const second = await createInvite(kit.database, {
+    email: "second@home.example",
+    role: "user",
+    mailboxAddress: "team@example.com",
+    invitedBy: kit.admin,
+  });
+  expect(second.ok).toBe(true);
+});
+
+test("an expired invite can't take back an address that a newer invite now holds", async () => {
+  const oldToken = await expiredInvite(
+    "first@home.example",
+    "team@example.com",
+  );
+  const [{ id: oldId }] = kit.rows("SELECT id FROM invites") as [
+    { id: string },
+  ];
+  const newToken = await invite("second@home.example", "team@example.com");
+
+  expect(await renewInvite(kit.database, oldId)).toEqual({
+    ok: false,
+    message: expect.stringContaining("already taken"),
+  });
+  expect((await accept(oldToken)).ok).toBe(false);
+  expect(await accept(newToken)).toEqual({
+    ok: true,
+    signInEmail: "team@example.com",
+  });
+  expect(await renewInvite(kit.database, oldId)).toEqual({
+    ok: false,
+    message: expect.stringContaining("already taken"),
+  });
+  expect(kit.count("addresses")).toBe(1);
+});
+
+test("Send again works for an unexpired invite that holds an address", async () => {
+  await invite("first@home.example", "team@example.com");
+  const [{ id }] = kit.rows("SELECT id FROM invites") as [{ id: string }];
+  expect((await renewInvite(kit.database, id)).ok).toBe(true);
+});
+
+test("Send again works for an expired invite whose address is still free", async () => {
+  await expiredInvite("first@home.example", "team@example.com");
+  const [{ id }] = kit.rows("SELECT id FROM invites") as [{ id: string }];
+  const renewed = await renewInvite(kit.database, id);
+  if (!renewed.ok) throw new Error(renewed.message);
+  expect((await accept(renewed.token)).ok).toBe(true);
+});
+
 test("an invite refuses an address on a domain the organisation doesn't have", async () => {
   const result = await createInvite(kit.database, {
     email: "first@home.example",

@@ -92,8 +92,31 @@ export async function renewInvite(
   id: string,
   now = new Date(),
 ): Promise<Outcome<{ token: string; email: string }>> {
+  const db = drizzle(database);
+  const [current] = await db
+    .select({
+      mailboxAddress: invites.mailboxAddress,
+      expiresAt: invites.expiresAt,
+    })
+    .from(invites)
+    .where(and(eq(invites.id, id), isNull(invites.usedAt)));
+  // An unexpired invite still holds its address. An expired one let go of it,
+  // so someone else may have it now.
+  if (current?.mailboxAddress && current.expiresAt <= now) {
+    const check = await checkNewAddress(
+      database,
+      current.mailboxAddress,
+      undefined,
+      now,
+    );
+    if (!check.ok) {
+      return refuse(
+        `${current.mailboxAddress} is already taken, so this invite can't be sent again. Cancel it and invite them with a different address.`,
+      );
+    }
+  }
   const token = newToken();
-  const [row] = await drizzle(database)
+  const [row] = await db
     .update(invites)
     .set({
       tokenHash: await hashToken(token),
