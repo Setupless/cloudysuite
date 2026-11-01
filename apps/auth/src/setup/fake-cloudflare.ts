@@ -63,11 +63,13 @@ type Failure = {
   skip?: number;
 };
 
+// What the live API returned: MX content ends in a dot here, but not in
+// `dns_records`, and the DMARC record is `p=reject`.
 const SENDING_RECORDS = (domain: string): DnsRecord[] => [
   {
     type: "MX",
     name: `cf-bounce.${domain}`,
-    content: "route1.mx.cloudflare.net",
+    content: "route1.mx.cloudflare.net.",
     priority: 10,
   },
   {
@@ -78,10 +80,25 @@ const SENDING_RECORDS = (domain: string): DnsRecord[] => [
   {
     type: "TXT",
     name: `cf-bounce._domainkey.${domain}`,
-    content: "v=DKIM1; p=fakekey",
+    content: "v=DKIM1; h=sha256; k=rsa; p=FakeKeyWithMixedCase",
   },
-  { type: "TXT", name: `_dmarc.${domain}`, content: "v=DMARC1; p=none" },
+  { type: "TXT", name: `_dmarc.${domain}`, content: "v=DMARC1; p=reject;" },
 ];
+
+const POLICY = /^"?v=(spf1|dmarc1)/i;
+
+const storedForm = (record: DnsRecord): DnsRecord =>
+  record.type === "TXT"
+    ? { ...record, content: `"${record.content}"` }
+    : { ...record, content: record.content.replace(/\.$/, "") };
+
+const identityOf = ({ type, name, content }: DnsRecord) => {
+  const value =
+    type === "TXT"
+      ? content.replace(/" +"/g, "").replace(/^"|"$/g, "")
+      : content.toLowerCase().replace(/\.$/, "");
+  return `${type} ${name.toLowerCase()} ${value}`;
+};
 
 export function createFakeCloudflare({
   onSecretSet,
@@ -116,6 +133,11 @@ export function createFakeCloudflare({
     );
 
   const notAllowed = () => error(403, 10000, "Authentication error");
+  const noAccess = () =>
+    error(403, 10000, "No access to the specified resource.");
+  const canSeeWorkers = (token: FakeToken) =>
+    token.permissions.includes("workers:read") ||
+    token.permissions.includes("workers:write");
 
   function zoneJson(zone: FakeZone) {
     const account = state.accounts.get(zone.accountId);
@@ -174,6 +196,11 @@ export function createFakeCloudflare({
         : error(404, 10007, "Worker not found");
     };
 
+  const seesWorkers =
+    (handler: Handler): Handler =>
+    (context) =>
+      canSeeWorkers(context.token) ? handler(context) : noAccess();
+
   const routes: [string, RegExp, Handler][] = [
     [
       "GET",
@@ -198,8 +225,11 @@ export function createFakeCloudflare({
     [
       "GET",
       /^\/accounts\/([^/]+)\/workers\/scripts$/,
-      needs(["workers:read", "workers:write"], ({ token, params }) => {
+      // Without Workers permission on the account, Cloudflare doesn't refuse this
+      // list. It succeeds with nothing in it.
+      ({ token, params }) => {
         if (params[0] !== token.accountId) return notAllowed();
+        if (!canSeeWorkers(token)) return ok([]);
         const workers =
           state.accounts.get(token.accountId)?.workers ??
           new Map<string, FakeWorker>();
@@ -209,13 +239,12 @@ export function createFakeCloudflare({
             modified_on: worker.modifiedOn,
           })),
         );
-      }),
+      },
     ],
     [
       "GET",
       /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/versions\/([^/]+)$/,
-      needs(
-        ["workers:read", "workers:write"],
+      seesWorkers(
         workerRoute((worker, { params }) =>
           worker.anyVersion || worker.versions.includes(params[2] ?? "")
             ? ok({ id: params[2] })
@@ -226,10 +255,7 @@ export function createFakeCloudflare({
     [
       "GET",
       /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/script-settings$/,
-      needs(
-        ["workers:read", "workers:write"],
-        workerRoute((worker) => ok(worker.settings)),
-      ),
+      seesWorkers(workerRoute((worker) => ok(worker.settings))),
     ],
     [
       "PATCH",
@@ -339,6 +365,11 @@ export function createFakeCloudflare({
               ? { priority: body.priority }
               : {}),
           };
+          if (
+            zone.dns.some((other) => identityOf(other) === identityOf(record))
+          ) {
+            return error(400, 81058, "An identical record already exists.");
+          }
           zone.dns.push(record);
           return ok(record);
         }),
@@ -425,6 +456,18 @@ export function createFakeCloudflare({
               enabled: true,
             };
             zone.sending.push(row);
+            // The live API adds these itself. What it does when the zone already
+            // has a DMARC or SPF record wasn't seen, so this leaves those alone.
+            for (const record of SENDING_RECORDS(name)) {
+              const taken = zone.dns.some(
+                (other) =>
+                  other.type === record.type &&
+                  other.name === record.name &&
+                  POLICY.test(other.content) &&
+                  POLICY.test(record.content),
+              );
+              if (!taken) zone.dns.push(storedForm(record));
+            }
           }
           return ok(row);
         }),
@@ -523,11 +566,12 @@ export function createFakeCloudflare({
         anyVersion: versions === "any",
         secrets: new Set(),
         modifiedOn,
+        // A new Worker's settings, as the live API returned them.
         settings: {
           logpush: false,
-          observability: { enabled: false },
           tags: null,
           tail_consumers: null,
+          observability: null,
         },
       });
     },

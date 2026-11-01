@@ -38,7 +38,11 @@ import {
   type ZoneScan,
   type ZoneSummary,
 } from "./model";
-import { TOKEN_PERMISSIONS, tokenFormUrl } from "./token-link";
+import {
+  TOKEN_PERMISSIONS,
+  type TokenPermission,
+  tokenFormUrl,
+} from "./token-link";
 import { isAppLabel } from "./validate";
 
 const STEP_TEXT: Record<StepId, { title: string; description: string }> = {
@@ -254,6 +258,29 @@ function ErrorBox({ error }: { error: SetupError }) {
   );
 }
 
+function PermissionList({
+  title,
+  scope,
+}: {
+  title: string;
+  scope: TokenPermission["scope"];
+}) {
+  return (
+    <div>
+      <p className="font-medium text-text">{title}</p>
+      <ul className="list-disc pl-5">
+        {TOKEN_PERMISSIONS.filter((item) => item.scope === scope).map(
+          ({ label, level }) => (
+            <li key={label}>
+              {label}: {level}
+            </li>
+          ),
+        )}
+      </ul>
+    </div>
+  );
+}
+
 function TokenStage({
   onClaimed,
   onFinished,
@@ -283,8 +310,6 @@ function TokenStage({
     );
   }
 
-  const byHand = TOKEN_PERMISSIONS.filter(({ key }) => key === null);
-
   return (
     <Card>
       <Heading title="Connect your Cloudflare account">
@@ -308,7 +333,7 @@ function TokenStage({
         <li>
           <div className="flex flex-col gap-2">
             <p>
-              Create a token. This link opens Cloudflare with the form partly
+              Create a token. This link opens Cloudflare with the permissions
               filled in.
             </p>
             <a
@@ -320,21 +345,23 @@ function TokenStage({
               <IconKey size={18} stroke={1.75} aria-hidden />
               Create a token
             </a>
-            <div className="text-sm text-secondary">
-              <p>The token needs these permissions:</p>
-              <ul className="list-disc pl-5">
-                {TOKEN_PERMISSIONS.map(({ label, level }) => (
-                  <li key={label}>
-                    {label}: {level}
-                  </li>
-                ))}
-              </ul>
-              {byHand.length > 0 && (
-                <p className="mt-2 font-medium text-text">
-                  Add {byHand.map(({ label }) => label).join(" and ")} yourself.
-                  Cloudflare's form can't fill those in from a link.
-                </p>
-              )}
+            <div className="flex flex-col gap-2 text-sm text-secondary">
+              <p>
+                The link can't choose where each permission applies, so check
+                this in Cloudflare's form before you create the token:
+              </p>
+              <PermissionList
+                title="Set to the whole account, not to one domain:"
+                scope="account"
+              />
+              <PermissionList
+                title="Set to your domain, or to all domains:"
+                scope="zone"
+              />
+              <p>
+                Choose Email Routing Rules, not Email Routing Account Rules.
+                They are different permissions.
+              </p>
             </div>
           </div>
         </li>

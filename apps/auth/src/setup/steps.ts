@@ -14,7 +14,7 @@ import type {
   StepMode,
   StepResult,
 } from "./model";
-import { externalMxHosts, fullName } from "./scan";
+import { bare, externalMxHosts, fullName } from "./scan";
 
 export const AUTH_SECRET_NAME = "BETTER_AUTH_SECRET";
 
@@ -36,6 +36,8 @@ export type SetupStep = {
   check(context: StepContext): Promise<CheckResult>;
   apply(context: StepContext): Promise<void>;
   guide(context: StepContext): ManualGuide;
+  // Named when Cloudflare refuses the step, in the words of its token form.
+  permission: string;
 };
 
 const dashboard = (path: string) =>
@@ -64,17 +66,27 @@ export function appHostnames(appDomain: string): string[] {
   return Object.keys(APPS).map((app) => `${app}.${appDomain}`);
 }
 
-const unquote = (content: string) => content.replace(/^"|"$/g, "").trim();
-const sameContent = (a: string, b: string) =>
-  unquote(a).toLowerCase().replace(/\.$/, "") ===
-  unquote(b).toLowerCase().replace(/\.$/, "");
+const QUOTED_STRINGS = /^"(?:[^"\\]|\\.)*"(?:\s*"(?:[^"\\]|\\.)*")*$/;
+
+// DNS joins a TXT record's quoted strings with nothing between them, so a long
+// DKIM key can be split anywhere and still be the same key.
+function txtValue(content: string) {
+  const text = content.trim();
+  if (!QUOTED_STRINGS.test(text)) return text;
+  return (text.match(/"(?:[^"\\]|\\.)*"/g) ?? [])
+    .map((part) => part.slice(1, -1).replace(/\\(.)/g, "$1"))
+    .join("");
+}
+
+const sameContent = (type: string, a: string, b: string) =>
+  type === "TXT" ? txtValue(a) === txtValue(b) : bare(a) === bare(b);
 
 function isPolicy(content: string, prefix: "v=dmarc1" | "v=spf1") {
-  return unquote(content).toLowerCase().startsWith(prefix);
+  return txtValue(content).toLowerCase().startsWith(prefix);
 }
 
 const spfTerms = (content: string) =>
-  unquote(content)
+  txtValue(content)
     .toLowerCase()
     .split(/\s+/)
     .filter((term) => term !== "v=spf1" && !/^[-~?+]?all$/.test(term));
@@ -100,7 +112,11 @@ function sendingDnsGaps(
       (other) =>
         other.type === record.type && fullName(other.name, zoneName) === name,
     );
-    if (sameName.some((other) => sameContent(other.content, record.content)))
+    if (
+      sameName.some((other) =>
+        sameContent(record.type, other.content, record.content),
+      )
+    )
       continue;
     if (record.type === "TXT" && isPolicy(record.content, "v=dmarc1")) {
       if (sameName.some((other) => isPolicy(other.content, "v=dmarc1")))
@@ -123,6 +139,12 @@ function sendingDnsGaps(
   }
   return { creatable, conflicts };
 }
+
+// The live API gave this message. Other tools report it with this code, but
+// Cloudflare's docs don't list it, so either one counts.
+const isIdenticalRecord = (error: unknown) =>
+  error instanceof CloudflareError &&
+  (error.code === 81058 || /identical record/i.test(error.message));
 
 const describeRecord = (record: DnsRecord, zoneName: string) =>
   `${record.type} ${fullName(record.name, zoneName)} ${record.content}`;
@@ -154,9 +176,13 @@ function describeCatchAll(rule: CatchAll, emailDomain: string) {
   return `Right now, mail to any address at ${emailDomain} that has no rule of its own ${handling}.`;
 }
 
+const SENDING_RECORDS_NOTICE =
+  "Cloudflare adds the DNS records this needs to your domain. One is a DMARC record, which tells other mail systems to refuse mail that claims to be from your domain but can't prove it. If a newsletter tool or another service sends mail as your domain, check that it signs its mail. CloudySuite doesn't change a DMARC record you already have.";
+
 export const SETUP_STEPS: readonly SetupStep[] = [
   {
     id: "email-routing",
+    permission: "Zone Settings: Edit, set to your domain",
     async check({ api, plan }) {
       const routing = await api.getEmailRouting(plan.zoneId);
       if (routing.enabled && (routing.status ?? "ready") === "ready") {
@@ -193,6 +219,8 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
   {
     id: "email-sending",
+    permission:
+      "Email Sending: Edit, set to the account, and DNS: Edit, set to your domain",
     async check({ api, plan }) {
       const domains = await api.listSendingDomains(plan.zoneId);
       const row = domains.find(
@@ -201,7 +229,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
       if (!row)
         return {
           state: "missing",
-          detail: "Sending isn't on for this domain.",
+          detail: `Sending isn't on for this domain. ${SENDING_RECORDS_NOTICE}`,
         };
 
       const [expected, existing] = await Promise.all([
@@ -215,7 +243,10 @@ export const SETUP_STEPS: readonly SetupStep[] = [
       );
       const gaps = [...creatable, ...conflicts];
       if (gaps.length === 0) {
-        return { state: "done", detail: `${plan.emailDomain} can send mail.` };
+        return {
+          state: "done",
+          detail: `${plan.emailDomain} can send mail. ${SENDING_RECORDS_NOTICE}`,
+        };
       }
       return {
         state: "missing",
@@ -239,8 +270,16 @@ export const SETUP_STEPS: readonly SetupStep[] = [
         api.listDnsRecords(plan.zoneId),
       ]);
       const { creatable } = sendingDnsGaps(expected, existing, plan.zoneName);
-      for (const record of creatable)
-        await api.createDnsRecord(plan.zoneId, record);
+      // Adding a sending domain makes Cloudflare add these records itself, so
+      // one can appear after the list above was read. The check that follows
+      // this decides the result.
+      for (const record of creatable) {
+        try {
+          await api.createDnsRecord(plan.zoneId, record);
+        } catch (error) {
+          if (!isIdenticalRecord(error)) throw error;
+        }
+      }
     },
     guide: ({ plan }) => ({
       action: `In Cloudflare, open Email Sending, choose Onboard Domain, and pick ${plan.emailDomain}. Sending needs the Workers Paid plan. Then check again.`,
@@ -250,6 +289,8 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
   {
     id: "catch-all",
+    permission:
+      "Email Routing Rules: Edit, set to your domain. Email Routing Account Rules is a different permission",
     async check(context) {
       const { api, plan, scriptName } = context;
       const rule = await api.getCatchAll(plan.zoneId);
@@ -287,6 +328,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
   {
     id: "app-hostnames",
+    permission: "Workers Scripts: Edit, set to the account",
     async check({ api, accountId, scriptName, plan }) {
       const attached = await api.listWorkerDomains(accountId, plan.zoneId);
       const hosts = appHostnames(plan.appDomain);
@@ -359,6 +401,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
   {
     id: "auth-secret",
+    permission: "Workers Scripts: Edit, set to the account",
     async check({ api, accountId, scriptName, secretVisible }) {
       if (secretVisible)
         return { state: "done", detail: "Sign-in has its secret key." };
@@ -395,13 +438,21 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
 ];
 
-function outcomeOfError(error: unknown, guide: ManualGuide): StepResult {
+function outcomeOfError(
+  error: unknown,
+  guide: ManualGuide,
+  permission: string,
+): StepResult {
   if (!(error instanceof CloudflareError)) throw error;
-  if (error.denied) {
+  if (
+    error.denied ||
+    error.code === 10000 ||
+    /authentication error/i.test(error.message)
+  ) {
     return {
       state: "needs-action",
       guide: {
-        action: `Your token isn't allowed to do this step. Create the token again from the link on the first page, keep every permission it fills in, and start again. If you'd rather do this step yourself: ${guide.action}`,
+        action: `Your token isn't allowed to do this step. It needs ${permission}. Create the token again from the link on the first page, keep every permission it fills in, and start again. If you'd rather do this step yourself: ${guide.action}`,
         dashboardUrl: guide.dashboardUrl,
         docsUrl: DOCS.tokens,
       },
@@ -443,6 +494,6 @@ export async function runStep(
       guide: { ...guide, action: after.action ?? guide.action },
     };
   } catch (error) {
-    return outcomeOfError(error, guide);
+    return outcomeOfError(error, guide, step.permission);
   }
 }

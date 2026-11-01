@@ -4,7 +4,7 @@ import type { ZoneScan } from "./model";
 const WEB_RECORDS = new Set(["A", "AAAA", "CNAME"]);
 const PARENT_LABELS = ["suite", "apps", "workspace", "cloud", "team"];
 
-const bare = (name: string) => name.toLowerCase().replace(/\.$/, "");
+export const bare = (name: string) => name.toLowerCase().replace(/\.$/, "");
 
 // Cloudflare's API returns full names, but its "expected records" endpoints use
 // `@` for the apex, and may return a name relative to the zone.
