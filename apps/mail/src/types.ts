@@ -18,6 +18,12 @@ export const FOLDERS = [
 ] as const;
 export type Folder = (typeof FOLDERS)[number];
 
+export function liveFolders(folders: readonly Folder[]): Folder[] {
+  const unique = [...new Set(folders)];
+  const live = unique.filter((one) => one !== "spam" && one !== "trash");
+  return live.length > 0 ? live : unique;
+}
+
 export type MessageSource = "inbound" | "import" | "sent";
 
 export type ParseStatus = "parsed" | "failed";
@@ -115,6 +121,7 @@ export type ThreadSummary = {
   unreadCount: number;
   starred: boolean;
   hasAttachments: boolean;
+  folders: Folder[];
 };
 
 export type ThreadPage = {
@@ -167,7 +174,7 @@ export type MailboxSummary = {
 
 export type MessageSelection =
   | { messageIds: MessageId[] }
-  | { threadIds: ThreadId[]; inFolder?: Folder | undefined };
+  | { threadIds: ThreadId[]; inFolder?: Folder | Folder[] | undefined };
 
 export type MessageFlags = {
   read?: boolean | undefined;

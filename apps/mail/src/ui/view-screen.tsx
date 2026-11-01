@@ -14,14 +14,18 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
   FOLDER_DISPLAY,
+  listingSearchParams,
+  type MailListing,
+  MOVE_DISPLAY,
   type MoveId,
   movesFor,
+  parseListing,
   parseThreadParam,
-  parseViewParam,
   viewParam,
 } from "../model";
 import {
@@ -32,15 +36,17 @@ import {
   threadsQuery,
 } from "../queries";
 import { threadsIn } from "../thread-cache";
-import type {
-  MailboxId,
-  ThreadDetail,
-  ThreadId,
-  ThreadSummary,
-  ThreadView,
+import {
+  type Folder,
+  liveFolders,
+  type MailboxId,
+  type ThreadDetail,
+  type ThreadId,
+  type ThreadSummary,
 } from "../types";
 import { useThreadCommands } from "./commands";
 import { MailViewContext } from "./mail-view-context";
+import { SearchBox } from "./search-box";
 import { FailureNotice, SkeletonLines } from "./states";
 import { IconButton } from "./thread-actions";
 import { LoadMore, ThreadRows } from "./thread-list";
@@ -53,6 +59,7 @@ const SHORTCUTS: [string, string][] = [
   ["#", "Move to Trash"],
   ["s", "Add or remove star"],
   ["u", "Mark as read or unread"],
+  ["/", "Search"],
   ["?", "Show these shortcuts"],
 ];
 
@@ -104,6 +111,12 @@ function ConfirmDelete({
   );
 }
 
+function noSearchMatches(text: string): string {
+  return /\bin:/i.test(text)
+    ? "Nothing matched your search."
+    : "Nothing matched your search. Spam and Trash are left out unless you add in:spam or in:trash.";
+}
+
 function neighbourOf(threads: ThreadSummary[], threadId: ThreadId) {
   const index = threads.findIndex((thread) => thread.id === threadId);
   if (index < 0) return null;
@@ -116,7 +129,7 @@ function MailView({
   children,
 }: {
   mailboxId: MailboxId;
-  view: ThreadView;
+  view: MailListing;
   children: ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -129,6 +142,7 @@ function MailView({
     refetchInterval: () => (queryClient.isMutating() ? false : REFRESH_MS),
   });
   const threads = useMemo(() => threadsIn(list.data), [list.data]);
+  const searchProblem = list.data?.pages[0]?.problem ?? null;
   const mailboxes = useQuery(mailboxesQuery());
   const summary = mailboxes.data?.find(
     (mailbox) => mailbox.id === mailboxId,
@@ -139,14 +153,21 @@ function MailView({
     "labelId" in view
       ? summary?.labels.find((one) => one.id === view.labelId)
       : undefined;
+  const searching = "search" in view;
   const title = folder
     ? FOLDER_DISPLAY[folder].title
-    : (label?.name ?? "Label");
-  const showsUnread = folder ? FOLDER_DISPLAY[folder].countsUnread : true;
+    : searching
+      ? "Search results"
+      : (label?.name ?? "Label");
+  const showsUnread = folder ? FOLDER_DISPLAY[folder].countsUnread : !searching;
   const unread = folder ? summary?.folderUnread[folder] : label?.unread;
 
   const commands = useThreadCommands(mailboxId, view);
-  const moves = movesFor(view);
+  const movesOf = useCallback(
+    (folders: readonly Folder[]) => movesFor(view, folders),
+    [view],
+  );
+  const searchInput = useRef<HTMLInputElement>(null);
   const [focusedId, setFocusedId] = useState<ThreadId | null>(openThreadId);
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<ThreadId | null>(
@@ -161,13 +182,14 @@ function MailView({
     void navigate({
       to: "/mail/$mailboxId/$view",
       params: { mailboxId, view: viewParam(view) },
+      search: listingSearchParams(view),
     });
   }, [navigate, mailboxId, view]);
 
   const moveAway = (threadId: ThreadId, move: MoveId) => {
-    if (!folder) return;
     const next = neighbourOf(threads, threadId);
-    commands.move(threadId, folder, move);
+    commands.move(threadId, move);
+    if (!folder && MOVE_DISPLAY[move].staysInMixedListing) return;
     setFocusedId(next);
     if (threadId === openThreadId) closeThread();
   };
@@ -200,8 +222,18 @@ function MailView({
       starred: detail.messages.some((message) => message.starred),
     };
   };
+  const foldersOf = (threadId: ThreadId): readonly Folder[] => {
+    const row = threads.find((thread) => thread.id === threadId);
+    if (row) return row.folders;
+    const detail = queryClient.getQueryData<ThreadDetail | null>(
+      mailKeys.thread(mailboxId, threadId),
+    );
+    return liveFolders(detail?.messages.map((one) => one.folder) ?? []);
+  };
   const moveTarget = (move: MoveId) => {
-    if (target !== null && moves.includes(move)) moveAway(target, move);
+    if (target !== null && movesOf(foldersOf(target)).includes(move)) {
+      moveAway(target, move);
+    }
   };
 
   const hotkeysOn = !helpOpen && confirmingDelete === null;
@@ -219,6 +251,7 @@ function MailView({
           view: viewParam(view),
           threadId: String(focusedId),
         },
+        search: listingSearchParams(view),
       });
     },
     hotkeys,
@@ -244,12 +277,13 @@ function MailView({
     hotkeys,
   );
   useHotkey("?", () => setHelpOpen(true), hotkeys);
+  useHotkey("/", () => searchInput.current?.focus(), hotkeys);
 
   const context = {
     mailboxId,
     view,
     commands,
-    moves,
+    movesOf,
     act,
     closeThread,
   };
@@ -267,7 +301,11 @@ function MailView({
   } else if (threads.length === 0) {
     listBody = (
       <p className="px-6 py-12 text-center text-sm text-secondary">
-        {folder ? FOLDER_DISPLAY[folder].empty : "Nothing has this label yet."}
+        {folder
+          ? FOLDER_DISPLAY[folder].empty
+          : !searching
+            ? "Nothing has this label yet."
+            : (searchProblem ?? noSearchMatches(view.search))}
       </p>
     );
   } else {
@@ -298,6 +336,12 @@ function MailView({
           aria-label={title}
           className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null ? "flex" : "max-lg:hidden"}`}
         >
+          <SearchBox
+            key={searching ? view.search : ""}
+            mailboxId={mailboxId}
+            initial={searching ? view.search : ""}
+            inputRef={searchInput}
+          />
           <header className="flex flex-none items-baseline gap-3 px-4 pt-3.5 pb-2.5">
             <h1 className="min-w-0 flex-1 truncate text-[21px] font-semibold">
               {title}
@@ -342,15 +386,17 @@ function MailView({
 export function MailViewScreen({
   mailboxId,
   viewRaw,
+  q,
   prefetched,
   children,
 }: {
   mailboxId: string;
   viewRaw: string;
+  q: string | undefined;
   prefetched: DehydratedState | undefined;
   children: ReactNode;
 }) {
-  const view = useMemo(() => parseViewParam(viewRaw), [viewRaw]);
+  const view = useMemo(() => parseListing(viewRaw, q), [viewRaw, q]);
   if (!view) {
     return (
       <FailureNotice message="We couldn't find that folder. Choose one from the menu." />
@@ -358,7 +404,11 @@ export function MailViewScreen({
   }
   return (
     <HydrationBoundary state={prefetched}>
-      <MailView key={viewRaw} mailboxId={mailboxId as MailboxId} view={view}>
+      <MailView
+        key={`${viewRaw}:${q ?? ""}`}
+        mailboxId={mailboxId as MailboxId}
+        view={view}
+      >
         {children}
       </MailView>
     </HydrationBoundary>

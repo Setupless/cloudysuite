@@ -396,6 +396,7 @@ test("a thread summary describes the messages in that folder", () => {
     unreadCount: 2,
     starred: false,
     hasAttachments: true,
+    folders: ["inbox"],
   });
 });
 

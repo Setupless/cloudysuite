@@ -28,6 +28,7 @@ const row = (id: number, unreadCount = 0): ThreadSummary => ({
   unreadCount,
   starred: false,
   hasAttachments: false,
+  folders: ["inbox"],
 });
 const pages = (...rows: ThreadSummary[][]): ThreadPages => ({
   pageParams: rows.map(() => undefined),

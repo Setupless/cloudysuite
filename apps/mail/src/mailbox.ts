@@ -3,6 +3,7 @@ import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
 import { applyMigrations } from "./migrations";
+import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import type { SqlDriver } from "./sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
@@ -26,6 +27,7 @@ import type {
 export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
   readonly #imports: ImportStore;
+  readonly #search: SearchStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -36,6 +38,7 @@ export class Mailbox extends DurableObject<Env> {
     applyMigrations(db);
     this.#store = new MailboxStore(db);
     this.#imports = new ImportStore(db, this.#store);
+    this.#search = new SearchStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -55,6 +58,10 @@ export class Mailbox extends DurableObject<Env> {
 
   listThreads(query: ThreadQuery): ThreadPage {
     return this.#store.listThreads(query);
+  }
+
+  search(input: SearchInput): SearchPage {
+    return this.#search.search(input);
   }
 
   getThread(threadId: ThreadId): ThreadDetail | null {

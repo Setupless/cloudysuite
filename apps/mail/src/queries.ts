@@ -10,9 +10,11 @@ import {
   getThread,
   listMailboxes,
   listThreads,
+  searchThreads,
 } from "./functions";
-import { parseViewParam, viewParam } from "./model";
-import type { MailboxId, MessageId, ThreadId, ThreadView } from "./types";
+import { type MailListing, parseViewParam, viewParam } from "./model";
+import type { SearchPage } from "./search/store";
+import type { MailboxId, MessageId, ThreadId } from "./types";
 
 export const REFRESH_MS = 60_000;
 
@@ -57,8 +59,10 @@ export const mailKeys = {
   mailboxes: ["mail", "mailboxes"] as const,
   all: (mailboxId: MailboxId) => ["mail", mailboxId] as const,
   threads: (mailboxId: MailboxId) => ["mail", mailboxId, "threads"] as const,
-  threadsIn: (mailboxId: MailboxId, view: ThreadView) =>
-    ["mail", mailboxId, "threads", viewParam(view)] as const,
+  threadsIn: (mailboxId: MailboxId, listing: MailListing) =>
+    "search" in listing
+      ? (["mail", mailboxId, "threads", "search", listing.search] as const)
+      : (["mail", mailboxId, "threads", viewParam(listing)] as const),
   thread: (mailboxId: MailboxId, threadId: ThreadId) =>
     ["mail", mailboxId, "thread", threadId] as const,
   body: (mailboxId: MailboxId, messageId: MessageId) =>
@@ -71,11 +75,33 @@ export const mailboxesQuery = () =>
     queryFn: () => call(() => listMailboxes()),
   });
 
-export const threadsQuery = (mailboxId: MailboxId, view: ThreadView) =>
+function readListing(
+  mailboxId: MailboxId,
+  listing: MailListing,
+  cursor: string | undefined,
+): Promise<SearchPage> {
+  return call(async () => {
+    if ("search" in listing) {
+      return searchThreads({
+        data: {
+          mailboxId,
+          text: listing.search,
+          offsetMinutes: new Date().getTimezoneOffset(),
+          cursor,
+        },
+      });
+    }
+    const page = await listThreads({
+      data: { mailboxId, view: listing, cursor },
+    });
+    return { ...page, problem: null };
+  });
+}
+
+export const threadsQuery = (mailboxId: MailboxId, listing: MailListing) =>
   infiniteQueryOptions({
-    queryKey: mailKeys.threadsIn(mailboxId, view),
-    queryFn: ({ pageParam }) =>
-      call(() => listThreads({ data: { mailboxId, view, cursor: pageParam } })),
+    queryKey: mailKeys.threadsIn(mailboxId, listing),
+    queryFn: ({ pageParam }) => readListing(mailboxId, listing, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });

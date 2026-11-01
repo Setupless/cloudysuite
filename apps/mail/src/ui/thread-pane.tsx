@@ -2,7 +2,12 @@ import { IconArrowLeft } from "@tabler/icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { FOLDER_DISPLAY, parseThreadParam, viewParam } from "../model";
+import {
+  FOLDER_DISPLAY,
+  listingSearchParams,
+  parseThreadParam,
+  viewParam,
+} from "../model";
 import {
   isRefusal,
   mailKeys,
@@ -10,7 +15,7 @@ import {
   threadOfMessageQuery,
   threadQuery,
 } from "../queries";
-import type { MessageId, ThreadId } from "../types";
+import { liveFolders, type MessageId, type ThreadId } from "../types";
 import { useMailView } from "./mail-view-context";
 import { MessageCard } from "./message-card";
 import { FailureNotice } from "./states";
@@ -22,6 +27,7 @@ function BackToList() {
     <Link
       to="/mail/$mailboxId/$view"
       params={{ mailboxId, view: viewParam(view) }}
+      search={listingSearchParams(view)}
       className="flex size-8 flex-none items-center justify-center rounded text-secondary outline-accent hover:bg-field focus-visible:outline-2 lg:hidden"
       aria-label="Back to the list"
     >
@@ -43,6 +49,7 @@ function ThreadGone() {
       <Link
         to="/mail/$mailboxId/$view"
         params={{ mailboxId, view: viewParam(view) }}
+        search={listingSearchParams(view)}
         className="text-accent underline outline-accent focus-visible:outline-2"
       >
         Back to {place}
@@ -52,7 +59,8 @@ function ThreadGone() {
 }
 
 function ThreadView({ threadId }: { threadId: ThreadId }) {
-  const { mailboxId, view, commands, moves, act, closeThread } = useMailView();
+  const { mailboxId, view, commands, movesOf, act, closeThread } =
+    useMailView();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const thread = useQuery({
@@ -85,6 +93,7 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
     void navigate({
       to: "/mail/$mailboxId/$view/$threadId",
       params: { mailboxId, view: viewParam(view), threadId: String(movedTo) },
+      search: listingSearchParams(view),
       replace: true,
     });
   }, [gone, movedTo, navigate, queryClient, mailboxId, view]);
@@ -150,7 +159,12 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
           starred={starred}
           onToggle={() => commands.setStarred(threadId, !starred)}
         />
-        <MoveButtons moves={moves} onMove={(move) => act(threadId, move)} />
+        <MoveButtons
+          moves={movesOf(
+            liveFolders(detail.messages.map((message) => message.folder)),
+          )}
+          onMove={(move) => act(threadId, move)}
+        />
       </div>
       <h1 className="pb-2 text-[22px] leading-tight font-semibold break-words">
         {subject}

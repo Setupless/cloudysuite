@@ -20,6 +20,7 @@ import {
   parseListInput,
   parseMessageInput,
   parseMoveInput,
+  parseSearchInput,
   parseSelectionInput,
   parseThreadInput,
 } from "./wire";
@@ -85,6 +86,14 @@ export const listThreads = createServerFn({ method: "GET" })
   .validator(parseListInput)
   .handler(async ({ data: { mailboxId, ...query } }) =>
     (await openFor(mailboxId)).listThreads(query),
+  );
+
+// POST so that a hostile length reaches the parser, and gets a plain answer, rather
+// than stopping at a URL limit.
+export const searchThreads = createServerFn({ method: "POST" })
+  .validator(parseSearchInput)
+  .handler(async ({ data: { mailboxId, ...input } }) =>
+    (await openFor(mailboxId)).search(input),
   );
 
 export const getThread = createServerFn({ method: "GET" })

@@ -1,4 +1,5 @@
 import { type MailboxId, parseMailboxId } from "@cloudysuite/access";
+import { MAX_SEARCH_LENGTH } from "./search/query";
 import {
   type AttachmentId,
   FOLDERS,
@@ -51,6 +52,13 @@ export function requireFolder(raw: unknown): Folder {
   return raw as Folder;
 }
 
+function requireFolderScope(raw: unknown): Folder | Folder[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return requireFolder(raw);
+  if (raw.length === 0 || raw.length > FOLDERS.length) throw badRequest();
+  return raw.map(requireFolder);
+}
+
 function requireView(raw: unknown): ThreadView {
   const view = record(raw);
   return "folder" in view
@@ -72,10 +80,7 @@ function requireSelection(raw: unknown): MessageSelection {
   }
   return {
     threadIds: requireIds<ThreadId>(selection.threadIds),
-    inFolder:
-      selection.inFolder === undefined
-        ? undefined
-        : requireFolder(selection.inFolder),
+    inFolder: requireFolderScope(selection.inFolder),
   };
 }
 
@@ -111,6 +116,37 @@ export const parseListInput = (raw: unknown) => {
     view: requireView(input.view),
     cursor: cursor as string | undefined,
     limit: limit as number | undefined,
+  };
+};
+
+// The reader's Date.getTimezoneOffset, in minutes. No place is more than 14 hours
+// from UTC.
+const MAX_OFFSET_MINUTES = 14 * 60;
+
+// Text past the limit is cut here, so an enormous string never crosses to the
+// Durable Object, and the parser still sees that it was too long.
+export const parseSearchInput = (raw: unknown) => {
+  const input = record(raw);
+  const { text, offsetMinutes, cursor } = input;
+  if (typeof text !== "string") throw badRequest();
+  if (
+    typeof offsetMinutes !== "number" ||
+    !Number.isSafeInteger(offsetMinutes) ||
+    Math.abs(offsetMinutes) > MAX_OFFSET_MINUTES
+  ) {
+    throw badRequest();
+  }
+  if (
+    cursor !== undefined &&
+    (typeof cursor !== "string" || cursor.length > MAX_CURSOR_LENGTH)
+  ) {
+    throw badRequest();
+  }
+  return {
+    mailboxId: requireMailboxId(input.mailboxId),
+    text: text.slice(0, MAX_SEARCH_LENGTH + 1),
+    offsetMinutes,
+    cursor: cursor as string | undefined,
   };
 };
 

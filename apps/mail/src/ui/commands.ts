@@ -7,7 +7,7 @@ import {
   restoreMessages,
   setFlags,
 } from "../functions";
-import { MOVE_DISPLAY, type MoveId } from "../model";
+import { type MailListing, MOVE_DISPLAY, type MoveId } from "../model";
 import { asMailFailure, call, isRefusal, mailKeys } from "../queries";
 import {
   patchFlagsInDetail,
@@ -25,23 +25,25 @@ import type {
   MessageRef,
   ThreadDetail,
   ThreadId,
-  ThreadView,
 } from "../types";
 import { useToast } from "./toast";
 
 type Command =
   | { kind: "flags"; threadId: ThreadId; flags: MessageFlags }
-  | { kind: "move"; threadId: ThreadId; from: Folder; move: MoveId };
+  | { kind: "move"; threadId: ThreadId; move: MoveId };
 
 function performMove(
   mailboxId: MailboxId,
   threadId: ThreadId,
-  from: Folder,
+  from: Folder | readonly Folder[],
   move: MoveId,
 ): Promise<MessageRef[] | number> {
   const data = {
     mailboxId,
-    selection: { threadIds: [threadId], inFolder: from },
+    selection: {
+      threadIds: [threadId],
+      inFolder: typeof from === "string" ? from : [...from],
+    },
   };
   switch (move) {
     case "archive":
@@ -62,11 +64,12 @@ function performMove(
 
 const FAILURE_NOTE = "Nothing changed. Try again.";
 
-export function useThreadCommands(mailboxId: MailboxId, view: ThreadView) {
+export function useThreadCommands(mailboxId: MailboxId, listing: MailListing) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const mutationKey = mailKeys.all(mailboxId);
-  const listKey = mailKeys.threadsIn(mailboxId, view);
+  const listKey = mailKeys.threadsIn(mailboxId, listing);
+  const homeFolder = "folder" in listing ? listing.folder : null;
 
   const refreshUnlessBusy = () => {
     if (queryClient.isMutating({ mutationKey }) > 1) return;
@@ -112,7 +115,12 @@ export function useThreadCommands(mailboxId: MailboxId, view: ThreadView) {
                 selection: { threadIds: [input.threadId] },
               },
             })
-          : performMove(mailboxId, input.threadId, input.from, input.move),
+          : performMove(
+              mailboxId,
+              input.threadId,
+              homeFolder ?? MOVE_DISPLAY[input.move].from,
+              input.move,
+            ),
       ),
 
     onMutate: async (input) => {
@@ -146,31 +154,37 @@ export function useThreadCommands(mailboxId: MailboxId, view: ThreadView) {
           (detail) => detail && patchFlagsInDetail(detail, input.flags),
         );
         const { read } = input.flags;
-        if (read !== undefined) {
+        if (read !== undefined && !("search" in listing)) {
           queryClient.setQueryData<MailboxEntry[]>(
             mailKeys.mailboxes,
             (entries) =>
               entries &&
-              summaryAfterFlags(entries, mailboxId, view, wasUnread, read),
+              summaryAfterFlags(entries, mailboxId, listing, wasUnread, read),
           );
         }
       } else {
-        queryClient.setQueryData<ThreadPages>(
-          listKey,
-          (pages) => pages && removeFromPages(pages, input.threadId),
-        );
-        queryClient.setQueryData<MailboxEntry[]>(
-          mailKeys.mailboxes,
-          (entries) =>
-            entries &&
-            summaryAfterMove(
-              entries,
-              mailboxId,
-              input.from,
-              input.move,
-              wasUnread,
-            ),
-        );
+        if (homeFolder || !MOVE_DISPLAY[input.move].staysInMixedListing) {
+          queryClient.setQueryData<ThreadPages>(
+            listKey,
+            (pages) => pages && removeFromPages(pages, input.threadId),
+          );
+        }
+        // A listing that spans folders can't say which counts this changes, so
+        // those wait for the refresh that follows every command.
+        if (homeFolder) {
+          queryClient.setQueryData<MailboxEntry[]>(
+            mailKeys.mailboxes,
+            (entries) =>
+              entries &&
+              summaryAfterMove(
+                entries,
+                mailboxId,
+                homeFolder,
+                input.move,
+                wasUnread,
+              ),
+          );
+        }
       }
       return { before, threadKey };
     },
@@ -223,8 +237,8 @@ export function useThreadCommands(mailboxId: MailboxId, view: ThreadView) {
       command.mutate({ kind: "flags", threadId, flags: { read } }),
     setStarred: (threadId: ThreadId, starred: boolean) =>
       command.mutate({ kind: "flags", threadId, flags: { starred } }),
-    move: (threadId: ThreadId, from: Folder, move: MoveId) =>
-      command.mutate({ kind: "move", threadId, from, move }),
+    move: (threadId: ThreadId, move: MoveId) =>
+      command.mutate({ kind: "move", threadId, move }),
   };
 }
 

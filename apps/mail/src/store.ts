@@ -6,7 +6,7 @@ import {
   sameConversation,
   SUBJECT_FALLBACK_WINDOW_MS,
 } from "./threading";
-import { FOLDERS } from "./types";
+import { FOLDERS, liveFolders } from "./types";
 import type {
   Address,
   AttachmentId,
@@ -89,7 +89,7 @@ type ViewRow = SqlRow & {
   has_attachments: number;
 };
 
-type ViewSourceRow = SqlRow & {
+export type ViewSourceRow = SqlRow & {
   id: number;
   folder: Folder;
   subject: string | null;
@@ -159,7 +159,7 @@ function toMessageDetail(
   };
 }
 
-function toSummary(row: ViewRow): ThreadSummary {
+function toSummary(row: ViewRow, folders: Folder[]): ThreadSummary {
   return {
     id: row.thread_id as ThreadId,
     subject: row.subject,
@@ -170,10 +170,14 @@ function toSummary(row: ViewRow): ThreadSummary {
     unreadCount: row.unread_count,
     starred: row.is_starred === 1,
     hasAttachments: row.has_attachments === 1,
+    folders,
   };
 }
 
-function parseCursor(
+export const encodeCursor = (lastAt: number, threadId: number) =>
+  `${lastAt}_${threadId}`;
+
+export function parseCursor(
   cursor: string | undefined,
 ): { lastAt: number; threadId: number } | null {
   const match = /^(-?\d{1,16})_(\d{1,16})$/.exec(cursor ?? "");
@@ -192,6 +196,23 @@ function senderList(rows: ViewSourceRow[]): Address[] {
     if (seen.size === MAX_SENDERS_IN_VIEW) break;
   }
   return [...seen.values()];
+}
+
+// What a list row says about some of a thread's messages, given oldest first.
+export function describeMembers(members: ViewSourceRow[]) {
+  const latest = members.reduce((a, b) =>
+    b.received_at >= a.received_at ? b : a,
+  );
+  return {
+    lastMessageAt: latest.received_at,
+    subject: members[0]!.subject,
+    snippet: latest.snippet,
+    senders: senderList(members),
+    messageCount: members.length,
+    unreadCount: members.filter((row) => row.is_read === 0).length,
+    starred: members.some((row) => row.is_starred === 1),
+    hasAttachments: members.some((row) => row.has_attachments === 1),
+  };
 }
 
 // Every query for a mailbox lives here. The Durable Object adds transport, and
@@ -460,9 +481,7 @@ export class MailboxStore {
     }
 
     for (const [view, members] of views) {
-      const latest = members.reduce((a, b) =>
-        b.received_at >= a.received_at ? b : a,
-      );
+      const row = describeMembers(members);
       this.#db.exec(
         `INSERT INTO thread_views (
            view, thread_id, last_at, subject, snippet, senders, message_count,
@@ -470,14 +489,14 @@ export class MailboxStore {
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         view,
         threadId,
-        latest.received_at,
-        members[0]!.subject,
-        latest.snippet,
-        JSON.stringify(senderList(members)),
-        members.length,
-        members.filter((row) => row.is_read === 0).length,
-        members.some((row) => row.is_starred === 1) ? 1 : 0,
-        members.some((row) => row.has_attachments === 1) ? 1 : 0,
+        row.lastMessageAt,
+        row.subject,
+        row.snippet,
+        JSON.stringify(row.senders),
+        row.messageCount,
+        row.unreadCount,
+        row.starred ? 1 : 0,
+        row.hasAttachments ? 1 : 0,
       );
     }
   }
@@ -505,13 +524,35 @@ export class MailboxStore {
       .toArray();
     const page = rows.slice(0, limit);
     const last = page.at(-1);
+    const folders = this.#liveFolders(page.map((row) => row.thread_id));
     return {
-      threads: page.map(toSummary),
+      threads: page.map((row) =>
+        toSummary(row, folders.get(row.thread_id) ?? []),
+      ),
       nextCursor:
         rows.length > limit && last
-          ? `${last.last_at}_${last.thread_id}`
+          ? encodeCursor(last.last_at, last.thread_id)
           : null,
     };
+  }
+
+  // The folders a conversation can be acted on in. One trashed reply does not make
+  // a live conversation count as trash, so its row offers moves that fit the rest.
+  #liveFolders(threadIds: number[]): Map<number, Folder[]> {
+    const rows = this.#db
+      .exec<{ thread_id: number; folder: Folder }>(
+        "SELECT DISTINCT thread_id, folder FROM messages WHERE thread_id IN (SELECT value FROM json_each(?))",
+        JSON.stringify(threadIds),
+      )
+      .toArray();
+    return new Map(
+      [...Map.groupBy(rows, (row) => row.thread_id)].map(
+        ([threadId, group]) => [
+          threadId,
+          liveFolders(group.map((row) => row.folder)),
+        ],
+      ),
+    );
   }
 
   getThread(threadId: ThreadId): ThreadDetail | null {
@@ -569,9 +610,11 @@ export class MailboxStore {
       .exec<RefRow>(
         `SELECT id, thread_id, folder FROM messages
          WHERE thread_id IN (SELECT value FROM json_each(?))
-           AND (?2 IS NULL OR folder = ?2)`,
+           AND (?2 IS NULL OR folder IN (SELECT value FROM json_each(?2)))`,
         JSON.stringify(selection.threadIds),
-        selection.inFolder ?? null,
+        selection.inFolder === undefined
+          ? null
+          : JSON.stringify([selection.inFolder].flat()),
       )
       .toArray();
   }

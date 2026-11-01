@@ -1,6 +1,7 @@
 import type { MailboxGrant } from "@cloudysuite/access";
 import { createMailboxImports, type MailboxImports } from "./import/uploads";
 import { rawKey } from "./r2-keys";
+import type { SearchInput, SearchPage } from "./search/store";
 import { mailboxStub } from "./stub";
 import type {
   AttachmentId,
@@ -51,6 +52,7 @@ export type AttachmentDownload = {
 export type MailboxClient = {
   summary(): Promise<MailboxSummary>;
   listThreads(query: ThreadQuery): Promise<ThreadPage>;
+  search(input: SearchInput): Promise<SearchPage>;
   getThread(threadId: ThreadId): Promise<ThreadDetail | null>;
   threadOfMessage(messageId: MessageId): Promise<ThreadId | null>;
   setFlags(selection: MessageSelection, flags: MessageFlags): Promise<number>;
@@ -82,6 +84,7 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
   return {
     summary: async () => (await stub.summary()) as MailboxSummary,
     listThreads: async (query) => (await stub.listThreads(query)) as ThreadPage,
+    search: async (input) => (await stub.search(input)) as SearchPage,
     getThread: async (threadId) =>
       (await stub.getThread(threadId)) as ThreadDetail | null,
     threadOfMessage: async (messageId) =>
