@@ -1,3 +1,4 @@
+export { LabelsPage } from "./ui/labels-page";
 export { MailboxLayout, NoMailbox } from "./ui/mailbox-layout";
 export { MailRoot } from "./ui/mail-root";
 export { requireMailUser } from "./ui/session";

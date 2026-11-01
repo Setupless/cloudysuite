@@ -1,9 +1,12 @@
 import { type MailboxId, parseMailboxId } from "@cloudysuite/access";
+import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "./labels/store";
 import { MAX_SEARCH_LENGTH } from "./search/query";
 import {
   type AttachmentId,
   FOLDERS,
   type Folder,
+  LABEL_COLOURS,
+  type LabelColour,
   type LabelId,
   type MessageFlags,
   type MessageId,
@@ -22,6 +25,13 @@ export function badRequest(): Response {
     JSON.stringify({ message: "That request isn't valid." }),
     { status: 400, headers: { "Content-Type": "application/json" } },
   );
+}
+
+export function refusal(status: number, message: string): Response {
+  return new Response(JSON.stringify({ message }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 const record = (raw: unknown): Record<string, unknown> => {
@@ -46,6 +56,24 @@ export const requireMessageId = (raw: unknown) => positiveId<MessageId>(raw);
 export const requireThreadId = (raw: unknown) => positiveId<ThreadId>(raw);
 export const requireAttachmentId = (raw: unknown) =>
   positiveId<AttachmentId>(raw);
+
+export const requireLabelId = (raw: unknown) => positiveId<LabelId>(raw);
+
+function requireLabelName(raw: unknown): string {
+  const name = typeof raw === "string" ? cleanLabelName(raw) : null;
+  if (name === null) {
+    throw refusal(
+      400,
+      `Give the label a name of up to ${MAX_LABEL_NAME_LENGTH} characters.`,
+    );
+  }
+  return name;
+}
+
+function requireColour(raw: unknown): LabelColour {
+  if (!LABEL_COLOURS.includes(raw as LabelColour)) throw badRequest();
+  return raw as LabelColour;
+}
 
 export function requireFolder(raw: unknown): Folder {
   if (!FOLDERS.includes(raw as Folder)) throw badRequest();
@@ -147,6 +175,48 @@ export const parseSearchInput = (raw: unknown) => {
     text: text.slice(0, MAX_SEARCH_LENGTH + 1),
     offsetMinutes,
     cursor: cursor as string | undefined,
+  };
+};
+
+export const parseNewLabelInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    mailboxId: requireMailboxId(input.mailboxId),
+    name: requireLabelName(input.name),
+    colour: requireColour(input.colour),
+  };
+};
+
+export const parseLabelChangeInput = (raw: unknown) => {
+  const input = record(raw);
+  if (input.name === undefined && input.colour === undefined) {
+    throw badRequest();
+  }
+  return {
+    mailboxId: requireMailboxId(input.mailboxId),
+    labelId: requireLabelId(input.labelId),
+    name: input.name === undefined ? undefined : requireLabelName(input.name),
+    colour:
+      input.colour === undefined ? undefined : requireColour(input.colour),
+  };
+};
+
+export const parseLabelInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    mailboxId: requireMailboxId(input.mailboxId),
+    labelId: requireLabelId(input.labelId),
+  };
+};
+
+export const parseSetLabelInput = (raw: unknown) => {
+  const input = record(raw);
+  if (typeof input.applied !== "boolean") throw badRequest();
+  return {
+    mailboxId: requireMailboxId(input.mailboxId),
+    selection: requireSelection(input.selection),
+    labelId: requireLabelId(input.labelId),
+    applied: input.applied,
   };
 };
 

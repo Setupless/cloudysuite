@@ -15,7 +15,7 @@ beforeEach(() => {
   ({ db } = createSqlDriver());
   applyMigrations(db);
   store = new MailboxStore(db);
-  searcher = new SearchStore(db);
+  searcher = new SearchStore(db, store);
 });
 
 const T0 = Date.UTC(2026, 5, 1);

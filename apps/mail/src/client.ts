@@ -1,5 +1,6 @@
 import type { MailboxGrant } from "@cloudysuite/access";
 import { createMailboxImports, type MailboxImports } from "./import/uploads";
+import type { LabelWrite } from "./labels/store";
 import { rawKey } from "./r2-keys";
 import type { SearchInput, SearchPage } from "./search/store";
 import { mailboxStub } from "./stub";
@@ -8,6 +9,8 @@ import type {
   AttachmentInfo,
   AttachmentRef,
   Folder,
+  LabelColour,
+  LabelId,
   MailboxSummary,
   MessageBody,
   MessageFlags,
@@ -56,6 +59,17 @@ export type MailboxClient = {
   getThread(threadId: ThreadId): Promise<ThreadDetail | null>;
   threadOfMessage(messageId: MessageId): Promise<ThreadId | null>;
   setFlags(selection: MessageSelection, flags: MessageFlags): Promise<number>;
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): Promise<boolean>;
+  createLabel(name: string, colour: LabelColour): Promise<LabelWrite>;
+  updateLabel(
+    id: LabelId,
+    change: { name?: string | undefined; colour?: LabelColour | undefined },
+  ): Promise<LabelWrite>;
+  deleteLabel(id: LabelId): Promise<void>;
   moveToFolder(
     selection: MessageSelection,
     folder: Folder,
@@ -90,6 +104,13 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
     threadOfMessage: async (messageId) =>
       (await stub.threadOfMessage(messageId)) as ThreadId | null,
     setFlags: (selection, flags) => stub.setFlags(selection, flags),
+    setLabel: (selection, labelId, applied) =>
+      stub.setLabel(selection, labelId, applied),
+    createLabel: async (name, colour) =>
+      (await stub.createLabel(name, colour)) as LabelWrite,
+    updateLabel: async (id, change) =>
+      (await stub.updateLabel(id, change)) as LabelWrite,
+    deleteLabel: (id) => stub.deleteLabel(id),
     moveToFolder,
     moveToTrash: (selection) => moveToFolder(selection, "trash"),
     restore: async (selection) =>

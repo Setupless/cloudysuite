@@ -122,6 +122,7 @@ export type ThreadSummary = {
   starred: boolean;
   hasAttachments: boolean;
   folders: Folder[];
+  labelIds: LabelId[];
 };
 
 export type ThreadPage = {
@@ -164,7 +165,30 @@ export type MessageDetail = {
 
 export type ThreadDetail = { id: ThreadId; messages: MessageDetail[] };
 
-export type LabelSummary = { id: LabelId; name: string; unread: number };
+export const labelsOnThread = (detail: ThreadDetail): LabelId[] => [
+  ...new Set(detail.messages.flatMap((message) => message.labelIds)),
+];
+
+export const LABEL_COLOURS = [
+  "secondary",
+  "accent",
+  "tag-2",
+  "tag-1",
+  "danger",
+] as const;
+export type LabelColour = (typeof LABEL_COLOURS)[number];
+
+export const parseColour = (raw: unknown): LabelColour =>
+  LABEL_COLOURS.includes(raw as LabelColour)
+    ? (raw as LabelColour)
+    : "secondary";
+
+export type LabelSummary = {
+  id: LabelId;
+  name: string;
+  colour: LabelColour;
+  unread: number;
+};
 
 // Unread counts conversations, the same rows a person sees in the list.
 export type MailboxSummary = {

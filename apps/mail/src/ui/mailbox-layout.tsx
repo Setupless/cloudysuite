@@ -9,7 +9,7 @@ import {
   IconInbox,
   IconMailbox,
   IconSend,
-  IconTag,
+  IconTags,
   IconTrash,
   IconUsers,
 } from "@tabler/icons-react";
@@ -26,6 +26,7 @@ import type { MailboxEntry } from "../functions";
 import { FOLDER_DISPLAY, FOLDER_ORDER, viewParam } from "../model";
 import { mailboxesQuery, REFRESH_MS } from "../queries";
 import type { Folder, MailboxId, ThreadView } from "../types";
+import { LabelIcon } from "./label-chip";
 
 const FOLDER_ICONS: Record<Folder, Icon> = {
   inbox: IconInbox,
@@ -35,6 +36,11 @@ const FOLDER_ICONS: Record<Folder, Icon> = {
   spam: IconAlertOctagon,
   trash: IconTrash,
 };
+
+function FolderIcon({ folder }: { folder: Folder }) {
+  const FolderGlyph = FOLDER_ICONS[folder];
+  return <FolderGlyph size={18} stroke={1.75} aria-hidden />;
+}
 
 function UnreadCount({ count }: { count: number }) {
   if (count === 0) return null;
@@ -49,13 +55,13 @@ function UnreadCount({ count }: { count: number }) {
 function ViewLink({
   mailboxId,
   view,
-  icon: ViewIcon,
+  icon,
   title,
   unread,
 }: {
   mailboxId: MailboxId;
   view: ThreadView;
-  icon: Icon;
+  icon: ReactNode;
   title: string;
   unread: number;
 }) {
@@ -66,7 +72,7 @@ function ViewLink({
       className={NAV_ITEM}
       activeProps={{ className: NAV_ITEM_ACTIVE }}
     >
-      <ViewIcon size={18} stroke={1.75} aria-hidden />
+      {icon}
       <span className="min-w-0 truncate">{title}</span>
       <UnreadCount count={unread} />
     </Link>
@@ -97,7 +103,7 @@ function MailNavigation({
           key={folder}
           mailboxId={mailboxId}
           view={{ folder }}
-          icon={FOLDER_ICONS[folder]}
+          icon={<FolderIcon folder={folder} />}
           title={FOLDER_DISPLAY[folder].title}
           unread={
             FOLDER_DISPLAY[folder].countsUnread
@@ -106,7 +112,7 @@ function MailNavigation({
           }
         />
       ))}
-      {current && current.summary.labels.length > 0 && (
+      {current && (
         <>
           <SectionTitle>Labels</SectionTitle>
           {current.summary.labels.map((label) => (
@@ -114,11 +120,20 @@ function MailNavigation({
               key={label.id}
               mailboxId={mailboxId}
               view={{ labelId: label.id }}
-              icon={IconTag}
+              icon={<LabelIcon colour={label.colour} />}
               title={label.name}
               unread={label.unread}
             />
           ))}
+          <Link
+            to="/mail/$mailboxId/labels"
+            params={{ mailboxId }}
+            className={`${NAV_ITEM} text-secondary`}
+            activeProps={{ className: NAV_ITEM_ACTIVE }}
+          >
+            <IconTags size={18} stroke={1.75} aria-hidden />
+            <span className="min-w-0 truncate">Edit labels</span>
+          </Link>
         </>
       )}
       {current?.role === "manager" && (

@@ -2,6 +2,7 @@ import type { SqlDriver, SqlRow, SqlValue } from "../sql";
 import {
   describeMembers,
   encodeCursor,
+  type MailboxStore,
   parseCursor,
   type ViewSourceRow,
 } from "../store";
@@ -35,9 +36,11 @@ function folderScope(query: SearchQuery): { sql: string; binds: SqlValue[] } {
 
 export class SearchStore {
   readonly #db: SqlDriver;
+  readonly #store: MailboxStore;
 
-  constructor(db: SqlDriver) {
+  constructor(db: SqlDriver, store: MailboxStore) {
     this.#db = db;
+    this.#store = store;
   }
 
   #labelIds(names: string[]): { ids: LabelId[]; missing: string | null } {
@@ -143,6 +146,7 @@ export class SearchStore {
         .toArray(),
       (row) => row.thread_id,
     );
+    const facts = this.#store.threadFacts(threadIds);
     return hits.map((hit) => {
       const inScope = members.get(hit.thread_id) ?? [];
       return {
@@ -151,6 +155,7 @@ export class SearchStore {
         lastMessageAt: hit.last_at,
         snippet: inScope.find((row) => row.id === hit.hit_id)?.snippet ?? "",
         folders: [...new Set(inScope.map((row) => row.folder))],
+        labelIds: facts.get(hit.thread_id)?.labelIds ?? [],
       } as ThreadSummary;
     });
   }

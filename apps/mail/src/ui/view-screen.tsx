@@ -38,6 +38,7 @@ import {
 import { threadsIn } from "../thread-cache";
 import {
   type Folder,
+  labelsOnThread,
   liveFolders,
   type MailboxId,
   type ThreadDetail,
@@ -45,6 +46,8 @@ import {
   type ThreadSummary,
 } from "../types";
 import { useThreadCommands } from "./commands";
+import { useLabelCommands } from "./label-commands";
+import { LabelPicker } from "./label-picker";
 import { MailViewContext } from "./mail-view-context";
 import { SearchBox } from "./search-box";
 import { FailureNotice, SkeletonLines } from "./states";
@@ -59,6 +62,7 @@ const SHORTCUTS: [string, string][] = [
   ["#", "Move to Trash"],
   ["s", "Add or remove star"],
   ["u", "Mark as read or unread"],
+  ["l", "Add or remove labels"],
   ["/", "Search"],
   ["?", "Show these shortcuts"],
 ];
@@ -163,6 +167,8 @@ function MailView({
   const unread = folder ? summary?.folderUnread[folder] : label?.unread;
 
   const commands = useThreadCommands(mailboxId, view);
+  const labelCommands = useLabelCommands(mailboxId, view);
+  const [labelling, setLabelling] = useState<ThreadId | null>(null);
   const movesOf = useCallback(
     (folders: readonly Folder[]) => movesFor(view, folders),
     [view],
@@ -236,7 +242,17 @@ function MailView({
     }
   };
 
-  const hotkeysOn = !helpOpen && confirmingDelete === null;
+  const appliedTo = (threadId: ThreadId) => {
+    const row = threads.find((thread) => thread.id === threadId);
+    if (row) return row.labelIds;
+    const detail = queryClient.getQueryData<ThreadDetail | null>(
+      mailKeys.thread(mailboxId, threadId),
+    );
+    return detail ? labelsOnThread(detail) : [];
+  };
+
+  const hotkeysOn =
+    !helpOpen && confirmingDelete === null && labelling === null;
   const hotkeys = { enabled: hotkeysOn };
   useHotkey("J", () => step(1), hotkeys);
   useHotkey("K", () => step(-1), hotkeys);
@@ -278,6 +294,13 @@ function MailView({
   );
   useHotkey("?", () => setHelpOpen(true), hotkeys);
   useHotkey("/", () => searchInput.current?.focus(), hotkeys);
+  useHotkey(
+    "L",
+    () => {
+      if (target !== null) setLabelling(target);
+    },
+    hotkeys,
+  );
 
   const context = {
     mailboxId,
@@ -286,6 +309,8 @@ function MailView({
     movesOf,
     act,
     closeThread,
+    labelCommands,
+    openLabels: setLabelling,
   };
 
   let listBody: ReactNode;
@@ -370,6 +395,15 @@ function MailView({
         </section>
       </div>
       {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
+      {labelling !== null && (
+        <LabelPicker
+          mailboxId={mailboxId}
+          threadId={labelling}
+          applied={appliedTo(labelling)}
+          commands={labelCommands}
+          onClose={() => setLabelling(null)}
+        />
+      )}
       {confirmingDelete !== null && (
         <ConfirmDelete
           onCancel={() => setConfirmingDelete(null)}

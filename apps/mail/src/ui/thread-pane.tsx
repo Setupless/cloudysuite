@@ -15,11 +15,22 @@ import {
   threadOfMessageQuery,
   threadQuery,
 } from "../queries";
-import { liveFolders, type MessageId, type ThreadId } from "../types";
+import {
+  labelsOnThread,
+  liveFolders,
+  type MessageId,
+  type ThreadId,
+} from "../types";
 import { useMailView } from "./mail-view-context";
 import { MessageCard } from "./message-card";
 import { FailureNotice } from "./states";
-import { MoveButtons, ReadButton, StarButton } from "./thread-actions";
+import { LabelChip, useLabels } from "./label-chip";
+import {
+  LabelButton,
+  MoveButtons,
+  ReadButton,
+  StarButton,
+} from "./thread-actions";
 
 function BackToList() {
   const { mailboxId, view } = useMailView();
@@ -59,8 +70,17 @@ function ThreadGone() {
 }
 
 function ThreadView({ threadId }: { threadId: ThreadId }) {
-  const { mailboxId, view, commands, movesOf, act, closeThread } =
-    useMailView();
+  const {
+    mailboxId,
+    view,
+    commands,
+    movesOf,
+    act,
+    closeThread,
+    labelCommands,
+    openLabels,
+  } = useMailView();
+  const labels = useLabels(mailboxId);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const thread = useQuery({
@@ -144,6 +164,7 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
 
   const starred = detail.messages.some((message) => message.starred);
   const subject = detail.messages[0]?.subject?.trim() || "(No subject)";
+  const applied = labelsOnThread(detail);
   return (
     <div className="flex flex-col gap-1 px-4 py-3 lg:px-6">
       <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-0.5 bg-panel py-1">
@@ -159,6 +180,7 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
           starred={starred}
           onToggle={() => commands.setStarred(threadId, !starred)}
         />
+        <LabelButton onClick={() => openLabels(threadId)} />
         <MoveButtons
           moves={movesOf(
             liveFolders(detail.messages.map((message) => message.folder)),
@@ -169,6 +191,21 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
       <h1 className="pb-2 text-[22px] leading-tight font-semibold break-words">
         {subject}
       </h1>
+      {labels.some((label) => applied.includes(label.id)) && (
+        <div className="flex flex-wrap gap-1.5 pb-2">
+          {labels
+            .filter((label) => applied.includes(label.id))
+            .map((label) => (
+              <LabelChip
+                key={label.id}
+                label={label}
+                onRemove={() =>
+                  labelCommands.setApplied(threadId, label.id, false)
+                }
+              />
+            ))}
+        </div>
+      )}
       {detail.messages.map((message, index) => {
         const isLatest = index === detail.messages.length - 1;
         const open =

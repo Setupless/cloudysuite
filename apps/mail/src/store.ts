@@ -6,7 +6,7 @@ import {
   sameConversation,
   SUBJECT_FALLBACK_WINDOW_MS,
 } from "./threading";
-import { FOLDERS, liveFolders } from "./types";
+import { FOLDERS, liveFolders, parseColour } from "./types";
 import type {
   Address,
   AttachmentId,
@@ -159,7 +159,12 @@ function toMessageDetail(
   };
 }
 
-function toSummary(row: ViewRow, folders: Folder[]): ThreadSummary {
+export type ThreadFacts = { folders: Folder[]; labelIds: LabelId[] };
+
+function toSummary(
+  row: ViewRow,
+  facts: ThreadFacts | undefined,
+): ThreadSummary {
   return {
     id: row.thread_id as ThreadId,
     subject: row.subject,
@@ -170,7 +175,8 @@ function toSummary(row: ViewRow, folders: Folder[]): ThreadSummary {
     unreadCount: row.unread_count,
     starred: row.is_starred === 1,
     hasAttachments: row.has_attachments === 1,
-    folders,
+    folders: facts?.folders ?? [],
+    labelIds: facts?.labelIds ?? [],
   };
 }
 
@@ -249,6 +255,15 @@ export class MailboxStore {
       const placement = placementFor(message, this.#db);
       const threadId = this.#assignThread(message);
       const messageId = this.#insertMessage(message, threadId, placement);
+      // A reply stays in the conversation's labels, or a labelled conversation
+      // would go quiet in its own label view.
+      this.#db.exec(
+        `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+         SELECT DISTINCT ?, ml.label_id FROM message_labels ml
+         JOIN messages m ON m.id = ml.message_id WHERE m.thread_id = ?`,
+        messageId,
+        threadId,
+      );
       this.refreshThread(threadId);
       return {
         status: "stored",
@@ -475,6 +490,9 @@ export class MailboxStore {
     };
     for (const row of rows) {
       addTo(viewKey({ folder: row.folder }), row);
+      // Spam and Trash are where mail goes to be out of the way, so a label only
+      // shows and counts what is still live.
+      if (row.folder === "spam" || row.folder === "trash") continue;
       for (const label of labelsByMessage.get(row.id) ?? []) {
         addTo(viewKey({ labelId: label.label_id as LabelId }), row);
       }
@@ -524,11 +542,9 @@ export class MailboxStore {
       .toArray();
     const page = rows.slice(0, limit);
     const last = page.at(-1);
-    const folders = this.#liveFolders(page.map((row) => row.thread_id));
+    const facts = this.threadFacts(page.map((row) => row.thread_id));
     return {
-      threads: page.map((row) =>
-        toSummary(row, folders.get(row.thread_id) ?? []),
-      ),
+      threads: page.map((row) => toSummary(row, facts.get(row.thread_id))),
       nextCursor:
         rows.length > limit && last
           ? encodeCursor(last.last_at, last.thread_id)
@@ -536,12 +552,16 @@ export class MailboxStore {
     };
   }
 
-  // The folders a conversation can be acted on in. One trashed reply does not make
-  // a live conversation count as trash, so its row offers moves that fit the rest.
-  #liveFolders(threadIds: number[]): Map<number, Folder[]> {
+  // Read per page, not kept in the read model, so renaming or deleting a label
+  // never has to touch the rows of every thread it is on. One trashed reply does
+  // not make a live conversation count as trash, so its row offers moves that fit
+  // the rest of it.
+  threadFacts(threadIds: number[]): Map<number, ThreadFacts> {
     const rows = this.#db
-      .exec<{ thread_id: number; folder: Folder }>(
-        "SELECT DISTINCT thread_id, folder FROM messages WHERE thread_id IN (SELECT value FROM json_each(?))",
+      .exec<{ thread_id: number; folder: Folder; label_id: number | null }>(
+        `SELECT DISTINCT m.thread_id, m.folder, ml.label_id
+         FROM messages m LEFT JOIN message_labels ml ON ml.message_id = m.id
+         WHERE m.thread_id IN (SELECT value FROM json_each(?))`,
         JSON.stringify(threadIds),
       )
       .toArray();
@@ -549,7 +569,16 @@ export class MailboxStore {
       [...Map.groupBy(rows, (row) => row.thread_id)].map(
         ([threadId, group]) => [
           threadId,
-          liveFolders(group.map((row) => row.folder)),
+          {
+            folders: liveFolders(group.map((row) => row.folder)),
+            labelIds: [
+              ...new Set(
+                group.flatMap((row) =>
+                  row.label_id === null ? [] : [row.label_id as LabelId],
+                ),
+              ),
+            ],
+          },
         ],
       ),
     );
@@ -641,6 +670,33 @@ export class MailboxStore {
     });
   }
 
+  // False when the label is gone, which a person with an old page open can reach.
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): boolean {
+    return this.#db.transaction(() => {
+      const [label] = this.#db
+        .exec<{ id: number }>("SELECT id FROM labels WHERE id = ?", labelId)
+        .toArray();
+      if (!label) return false;
+      const rows = this.#select(selection);
+      const idsJson = JSON.stringify(rows.map((row) => row.id));
+      this.#db.exec(
+        applied
+          ? `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+             SELECT value, ?1 FROM json_each(?2)`
+          : `DELETE FROM message_labels
+             WHERE label_id = ?1 AND message_id IN (SELECT value FROM json_each(?2))`,
+        labelId,
+        idsJson,
+      );
+      this.#refreshThreadsOf(rows);
+      return true;
+    });
+  }
+
   // Returns where each message was, so an undo can put back exactly those messages
   // and not an older message of the thread that was already in the target folder.
   moveToFolder(selection: MessageSelection, folder: Folder): MessageRef[] {
@@ -697,13 +753,14 @@ export class MailboxStore {
         FOLDERS.map((folder) => [folder, unreadIn({ folder })]),
       ) as Record<Folder, number>,
       labels: this.#db
-        .exec<{ id: number; name: string }>(
-          "SELECT id, name FROM labels ORDER BY name COLLATE NOCASE",
+        .exec<{ id: number; name: string; colour: string }>(
+          "SELECT id, name, colour FROM labels ORDER BY name COLLATE NOCASE",
         )
         .toArray()
         .map((row) => ({
           id: row.id as LabelId,
           name: row.name,
+          colour: parseColour(row.colour),
           unread: unreadIn({ labelId: row.id as LabelId }),
         })),
     };

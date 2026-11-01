@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
+import { LabelStore, type LabelWrite } from "./labels/store";
 import { applyMigrations } from "./migrations";
 import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import type { SqlDriver } from "./sql";
@@ -12,6 +13,8 @@ import type {
   BodyRef,
   CommitResult,
   Folder,
+  LabelColour,
+  LabelId,
   MailboxSummary,
   MessageFlags,
   MessageId,
@@ -28,6 +31,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
   readonly #imports: ImportStore;
   readonly #search: SearchStore;
+  readonly #labels: LabelStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -38,7 +42,8 @@ export class Mailbox extends DurableObject<Env> {
     applyMigrations(db);
     this.#store = new MailboxStore(db);
     this.#imports = new ImportStore(db, this.#store);
-    this.#search = new SearchStore(db);
+    this.#search = new SearchStore(db, this.#store);
+    this.#labels = new LabelStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -78,6 +83,29 @@ export class Mailbox extends DurableObject<Env> {
 
   restore(selection: MessageSelection): MessageRef[] {
     return this.#store.restore(selection);
+  }
+
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): boolean {
+    return this.#store.setLabel(selection, labelId, applied);
+  }
+
+  createLabel(name: string, colour: LabelColour): LabelWrite {
+    return this.#labels.create(name, colour);
+  }
+
+  updateLabel(
+    id: LabelId,
+    change: { name?: string | undefined; colour?: LabelColour | undefined },
+  ): LabelWrite {
+    return this.#labels.update(id, change);
+  }
+
+  deleteLabel(id: LabelId): void {
+    this.#labels.delete(id);
   }
 
   threadOfMessage(messageId: MessageId): ThreadId | null {
