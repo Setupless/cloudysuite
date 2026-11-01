@@ -3,6 +3,7 @@ import { gate, type HostRoute, resolveHost, type Settings } from "./routing";
 
 const allOn: Settings = { primaryDomain: "example.com", disabled: new Set() };
 const mailOff: Settings = { ...allOn, disabled: new Set(["mail"]) };
+const storageOff: Settings = { ...allOn, disabled: new Set(["storage"]) };
 const notSetUp: Settings = { primaryDomain: null, disabled: new Set() };
 
 test.each([
@@ -11,6 +12,9 @@ test.each([
   ["MAIL.Example.COM", allOn, { kind: "app", app: "mail" }],
   ["mail.example.com", mailOff, { kind: "off", app: "mail" }],
   ["auth.example.com", mailOff, { kind: "app", app: "auth" }],
+  ["storage.example.com", allOn, { kind: "app", app: "storage" }],
+  ["storage.example.com", storageOff, { kind: "off", app: "storage" }],
+  ["mail.example.com", storageOff, { kind: "app", app: "mail" }],
   [
     "mail.EXAMPLE.com",
     { ...allOn, primaryDomain: "Example.com" },
@@ -98,5 +102,21 @@ test("only Mail's host serves the offline shell, and only while Mail is on", () 
   });
   expect(gate({ kind: "unknown" }, "/offline-shell", "GET")).toEqual({
     action: "notFound",
+  });
+});
+
+test.each([
+  ["GET", "/"],
+  ["GET", "/drive/x"],
+  ["GET", "/download/x/y"],
+  ["GET", "/preview/x/y"],
+  ["POST", "/api/drives/x/uploads"],
+  ["PUT", "/api/drives/x/uploads/y/parts/1"],
+  ["GET", "/pwa/session"],
+  ["POST", "/_serverFn/anything"],
+])("%s %s on Storage while it is off goes to the off page", (method, path) => {
+  expect(gate({ kind: "off", app: "storage" }, path, method)).toEqual({
+    action: "redirect",
+    to: "/off",
   });
 });

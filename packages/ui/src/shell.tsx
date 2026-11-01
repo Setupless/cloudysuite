@@ -26,6 +26,8 @@ export type AppShellProps = {
   navigationLabel?: string;
   // Links styled with NAV_ITEM. Each app owns its own router links.
   navigation?: ReactNode;
+  // Pinned to the bottom of the sidebar.
+  sidebarFooter?: ReactNode;
   children: ReactNode;
 };
 
@@ -42,7 +44,18 @@ const AVATAR_COLOURS = [
   "bg-avatar-6",
 ];
 
-export function Avatar({ person }: { person: ShellPerson }) {
+const AVATAR_SIZES = {
+  regular: "size-8 text-xs",
+  small: "size-[22px] text-[9px]",
+};
+
+export function Avatar({
+  person,
+  size = "regular",
+}: {
+  person: ShellPerson;
+  size?: keyof typeof AVATAR_SIZES;
+}) {
   const words = person.name.trim().split(/\s+/);
   const initials = (
     (words[0]?.[0] ?? "") + (words.length > 1 ? (words.at(-1)?.[0] ?? "") : "")
@@ -51,7 +64,7 @@ export function Avatar({ person }: { person: ShellPerson }) {
   for (const character of person.email) sum += character.charCodeAt(0);
   return (
     <span
-      className={`flex size-8 flex-none items-center justify-center rounded-full text-xs font-semibold text-on-avatar ${AVATAR_COLOURS[sum % AVATAR_COLOURS.length]}`}
+      className={`flex flex-none items-center justify-center rounded-full font-semibold text-on-avatar ${AVATAR_SIZES[size]} ${AVATAR_COLOURS[sum % AVATAR_COLOURS.length]}`}
       aria-hidden
     >
       {initials}
@@ -67,6 +80,7 @@ export function AppShell({
   signOutHref,
   navigationLabel,
   navigation,
+  sidebarFooter,
   children,
 }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -120,6 +134,7 @@ export function AppShell({
             {navigation}
           </nav>
         )}
+        {sidebarFooter && <div className="mt-auto">{sidebarFooter}</div>}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

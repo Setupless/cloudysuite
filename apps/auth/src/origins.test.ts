@@ -19,6 +19,7 @@ test("a real deployment's origins come from the stored domain, not the request",
   expect(appOrigins("example.com", request("http://evil.net:8443/"))).toEqual({
     auth: "https://auth.example.com",
     mail: "https://mail.example.com",
+    storage: "https://storage.example.com",
   });
 });
 
@@ -40,17 +41,20 @@ test.each([
     {},
     "http://auth.dev.localhost:8787",
     "http://mail.dev.localhost:8787",
+    "http://storage.dev.localhost:8787",
   ],
   [
     "http://auth.dev.localhost/",
     { "x-forwarded-proto": "https", "x-forwarded-port": "443" },
     "https://auth.dev.localhost",
     "https://mail.dev.localhost",
+    "https://storage.dev.localhost",
   ],
-])("local dev server at %s", (url, headers, auth, mail) => {
+])("local dev server at %s", (url, headers, auth, mail, storage) => {
   expect(appOrigins("dev.localhost", request(url, headers))).toEqual({
     auth,
     mail,
+    storage,
   });
 });
 
@@ -121,6 +125,7 @@ test.each([
   ).toEqual({
     auth: "http://auth.dev.localhost:8787",
     mail: "http://mail.dev.localhost:8787",
+    storage: "http://storage.dev.localhost:8787",
   });
 });
 

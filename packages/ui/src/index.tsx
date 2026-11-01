@@ -54,9 +54,15 @@ const BUTTON_VARIANTS = {
   action: "bg-accent px-3.5 py-2 text-sm font-medium text-on-accent",
   secondary: "border border-line bg-panel px-4 py-2.5 font-medium text-text",
   quiet: "border border-line bg-panel px-3 py-1.5 text-sm text-text",
+  // The same height as quiet, for a toolbar that holds both.
+  quietAction:
+    "border border-accent bg-accent px-3 py-1.5 text-sm font-semibold text-on-accent",
   danger: "border border-line bg-panel px-3 py-1.5 text-sm text-danger",
   link: "text-sm text-accent",
 };
+
+export const buttonClass = (variant: keyof typeof BUTTON_VARIANTS) =>
+  `flex cursor-pointer items-center justify-center gap-2 rounded outline-accent focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60 ${BUTTON_VARIANTS[variant]}`;
 
 export function Button({
   variant = "primary",
@@ -69,11 +75,7 @@ export function Button({
   icon?: Icon;
 }) {
   return (
-    <button
-      type={type}
-      className={`flex cursor-pointer items-center justify-center gap-2 rounded outline-accent focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60 ${BUTTON_VARIANTS[variant]}`}
-      {...props}
-    >
+    <button type={type} className={buttonClass(variant)} {...props}>
       {ButtonIcon && <ButtonIcon size={18} stroke={1.75} aria-hidden />}
       {children}
     </button>

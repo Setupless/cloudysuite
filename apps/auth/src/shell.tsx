@@ -1,5 +1,5 @@
 import { AppShell, type ShellApp } from "@cloudysuite/ui";
-import { IconMail, IconUserCircle } from "@tabler/icons-react";
+import { IconFolder, IconMail, IconUserCircle } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { AppId } from "../../../src/routing";
@@ -7,6 +7,7 @@ import type { SignedIn } from "./session";
 
 const APP_DISPLAY: Record<AppId, { name: string; icon: Icon }> = {
   mail: { name: "Mail", icon: IconMail },
+  storage: { name: "Storage", icon: IconFolder },
   auth: { name: "Account", icon: IconUserCircle },
 };
 
@@ -16,6 +17,7 @@ export function SuiteShell({
   user,
   navigationLabel,
   navigation,
+  sidebarFooter,
   signOutHref,
   children,
 }: {
@@ -23,6 +25,7 @@ export function SuiteShell({
   user: SignedIn;
   navigationLabel?: string;
   navigation?: ReactNode;
+  sidebarFooter?: ReactNode;
   // Mail's offline stand-in, because Account can't load without a connection.
   signOutHref?: string;
   children: ReactNode;
@@ -43,6 +46,7 @@ export function SuiteShell({
       signOutHref={signOutHref ?? new URL("/sign-out", account).href}
       navigationLabel={navigationLabel}
       navigation={navigation}
+      sidebarFooter={sidebarFooter}
     >
       {children}
     </AppShell>

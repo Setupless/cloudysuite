@@ -20,6 +20,10 @@ const APP_TEXT: Record<ToggleableApp, { name: string; off: string }> = {
     name: "Mail",
     off: "People who open Mail will see a page saying an admin turned it off, and it leaves the app list. Nothing is deleted, and new mail keeps arriving, so it will all be there when you turn it back on.",
   },
+  storage: {
+    name: "Storage",
+    off: "People who open Storage will see a page saying an admin turned it off, and it leaves the app list. Nothing is deleted, so every file will be there when you turn it back on.",
+  },
 };
 
 function AppToggle({ id, enabled }: { id: ToggleableApp; enabled: boolean }) {

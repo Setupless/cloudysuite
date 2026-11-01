@@ -392,7 +392,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
       }
     },
     guide: ({ plan, scriptName }) => ({
-      action: `In Cloudflare, open the ${scriptName} Worker, then Settings, then Domains & Routes. Add ${appHostnames(plan.appDomain).join(" and ")} as custom domains. Then check again.`,
+      action: `In Cloudflare, open the ${scriptName} Worker, then Settings, then Domains & Routes. Add ${new Intl.ListFormat("en").format(appHostnames(plan.appDomain))} as custom domains. Then check again.`,
       dashboardUrl: dashboard(
         `workers/services/view/${scriptName}/production/settings`,
       ),
