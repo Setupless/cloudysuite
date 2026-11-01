@@ -27,6 +27,7 @@ import {
   type OutgoingDetail,
   type OutgoingId,
   type OutgoingSummary,
+  type KeptSaveResult,
   type SaveResult,
   TOO_LARGE_TEXT,
 } from "./types";
@@ -74,6 +75,14 @@ export type MailboxOutgoing = {
     editor: Editor;
     ownDomain: string;
   }): Promise<SaveResult>;
+  saveKept(input: {
+    id: OutgoingId;
+    copyId: OutgoingId;
+    baseRevision: number;
+    content: DraftContent;
+    editor: Editor;
+    ownDomain: string;
+  }): Promise<KeptSaveResult>;
   send(input: {
     id: OutgoingId;
     content: DraftContent;
@@ -216,6 +225,19 @@ export function createMailboxOutgoing(
         editor,
         r2Prefix: prefixOf(id),
       })) as SaveResult;
+    },
+
+    async saveKept({ id, copyId, baseRevision, content, editor, ownDomain }) {
+      const clean = await cleanContent(content, ownDomain);
+      return (await stub.saveKeptOutgoing({
+        id,
+        copyId,
+        baseRevision,
+        ...clean,
+        editor,
+        r2Prefix: prefixOf(id),
+        copyR2Prefix: prefixOf(copyId),
+      })) as KeptSaveResult;
     },
 
     async send({ id, content, editor, ownDomain, fromName }) {

@@ -11,7 +11,9 @@ import type {
 import type {
   ComposeMode,
   DraftContent,
+  DraftHolds,
   Editor,
+  KeptSaveResult,
   OutgoingAttachment,
   OutgoingDetail,
   OutgoingId,
@@ -91,6 +93,12 @@ const SELECT_ROW = `
     (SELECT COUNT(*) FROM outgoing_attachments a WHERE a.outgoing_id = o.id) AS attachment_count
   FROM outgoing o`;
 
+const NOTHING_HELD: DraftHolds = {
+  attachmentIds: [],
+  quote: false,
+  threaded: false,
+};
+
 const addressesIn = (json: string) => JSON.parse(json) as Address[];
 
 // Words from a device can ask for a quote that only the row it was written on had.
@@ -99,6 +107,15 @@ const withQuoteOnlyIfHeld = (
   row: OutgoingRow | null,
 ): DraftContent =>
   row?.quote_bytes == null ? { ...content, includeQuote: false } : content;
+
+const holdsContent = (row: OutgoingRow, content: DraftContent): boolean =>
+  row.from_address === content.from &&
+  row.to_addresses === JSON.stringify(content.to) &&
+  row.cc_addresses === JSON.stringify(content.cc) &&
+  row.bcc_addresses === JSON.stringify(content.bcc) &&
+  row.subject === content.subject &&
+  row.html === content.html &&
+  (row.include_quote === 1) === content.includeQuote;
 
 const toAttachment = (row: AttachmentRow): OutgoingAttachment => ({
   id: row.id,
@@ -314,6 +331,38 @@ export class OutgoingStore {
     return row!.revision;
   }
 
+  #writeNew(
+    id: OutgoingId,
+    content: DraftContent,
+    plainText: string,
+    editor: Editor,
+    r2Prefix: string,
+    now: number,
+  ): number {
+    this.#insert(
+      {
+        id,
+        mode: "new",
+        parent: null,
+        content,
+        r2Prefix,
+        quote: null,
+        attachments: [],
+        editor,
+      },
+      now,
+    );
+    return this.#writeContent(id, content, plainText, editor, now);
+  }
+
+  #holds(id: OutgoingId, row: OutgoingRow): DraftHolds {
+    return {
+      attachmentIds: this.#attachments(id).map((file) => file.id),
+      quote: row.quote_bytes !== null,
+      threaded: row.parent_message_id !== null,
+    };
+  }
+
   // Each save is an update to one row, so autosave cannot pile up messages. Two people
   // on one draft: the last save wins, and the later one is told whose work it replaced.
   save(
@@ -332,24 +381,18 @@ export class OutgoingStore {
       const row = this.#row(id);
       const content = withQuoteOnlyIfHeld(input.content, row);
       if (!row) {
-        this.#insert(
-          {
-            id,
-            mode: "new",
-            parent: null,
-            content,
-            r2Prefix,
-            quote: null,
-            attachments: [],
-            editor,
-          },
-          now,
-        );
         return {
           status: "saved",
-          revision: this.#writeContent(id, content, plainText, editor, now),
+          revision: this.#writeNew(
+            id,
+            content,
+            plainText,
+            editor,
+            r2Prefix,
+            now,
+          ),
           overwrote: null,
-          holds: { attachmentIds: [], quote: false, threaded: false },
+          holds: NOTHING_HELD,
         };
       }
       if (row.state !== "draft") return { status: "locked", state: row.state };
@@ -361,12 +404,78 @@ export class OutgoingStore {
         status: "saved",
         revision: this.#writeContent(id, content, plainText, editor, now),
         overwrote,
-        holds: {
-          attachmentIds: this.#attachments(id).map((file) => file.id),
-          quote: row.quote_bytes !== null,
-          threaded: row.parent_message_id !== null,
-        },
+        holds: this.#holds(id, row),
       };
+    });
+  }
+
+  // Words coming back from a device can be hours behind, and nobody may be watching. They
+  // replace the draft only if it is still what they were written on. Otherwise both sets
+  // of words stay. The check and the write share this transaction, so no save can land
+  // between them. Safe to repeat: `copyId` comes from the kept version, so a retry finds
+  // the copy, and words already saved count as unchanged.
+  saveKept(
+    input: {
+      id: OutgoingId;
+      copyId: OutgoingId;
+      baseRevision: number;
+      content: DraftContent;
+      plainText: string;
+      editor: Editor;
+      r2Prefix: string;
+      copyR2Prefix: string;
+    },
+    now = Date.now(),
+  ): KeptSaveResult {
+    return this.#db.transaction(() => {
+      const { id, copyId, baseRevision, plainText, editor } = input;
+      const row = this.#row(id);
+      const content = withQuoteOnlyIfHeld(input.content, row);
+      const changed =
+        row?.state === "draft" && row.revision !== baseRevision
+          ? { by: row.updated_by === editor.id ? null : row.updated_by_name }
+          : null;
+      const copy = this.#row(copyId);
+      if (copy) {
+        return {
+          status: "copied",
+          copyId,
+          copyIsDraft: copy.state === "draft",
+          changed,
+        };
+      }
+      if (!row) {
+        return {
+          status: "saved",
+          revision: this.#writeNew(
+            id,
+            content,
+            plainText,
+            editor,
+            input.r2Prefix,
+            now,
+          ),
+          holds: NOTHING_HELD,
+        };
+      }
+      if (row.state === "draft" && (!changed || holdsContent(row, content))) {
+        return {
+          status: "saved",
+          revision: changed
+            ? row.revision
+            : this.#writeContent(id, content, plainText, editor, now),
+          holds: this.#holds(id, row),
+        };
+      }
+      this.#writeNew(
+        copyId,
+        withQuoteOnlyIfHeld(input.content, null),
+        plainText,
+        editor,
+        input.copyR2Prefix,
+        now,
+      );
+      return { status: "copied", copyId, copyIsDraft: true, changed };
     });
   }
 
@@ -392,22 +501,11 @@ export class OutgoingStore {
       if (row && row.state !== "draft") {
         return { status: "locked", state: row.state };
       }
-      if (!row) {
-        this.#insert(
-          {
-            id,
-            mode: "new",
-            parent: null,
-            content,
-            r2Prefix,
-            quote: null,
-            attachments: [],
-            editor,
-          },
-          now,
-        );
+      if (row) {
+        this.#writeContent(id, content, plainText, editor, now);
+      } else {
+        this.#writeNew(id, content, plainText, editor, r2Prefix, now);
       }
-      this.#writeContent(id, content, plainText, editor, now);
       this.#db.exec(
         `UPDATE outgoing SET
            state = 'scheduled', due_at = ?, attempts = 0, failure = NULL,

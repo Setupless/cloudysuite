@@ -26,7 +26,11 @@ async function run(): Promise<void> {
   // A frame on another site gets no session cookie, so it would read as signed out.
   if (window.top !== window) return;
   const session = await readServerSession();
-  const owner = await readOwner().catch(() => null);
+  let ownerKnown = true;
+  const owner = await readOwner().catch(() => {
+    ownerKnown = false;
+    return null;
+  });
   switch (clearingStep(session.kind, owner, Date.now())) {
     case "backToMail":
       location.replace("/");
@@ -43,7 +47,14 @@ async function run(): Promise<void> {
       return;
     case "askFirst":
       show("kept");
-      if (owner && (await readKeptRows(owner.user.id).catch(() => [])).length) {
+      // Storage that can't be read may still hold someone's words.
+      if (
+        !ownerKnown ||
+        (owner &&
+          (await readKeptRows(owner.user.id)
+            .then((rows) => rows.length > 0)
+            .catch(() => true)))
+      ) {
         document.getElementById("unsaved")?.removeAttribute("hidden");
       }
       document

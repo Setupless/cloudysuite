@@ -7,14 +7,20 @@ import {
 } from "../../pwa/device-store";
 import { callAction } from "../../queries";
 import type { MailboxId } from "../../types";
-import { saveDraft } from "../functions";
+import { saveKeptDraft } from "../functions";
 import {
   isLeftOut,
   moveToDrafts,
   parseKeptDraft,
   parseKeptNote,
 } from "../kept";
-import type { KeptDraft, KeptNote, LeftOut, OutgoingId } from "../types";
+import type {
+  DraftChange,
+  KeptDraft,
+  KeptNote,
+  LeftOut,
+  OutgoingId,
+} from "../types";
 
 export const readKeptDrafts = async (userId: UserId): Promise<KeptDraft[]> =>
   (await readKeptRows(userId))
@@ -42,6 +48,13 @@ export const keptNotesQuery = (userId: UserId) =>
     staleTime: 0,
   });
 
+export type MovedDraft = {
+  draft: KeptDraft;
+  savedAs: OutgoingId;
+  leftOut: LeftOut;
+  changed: DraftChange | null;
+};
+
 // Each one that goes is forgotten only after the server has it. Whatever fails stays
 // here for the next try, and the one open in an editor is that editor's to save. A
 // mailbox this person has lost is skipped: those words aren't for it any more.
@@ -49,38 +62,41 @@ export async function saveKeptDrafts(
   userId: UserId,
   openId: OutgoingId | undefined,
   mayWrite: (mailboxId: MailboxId) => boolean,
-): Promise<{ draft: KeptDraft; savedAs: OutgoingId; leftOut: LeftOut }[]> {
-  const moved: { draft: KeptDraft; savedAs: OutgoingId; leftOut: LeftOut }[] =
-    [];
+): Promise<MovedDraft[]> {
+  const moved: MovedDraft[] = [];
   for (const draft of await readKeptDrafts(userId)) {
     if (draft.id === openId || !mayWrite(draft.mailboxId)) continue;
     try {
-      const { savedAs, leftOut } = await moveToDrafts(draft, (id) =>
-        callAction(() =>
-          saveDraft({
-            data: {
-              mailboxId: draft.mailboxId,
-              id,
-              baseRevision: draft.revision,
-              content: draft.content,
-            },
-          }),
-        ),
+      const { savedAs, leftOut, changed } = await moveToDrafts(
+        draft,
+        (copyId) =>
+          callAction(() =>
+            saveKeptDraft({
+              data: {
+                mailboxId: draft.mailboxId,
+                id: draft.id,
+                copyId,
+                baseRevision: draft.revision,
+                content: draft.content,
+              },
+            }),
+          ),
       );
       await settleKeptDraft(
         userId,
         draft.id,
         draft.keptAt,
-        isLeftOut(leftOut)
+        isLeftOut(leftOut) || changed
           ? {
               id: savedAs,
               mailboxId: draft.mailboxId,
               subject: draft.content.subject,
               leftOut,
+              changed,
             }
           : null,
       );
-      moved.push({ draft, savedAs, leftOut });
+      moved.push({ draft, savedAs, leftOut, changed });
     } catch {
       // Still on this device, and the band says so.
     }

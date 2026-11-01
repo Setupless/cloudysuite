@@ -134,6 +134,8 @@ export type DraftForEditor = Pick<
   "content" | "revision" | "mode" | "parent" | "attachments" | "quote"
 >;
 
+// `revision` is the server's revision these words were written on. Going back, they
+// replace the server's draft only if it is still at that revision.
 export type KeptDraft = DraftForEditor & {
   id: OutgoingId;
   mailboxId: MailboxId;
@@ -151,12 +153,17 @@ export type DraftHolds = {
 
 export type LeftOut = { files: string[]; quote: boolean; reply: boolean };
 
+// Who changed a draft while someone's words were stuck on a device. `by` is the
+// colleague's name, or null when it was the same person somewhere else.
+export type DraftChange = { by: string | null };
+
 // Stays on the device until the person has seen it. A toast could go unread.
 export type KeptNote = {
   id: OutgoingId;
   mailboxId: MailboxId;
   subject: string;
   leftOut: LeftOut;
+  changed: DraftChange | null;
 };
 
 export type Editor = { id: string; name: string };
@@ -169,6 +176,17 @@ export type SaveResult =
       holds: DraftHolds;
     }
   | { status: "locked"; state: OutgoingState };
+
+// `copied` means the words have a draft of their own, because the one they were written
+// on moved on or was sent. `copyIsDraft` is false once that new draft has itself gone.
+export type KeptSaveResult =
+  | { status: "saved"; revision: number; holds: DraftHolds }
+  | {
+      status: "copied";
+      copyId: OutgoingId;
+      copyIsDraft: boolean;
+      changed: DraftChange | null;
+    };
 
 export const UNDO_WINDOW_MS = 10_000;
 

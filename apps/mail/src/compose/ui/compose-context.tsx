@@ -18,7 +18,7 @@ import { runWhileVisible } from "../../pwa/while-visible";
 import type { MailboxId, MessageId, ThreadId } from "../../types";
 import { mailboxesQuery } from "../../queries";
 import { useToast } from "../../ui/toast";
-import { isLeftOut, leftOutText, withoutAccess } from "../kept";
+import { isLeftOut, keptNoteText, withoutAccess } from "../kept";
 import {
   keptDraftsQuery,
   keptNotesQuery,
@@ -132,10 +132,11 @@ function LeftOutBand({
       className="flex flex-none flex-wrap items-center gap-3 border-b border-line bg-sidebar px-4 py-2 text-sm text-danger"
     >
       <span className="min-w-0 flex-1 basis-64">
-        {note.subject
-          ? `"${note.subject}" is in Drafts. `
-          : "A message you wrote is in Drafts. "}
-        {leftOutText(note.leftOut)}
+        {!note.changed &&
+          (note.subject
+            ? `"${note.subject}" is in Drafts. `
+            : "A message you wrote is in Drafts. ")}
+        {keptNoteText(note)}
       </span>
       <button
         type="button"
@@ -269,13 +270,24 @@ export function ComposeProvider({
       const [first] = moved;
       const onlyHere =
         moved.length === 1 && first?.draft.mailboxId === mailboxId;
+      const firstNote = first && {
+        subject: first.draft.content.subject,
+        leftOut: first.leftOut,
+        changed: first.changed,
+      };
       toast({
         message:
           moved.length === 1
-            ? isLeftOut(first!.leftOut)
-              ? "What you were writing is now in Drafts, but part of it couldn't come along."
-              : "What you were writing is now in Drafts."
-            : `${moved.length} messages you were writing are now in Drafts.`,
+            ? first!.changed
+              ? keptNoteText(firstNote!)
+              : isLeftOut(first!.leftOut)
+                ? "What you were writing is now in Drafts, but part of it couldn't come along."
+                : "What you were writing is now in Drafts."
+            : `${moved.length} messages you were writing are now in Drafts.${
+                moved.some(({ changed }) => changed)
+                  ? " Someone changed at least one of them while you were offline, so those words are in a new draft beside it."
+                  : ""
+              }`,
         action:
           onlyHere && first
             ? {
@@ -283,8 +295,8 @@ export function ComposeProvider({
                 run: () =>
                   void reopen(
                     first.savedAs,
-                    isLeftOut(first.leftOut)
-                      ? leftOutText(first.leftOut)
+                    first.changed || isLeftOut(first.leftOut)
+                      ? keptNoteText(firstNote!)
                       : undefined,
                   ),
               }
@@ -357,7 +369,7 @@ export function ComposeProvider({
             note={noteHere}
             onOpen={() => {
               if (refuseIfOffline()) return;
-              void reopen(noteHere.id, leftOutText(noteHere.leftOut));
+              void reopen(noteHere.id, keptNoteText(noteHere));
               void forgetNote(noteHere);
             }}
             onDismiss={() => void forgetNote(noteHere)}

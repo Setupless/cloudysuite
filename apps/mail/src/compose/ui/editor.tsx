@@ -42,7 +42,7 @@ import {
   sendDraft,
   startDraft,
 } from "../functions";
-import { isLeftOut, leftOutOf, leftOutText, lockedCopyId } from "../kept";
+import { isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
   type DraftContent,
   type DraftForEditor,
@@ -385,6 +385,7 @@ function EditorForm({
       mailboxId,
       subject: content.subject,
       leftOut,
+      changed: null,
     }).catch(() => {});
     refreshKept();
   };
@@ -609,7 +610,7 @@ function EditorForm({
     await flush();
     const content = read.current();
     try {
-      const id = await lockedCopyId(session.id, keptVersion.current);
+      const id = await keptCopyId(session.id, keptVersion.current);
       await callAction(() =>
         saveDraft({
           data: { mailboxId, id, baseRevision: 0, content },

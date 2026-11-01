@@ -1,13 +1,14 @@
-import { safeFileName } from "../attachment-headers";
+import { safeFileName } from "@cloudysuite/transfer";
 import type { Address } from "../types";
 import type {
+  DraftChange,
   DraftForEditor,
   DraftHolds,
   KeptDraft,
   KeptNote,
+  KeptSaveResult,
   LeftOut,
   OutgoingId,
-  SaveResult,
 } from "./types";
 import { parseOutgoingId } from "./wire";
 
@@ -46,7 +47,10 @@ function namedFiles(files: string[]): string {
   return `${names.join(", ")}${more > 0 ? `, and ${more} more` : ""}`;
 }
 
-export function leftOutText({ files, quote, reply }: LeftOut): string {
+export function leftOutText(
+  { files, quote, reply }: LeftOut,
+  lead = "This message was changed, sent, or removed somewhere else.",
+): string {
   const missing = [
     ...(files.length === 1 ? [`the attached file ${namedFiles(files)}`] : []),
     ...(files.length > 1
@@ -55,7 +59,7 @@ export function leftOutText({ files, quote, reply }: LeftOut): string {
     ...(quote ? ["the original message"] : []),
   ];
   const sentences = [
-    "This message was changed, sent, or removed somewhere else.",
+    lead,
     missing.length > 0
       ? `Your words are safe, but ${missing.join(" and ")} couldn't stay with them.`
       : "Your words are safe.",
@@ -73,9 +77,29 @@ export function leftOutText({ files, quote, reply }: LeftOut): string {
   return sentences.join(" ");
 }
 
+function changedText({ by }: DraftChange, subject: string): string {
+  const outcome =
+    "while you were offline, so your words are in a new draft beside it.";
+  const title = subject ? `"${subject}"` : "";
+  return by
+    ? `${by} changed ${title || "a draft"} ${outcome}`
+    : `${title || "A draft"} was changed on another device or tab ${outcome}`;
+}
+
+// What a person is told about words that went to Drafts while they weren't looking.
+export function keptNoteText({
+  subject,
+  leftOut,
+  changed,
+}: Pick<KeptNote, "subject" | "leftOut" | "changed">): string {
+  if (!changed) return leftOutText(leftOut);
+  const lead = changedText(changed, subject);
+  return isLeftOut(leftOut) ? leftOutText(leftOut, lead) : lead;
+}
+
 // The same words kept at the same moment always get the same new draft, so a retry, or
 // a second tab doing the same work, can't make two of them.
-export async function lockedCopyId(
+export async function keptCopyId(
   id: OutgoingId,
   keptAt: number,
 ): Promise<OutgoingId> {
@@ -95,27 +119,31 @@ export async function lockedCopyId(
   ].join("-") as OutgoingId;
 }
 
-// Someone may have sent this message while the words were stuck here. The words still
-// matter, and a sent message can't change, so they become a draft of their own.
 export async function moveToDrafts(
   draft: KeptDraft,
-  save: (id: OutgoingId) => Promise<SaveResult>,
-): Promise<{ savedAs: OutgoingId; leftOut: LeftOut }> {
+  save: (copyId: OutgoingId) => Promise<KeptSaveResult>,
+): Promise<{
+  savedAs: OutgoingId;
+  leftOut: LeftOut;
+  changed: DraftChange | null;
+}> {
   const had = { ...draft, includeQuote: draft.content.includeQuote };
-  const saved = await save(draft.id);
-  if (saved.status === "saved") {
-    return { savedAs: draft.id, leftOut: leftOutOf(had, saved.holds) };
+  const result = await save(await keptCopyId(draft.id, draft.keptAt));
+  if (result.status === "saved") {
+    return {
+      savedAs: draft.id,
+      leftOut: leftOutOf(had, result.holds),
+      changed: null,
+    };
   }
-  const id = await lockedCopyId(draft.id, draft.keptAt);
-  const copy = await save(id);
-  return {
-    savedAs: id,
-    // A copy already sent means an earlier try got this far, and the words went with it.
-    leftOut:
-      copy.status === "saved"
-        ? leftOutOf(had, HOLDS_NOTHING)
-        : NOTHING_LEFT_OUT,
-  };
+  // A copy already sent means an earlier try got this far, and the words went with it.
+  return result.copyIsDraft
+    ? {
+        savedAs: result.copyId,
+        leftOut: leftOutOf(had, HOLDS_NOTHING),
+        changed: result.changed,
+      }
+    : { savedAs: result.copyId, leftOut: NOTHING_LEFT_OUT, changed: null };
 }
 
 const isRecord = (raw: unknown): raw is Record<string, unknown> =>
@@ -177,6 +205,7 @@ export function parseKeptDraft(raw: unknown): KeptDraft | null {
 export function parseKeptNote(raw: unknown): KeptNote | null {
   if (!isRecord(raw) || !isRecord(raw.leftOut)) return null;
   const { files, quote, reply } = raw.leftOut;
+  const { changed } = raw;
   const valid =
     parseOutgoingId(raw.id) !== null &&
     isString(raw.mailboxId) &&
@@ -184,7 +213,9 @@ export function parseKeptNote(raw: unknown): KeptNote | null {
     Array.isArray(files) &&
     files.every(isString) &&
     typeof quote === "boolean" &&
-    typeof reply === "boolean";
+    typeof reply === "boolean" &&
+    (changed === null ||
+      (isRecord(changed) && (changed.by === null || isString(changed.by))));
   return valid ? (raw as KeptNote) : null;
 }
 
