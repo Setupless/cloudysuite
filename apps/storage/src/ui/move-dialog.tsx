@@ -33,7 +33,7 @@ function Folders({
   const mayHaveMore = query.hasNextPage && items.at(-1)?.kind === "folder";
   return (
     <div className="flex max-h-60 flex-col overflow-y-auto">
-      {first.folder && (
+      {first.folder && !(first.shared && first.folder.parentId === null) && (
         <button
           type="button"
           className={FOLDER_ROW}
@@ -61,7 +61,7 @@ function Folders({
           <span className="truncate">{folder.name}</span>
         </button>
       ))}
-      {folders.length === 0 && !first.folder && (
+      {folders.length === 0 && (!first.folder || first.shared) && (
         <p className="py-2 text-sm text-secondary">No folders here yet.</p>
       )}
       {mayHaveMore && (
@@ -92,18 +92,30 @@ export function MoveDialog({
   onClose: () => void;
 }) {
   const { data: directory } = useQuery(directoryQuery());
-  const [drive, setDrive] = useState<string>(driveId);
-  const [folderId, setFolderId] = useState<ItemId | null>(item.parentId);
+  const myDrive = directory?.myDriveId ?? MY_FILES_NOT_MADE;
+  const onDrive =
+    driveId === myDrive ||
+    directory?.teamFolders.some((team) => team.id === driveId);
+  // The top of what's shared with someone has nowhere above it they can see.
+  const canStayHere = onDrive || item.parentId !== null;
+  const [drive, setDrive] = useState<string>(canStayHere ? driveId : myDrive);
+  const [folderId, setFolderId] = useState<ItemId | null>(
+    canStayHere ? item.parentId : null,
+  );
   const [openName, setOpenName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  const myDrive = directory?.myDriveId ?? MY_FILES_NOT_MADE;
   const driveName =
     drive === myDrive
       ? "My files"
       : (directory?.teamFolders.find((team) => team.id === drive)?.name ??
         "this folder");
+  const editable =
+    directory?.teamFolders.filter(
+      (team) => team.role !== "viewer" || team.id === driveId,
+    ) ?? [];
+  const leavingDrive = drive !== driveId;
   const placeName = folderId === null ? driveName : (openName ?? "this folder");
   const unchanged = drive === driveId && folderId === item.parentId;
 
@@ -135,7 +147,10 @@ export function MoveDialog({
         }}
       >
         <option value={myDrive}>My files</option>
-        {directory?.teamFolders.map((team) => (
+        {!onDrive && canStayHere && (
+          <option value={driveId}>This shared folder</option>
+        )}
+        {editable.map((team) => (
           <option key={team.id} value={team.id}>
             {team.name}
           </option>
@@ -157,6 +172,8 @@ export function MoveDialog({
       )}
       <p className="text-sm text-secondary">
         {unchanged ? "It's already here." : `It goes in ${placeName}.`}
+        {leavingDrive &&
+          " People it's shared with lose access, because sharing stays behind when something moves to another team folder or My files."}
       </p>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">

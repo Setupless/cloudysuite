@@ -31,7 +31,9 @@ export type MailboxRole = (typeof MAILBOX_ROLES)[number];
 export const DRIVE_KINDS = ["personal", "team"] as const;
 export type DriveKind = (typeof DRIVE_KINDS)[number];
 
-export const DRIVE_ROLES = ["manager", "member"] as const;
+// A manager can also change who is on a team folder. An editor is "Can edit" and a viewer
+// is "Can view".
+export const DRIVE_ROLES = ["manager", "editor", "viewer"] as const;
 export type DriveRole = (typeof DRIVE_ROLES)[number];
 
 const now = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
@@ -407,5 +409,27 @@ export const savedMailAttachments = sqliteTable(
         table.attachmentId,
       ],
     }),
+  ],
+);
+
+// Where to look for what has been shared with a person. It grants nothing and holds no
+// names. The Drive object owns its shares and writes each row from them, so a row left
+// behind by a failed write shows nothing and opens nothing.
+export const driveShares = sqliteTable(
+  "drive_shares",
+  {
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    driveId: text("drive_id")
+      .$type<DriveId>()
+      .notNull()
+      .references(() => drives.id, { onDelete: "cascade" }),
+    itemId: text("item_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.driveId, table.itemId] }),
+    index("drive_shares_drive_id_idx").on(table.driveId),
   ],
 );

@@ -7,6 +7,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { recentQuery } from "../queries";
 import { parseItemId } from "../types";
+import { levelOfRole } from "@cloudysuite/access";
 import { DetailsPanel, NothingChosenPanel } from "./details-panel";
 import { FileTable } from "./file-table";
 import { Breadcrumb, PageTop, Problem } from "./page-parts";
@@ -56,16 +57,10 @@ function Recent({ me, file }: { me: SignedIn; file: string | undefined }) {
             driveId: selected.drive.id,
             file: selected.file,
             addedBy: personOf(people, selected.file.createdBy).name,
+            canEdit: levelOfRole(selected.drive.role) === "edit",
+            shared: false,
           }}
-          access={
-            selected.drive.kind === "personal"
-              ? { kind: "personal", me }
-              : {
-                  kind: "team",
-                  name: selected.drive.name,
-                  colour: selected.drive.colour,
-                }
-          }
+          me={me}
         />
       ) : (
         files.length > 0 && <NothingChosenPanel />

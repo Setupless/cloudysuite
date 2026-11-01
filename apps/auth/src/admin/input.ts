@@ -1,5 +1,6 @@
-import { parseMailboxId } from "@cloudysuite/access";
+import { parseDriveId, parseMailboxId } from "@cloudysuite/access";
 import type {
+  DriveId,
   MailboxId,
   MailboxRole,
   OrgRole,
@@ -63,6 +64,15 @@ export function readLimitBytes(input: unknown): number | null {
 
 export const readUserId = (input: unknown): UserId =>
   readText(input, "userId") as UserId;
+
+export const readRecipientId = (input: unknown): UserId =>
+  readText(input, "recipientId") as UserId;
+
+export function readDriveId(input: unknown): DriveId {
+  const id = parseDriveId(readText(input, "driveId"));
+  if (!id) throw badInput();
+  return id;
+}
 
 export function readMailboxId(input: unknown): MailboxId {
   const id = parseMailboxId(readText(input, "mailboxId"));

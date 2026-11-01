@@ -37,9 +37,13 @@ export function useRestore() {
 export function ItemActions({
   driveId,
   item,
+  shared,
 }: {
   driveId: DriveId;
   item: DriveItem;
+  // Reached through a share. A shared item shows no parent, and the drive's root is out
+  // of reach, so leaving it goes to Shared with me.
+  shared: boolean;
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -56,12 +60,17 @@ export function ItemActions({
       resetScroll: false,
     });
   const openFolder = (target: DriveId, folderId: ItemId | null) =>
-    folderId === null
-      ? navigate({ to: "/storage/drive/$driveId", params: { driveId: target } })
-      : navigate({
-          to: "/storage/drive/$driveId/$folderId",
-          params: { driveId: target, folderId },
-        });
+    shared && target === driveId && folderId === null
+      ? navigate({ to: "/storage/shared" })
+      : folderId === null
+        ? navigate({
+            to: "/storage/drive/$driveId",
+            params: { driveId: target },
+          })
+        : navigate({
+            to: "/storage/drive/$driveId/$folderId",
+            params: { driveId: target, folderId },
+          });
 
   async function moveToTrash() {
     try {

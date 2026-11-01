@@ -41,12 +41,13 @@ export const hasLimit = (room: StorageRoom) =>
 export function limitRefusal(
   room: StorageRoom,
   sizeBytes: number,
+  throughShare = false,
 ): string | null {
   const [tightest] = [
     {
       used: room.driveUsedBytes,
       limit: room.driveLimitBytes,
-      name: (limit: string) => `your ${limit} limit for My files`,
+      name: (limit: string) => myFilesLimit(limit, throughShare),
     },
     {
       used: room.orgUsedBytes,
@@ -64,17 +65,28 @@ export function limitRefusal(
   return `This file is ${formatBytes(sizeBytes)}, and ${spaceLeft(tightest.left)} in ${tightest.name}. Ask your admin for more space.`;
 }
 
+// Someone reaching another person's My files through a share didn't set this limit up
+// for themselves, so "your" would send them looking in the wrong place.
+const myFilesLimit = (limit: string, throughShare: boolean) =>
+  throughShare
+    ? `the ${limit} limit for the My files this is in`
+    : `your ${limit} limit for My files`;
+
 const spaceLeft = (bytes: number) =>
   bytes === 0 ? "there's no space left" : `only ${formatBytes(bytes)} is left`;
 
 // A move adds nothing to the organisation's total, so only a limit for My files can
 // refuse it, and that's the only drive with one.
-export function moveRefusal(room: StorageRoom, sizeBytes: number): string {
+export function moveRefusal(
+  room: StorageRoom,
+  sizeBytes: number,
+  throughShare = false,
+): string {
   const limit = room.driveLimitBytes;
   if (limit === null || room.driveUsedBytes + sizeBytes <= limit) {
     return "There wasn't enough space in My files for this just now. Try again. If it's refused again, delete something there or ask your admin for more space.";
   }
-  return `This is ${formatBytes(sizeBytes)}, and ${spaceLeft(Math.max(0, limit - room.driveUsedBytes))} in your ${formatBytes(limit)} limit for My files. Delete something there or ask your admin for more space.`;
+  return `This is ${formatBytes(sizeBytes)}, and ${spaceLeft(Math.max(0, limit - room.driveUsedBytes))} in ${myFilesLimit(formatBytes(limit), throughShare)}. Delete something there or ask your admin for more space.`;
 }
 
 // Another upload took the last of the space, then something was removed before this

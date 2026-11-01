@@ -511,3 +511,44 @@ test("the row survives the mail being deleted: the copy is a separate file", asy
   );
   expect(await client.download(item!.id)).not.toBeNull();
 });
+
+test("a saved copy in a drive the person can't reach doesn't count, and a new save lands in My files", async () => {
+  await fixture.deliver(mailWith([{ filename: "Report.pdf" }]));
+  const row = await onlyRow();
+  await saveMailAttachment(ALICE, row);
+  const mine = fixture.myDrive()!.id;
+
+  const theirs = crypto.randomUUID();
+  fixture.directory.run(
+    "INSERT INTO drives (id, kind, name, colour) VALUES (?, 'team', 'Private', 1)",
+    [theirs],
+  );
+  fixture.directory.run(
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'manager')",
+    [theirs, BOB],
+  );
+  const bob = fixture.open(await fixture.grantFor(BOB, theirs as never));
+  const started = await bob.uploads.start({
+    parentId: null,
+    name: "Theirs.pdf",
+    size: 0,
+    mimeType: "application/pdf",
+    fingerprint: "theirs",
+  });
+  if (!started.ok) throw new Error(started.message);
+  const file = await bob.uploads.complete(started.value.id);
+  if (!file.ok) throw new Error(file.message);
+
+  fixture.directory.run(
+    "UPDATE saved_mail_attachments SET drive_id = ?, item_id = ?",
+    [theirs, file.value.id],
+  );
+  expect((await onlyRow()).saved).toBe(false);
+  await saveMailAttachment(ALICE, row);
+  expect(
+    fixture.directory
+      .query("SELECT drive_id FROM saved_mail_attachments")
+      .get(),
+  ).toEqual({ drive_id: mine });
+  expect((await bob.list(null, null))?.items).toHaveLength(1);
+});

@@ -15,6 +15,21 @@ import {
 
 export type { DriveId, DriveKind, DriveRole, MailboxId, MailboxRole, UserId };
 
+export type AccessLevel = "view" | "edit";
+
+// Anything else, such as a role from a later version, can do nothing here.
+export function levelOfRole(role: DriveRole): AccessLevel | null {
+  switch (role) {
+    case "manager":
+    case "editor":
+      return "edit";
+    case "viewer":
+      return "view";
+    default:
+      return null;
+  }
+}
+
 const ISSUE = Symbol();
 
 // Mailbox code takes a grant rather than a mailbox id. The private field makes
@@ -51,7 +66,9 @@ class DriveGrantRecord {
     token: symbol,
     readonly userId: UserId,
     readonly driveId: DriveId,
-    readonly role: DriveRole,
+    // Null is a signed-in person who isn't on the drive's list. They reach only what the
+    // Drive object says has been shared with them, which starts as nothing.
+    readonly role: DriveRole | null,
   ) {
     if (token !== ISSUE)
       throw new Error("Only the access check issues grants.");
@@ -121,11 +138,13 @@ export async function checkDriveAccess(
       banned: user.banned,
       banExpires: user.banExpires,
     })
-    .from(driveAccess)
-    .innerJoin(user, eq(user.id, driveAccess.userId))
-    .where(
-      and(eq(driveAccess.userId, userId), eq(driveAccess.driveId, driveId)),
-    );
+    .from(drives)
+    .innerJoin(user, eq(user.id, userId))
+    .leftJoin(
+      driveAccess,
+      and(eq(driveAccess.driveId, drives.id), eq(driveAccess.userId, userId)),
+    )
+    .where(eq(drives.id, driveId));
   if (!row || isBanned(row)) return { allowed: false };
   return {
     allowed: true,

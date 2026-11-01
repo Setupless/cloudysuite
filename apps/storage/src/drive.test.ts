@@ -283,7 +283,7 @@ test("resuming needs the same folder, name, size, file, and person", async () =>
     expect((await started(other)).id).not.toBe(first.id);
   }
   kit.directory.run(
-    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'member')",
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'editor')",
     [DRIVE_A, BOB],
   );
   const asBob = kit.open(await kit.grantFor(BOB, DRIVE_A));
@@ -460,10 +460,9 @@ test("recent files come newest first and leave out folders", async () => {
   ]);
 });
 
-test("someone not on a drive's list gets no grant, so can't open it", async () => {
-  expect(await checkDriveAccess(kit.d1, BOB, DRIVE_A)).toEqual({
-    allowed: false,
-  });
+test("someone not on a drive's list reaches nothing in it", async () => {
+  const stranger = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  expect(await stranger.list(null, null)).toBeNull();
   kit.directory.run("UPDATE user SET banned = 1 WHERE id = ?", [ALICE]);
   expect(await checkDriveAccess(kit.d1, ALICE, DRIVE_A)).toEqual({
     allowed: false,

@@ -13,6 +13,11 @@ import {
   getTrash,
 } from "./functions";
 import { getMailAttachments } from "./mail-attachment-functions";
+import {
+  getAccess,
+  getShareChoices,
+  getSharedWithMe,
+} from "./sharing-functions";
 import type { ItemId } from "./types";
 
 const CANNOT_REACH =
@@ -69,6 +74,10 @@ export const storageKeys = {
   recent: (limit: number) => ["storage", "recent", limit] as const,
   mailAttachments: ["storage", "mailAttachments"] as const,
   trash: ["storage", "trash"] as const,
+  access: (driveId: DriveId, itemId: ItemId | null) =>
+    ["storage", "access", driveId, itemId] as const,
+  shareChoices: ["storage", "share-choices"] as const,
+  shared: ["storage", "shared"] as const,
 };
 
 export const directoryQuery = () =>
@@ -116,6 +125,24 @@ export const trashQuery = () =>
     queryFn: () => call(() => getTrash()),
   });
 
+export const accessQuery = (driveId: DriveId, itemId: ItemId | null) =>
+  queryOptions({
+    queryKey: storageKeys.access(driveId, itemId),
+    queryFn: () => call(() => getAccess({ data: { driveId, itemId } })),
+  });
+
+export const shareChoicesQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.shareChoices,
+    queryFn: () => call(() => getShareChoices()),
+  });
+
+export const sharedQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.shared,
+    queryFn: () => call(() => getSharedWithMe()),
+  });
+
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A
 // failed prefetch leaves the query empty, and the page shows the failure.
 export async function prefetchDirectory() {
@@ -136,6 +163,20 @@ export async function prefetchRecent() {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await client.prefetchQuery(recentQuery(50));
+  return dehydrate(client);
+}
+
+export async function prefetchShared() {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(sharedQuery());
+  return dehydrate(client);
+}
+
+export async function prefetchFile(driveId: string, fileId: string) {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(fileQuery(driveId as DriveId, fileId as ItemId));
   return dehydrate(client);
 }
 

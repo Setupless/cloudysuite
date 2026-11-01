@@ -1,19 +1,36 @@
-import type { DriveId } from "@cloudysuite/access";
-import { Avatar, buttonClass, useHydrated } from "@cloudysuite/ui";
+import type { DriveId, DriveRole } from "@cloudysuite/access";
 import type { SignedIn } from "@cloudysuite/auth/session";
-import { IconDownload, IconFolder, IconUsers } from "@tabler/icons-react";
-import { useEffect, useRef } from "react";
-import type { FileItem, FolderItem } from "../types";
+import {
+  Avatar,
+  Button,
+  buttonClass,
+  useHydrated,
+  useToast,
+} from "@cloudysuite/ui";
+import {
+  IconDownload,
+  IconFolder,
+  IconPencil,
+  IconShare,
+  IconTrash,
+  IconUsers,
+} from "@tabler/icons-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import { accessQuery, call, storageKeys } from "../queries";
+import { deleteTeamFolder, renameTeamFolder } from "../sharing-functions";
+import type { DriveItem, FileItem, FolderItem, ItemId } from "../types";
+import { ACCESS_LABELS } from "./access-labels";
 import { detailsPanelId, focusDetailsIfAsked } from "./details-focus";
 import { FilePreview } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { ItemActions } from "./item-actions";
-import { teamColour } from "./team-colour";
+import { ConfirmDialog, NameDialog } from "./page-parts";
+import { ShareDialog } from "./share-dialog";
+import { TeamDialog } from "./team-dialog";
 
-// Who can open this comes from the drive. A personal drive is only ever its owner.
-export type PanelAccess =
-  | { kind: "personal"; me: SignedIn }
-  | { kind: "team"; name: string; colour: number };
+export type TeamRoot = { driveId: DriveId; name: string; role: DriveRole };
 
 export type PanelSubject =
   | {
@@ -22,42 +39,208 @@ export type PanelSubject =
       contains: number;
       changedAt: number | null;
       createdBy: string;
-      // Null for a drive's root, which is not an item and has no actions.
-      actionable: { driveId: DriveId; folder: FolderItem } | null;
+      // Null for My files before it exists.
+      driveId: DriveId | null;
+      // Null for a drive's root, which is not an item and has no item actions.
+      folder: FolderItem | null;
+      // Only at the root of a team folder.
+      team: TeamRoot | null;
+      canEdit: boolean;
+      shared: boolean;
     }
-  | { kind: "file"; driveId: DriveId; file: FileItem; addedBy: string };
+  | {
+      kind: "file";
+      driveId: DriveId;
+      file: FileItem;
+      addedBy: string;
+      canEdit: boolean;
+      shared: boolean;
+    };
 
 export const PANEL =
   "flex-none border-line p-3.5 outline-none max-[899px]:border-t min-[900px]:w-[262px] min-[900px]:border-l";
 
-function AccessRow({ access }: { access: PanelAccess }) {
+function AccessRow({
+  icon,
+  name,
+  label,
+}: {
+  icon: React.ReactNode;
+  name: string;
+  label: string;
+}) {
   return (
-    <div className="flex items-center gap-2 text-[13px]">
-      {access.kind === "personal" ? (
-        <Avatar person={access.me} size="small" />
-      ) : (
-        <span
-          className={`flex size-[22px] flex-none items-center justify-center rounded-full text-on-avatar ${teamColour(access.colour)}`}
-        >
-          <IconUsers size={13} stroke={1.75} aria-hidden />
-        </span>
-      )}
-      <span className="min-w-0 truncate">
-        {access.kind === "personal" ? "Only you" : `${access.name} team`}
+    <li className="flex items-center gap-2 text-[13px]">
+      {icon}
+      <span className="min-w-0 truncate" title={name}>
+        {name}
       </span>
-      <em className="ml-auto text-xs text-secondary not-italic">
-        {access.kind === "personal" ? "Owner" : "Can edit"}
+      <em className="ml-auto flex-none text-xs text-secondary not-italic">
+        {label}
       </em>
-    </div>
+    </li>
+  );
+}
+
+function WhoCanOpen({
+  driveId,
+  itemId,
+  me,
+}: {
+  driveId: DriveId | null;
+  itemId: ItemId | null;
+  me: SignedIn;
+}) {
+  const { data } = useQuery({
+    ...accessQuery(driveId as DriveId, itemId),
+    enabled: driveId !== null,
+  });
+  const onlyMe =
+    driveId === null ||
+    (data?.lines.length === 1 &&
+      data.lines[0]?.person.id === me.id &&
+      data.lines[0].access === "owner" &&
+      data.everyone === null);
+  if (onlyMe) {
+    return (
+      <ul>
+        <AccessRow
+          icon={<Avatar person={me} size="small" />}
+          name="Only you"
+          label={ACCESS_LABELS.owner}
+        />
+      </ul>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {data?.everyone && (
+        <AccessRow
+          icon={
+            <span className="flex size-[22px] flex-none items-center justify-center rounded-full bg-field text-secondary">
+              <IconUsers size={13} stroke={1.75} aria-hidden />
+            </span>
+          }
+          name={`Everyone at ${data.organisation}`}
+          label={ACCESS_LABELS.viewer}
+        />
+      )}
+      {data?.lines.map(({ person, access }) => (
+        <AccessRow
+          key={person.id}
+          icon={<Avatar person={person} size="small" />}
+          name={person.id === me.id ? `${person.name} (you)` : person.name}
+          label={ACCESS_LABELS[access]}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function ShareButton({ driveId, item }: { driveId: DriveId; item: DriveItem }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        variant="toolbarAction"
+        icon={IconShare}
+        onClick={() => setOpen(true)}
+      >
+        Share
+      </Button>
+      {open && (
+        <ShareDialog
+          driveId={driveId}
+          item={item}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function TeamActions({ team, me }: { team: TeamRoot; me: SignedIn }) {
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [dialog, setDialog] = useState<"people" | "rename" | "delete" | null>(
+    null,
+  );
+  const { driveId, name } = team;
+  return (
+    <>
+      <Button
+        variant="toolbarAction"
+        icon={IconUsers}
+        onClick={() => setDialog("people")}
+      >
+        People
+      </Button>
+      {team.role === "manager" && (
+        <>
+          <Button
+            variant="toolbar"
+            icon={IconPencil}
+            onClick={() => setDialog("rename")}
+          >
+            Rename
+          </Button>
+          <Button
+            variant="toolbar"
+            icon={IconTrash}
+            onClick={() => setDialog("delete")}
+          >
+            Delete
+          </Button>
+        </>
+      )}
+      {dialog === "people" && (
+        <TeamDialog
+          driveId={driveId}
+          name={name}
+          meId={me.id}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "rename" && (
+        <NameDialog
+          title={`Rename ${name}`}
+          hint="Everyone on this team folder will see the new name."
+          submitLabel="Rename"
+          initialName={name}
+          onSubmit={async (next) => {
+            await call(() =>
+              renameTeamFolder({ data: { driveId, name: next } }),
+            );
+            await client.invalidateQueries({ queryKey: storageKeys.all });
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "delete" && (
+        <ConfirmDialog
+          title={`Delete ${name}?`}
+          body="A team folder can only be deleted when it's empty, including its Trash. Everyone on it loses it from their list, and this can't be undone."
+          confirmLabel="Delete team folder"
+          onConfirm={async () => {
+            await call(() => deleteTeamFolder({ data: { driveId } }));
+            await navigate({ to: "/storage" });
+            await client.invalidateQueries({ queryKey: storageKeys.all });
+            toast({ message: `${name} is deleted.` });
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+    </>
   );
 }
 
 export function DetailsPanel({
   subject,
-  access,
+  me,
 }: {
   subject: PanelSubject;
-  access: PanelAccess;
+  me: SignedIn;
 }) {
   const hydrated = useHydrated();
   const panel = useRef<HTMLElement>(null);
@@ -112,6 +295,9 @@ export function DetailsPanel({
         </h2>
         {subject.kind === "file" && (
           <div className="flex flex-wrap gap-1.5">
+            {subject.canEdit && (
+              <ShareButton driveId={subject.driveId} item={subject.file} />
+            )}
             <a
               href={`/download/${subject.driveId}/${subject.file.id}`}
               download
@@ -120,15 +306,31 @@ export function DetailsPanel({
               <IconDownload size={16} stroke={1.75} aria-hidden />
               Download
             </a>
-            <ItemActions driveId={subject.driveId} item={subject.file} />
+            {subject.canEdit && (
+              <ItemActions
+                driveId={subject.driveId}
+                item={subject.file}
+                shared={subject.shared}
+              />
+            )}
           </div>
         )}
-        {subject.kind === "folder" && subject.actionable && (
+        {subject.kind === "folder" &&
+          subject.driveId &&
+          subject.folder &&
+          subject.canEdit && (
+            <div className="flex flex-wrap gap-1.5">
+              <ShareButton driveId={subject.driveId} item={subject.folder} />
+              <ItemActions
+                driveId={subject.driveId}
+                item={subject.folder}
+                shared={subject.shared}
+              />
+            </div>
+          )}
+        {subject.kind === "folder" && subject.team && (
           <div className="flex flex-wrap gap-1.5">
-            <ItemActions
-              driveId={subject.actionable.driveId}
-              item={subject.actionable.folder}
-            />
+            <TeamActions team={subject.team} me={me} />
           </div>
         )}
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
@@ -145,7 +347,15 @@ export function DetailsPanel({
           <h3 className="text-xs font-semibold text-secondary">
             Who can open this
           </h3>
-          <AccessRow access={access} />
+          <WhoCanOpen
+            driveId={subject.driveId}
+            itemId={
+              subject.kind === "file"
+                ? subject.file.id
+                : (subject.folder?.id ?? null)
+            }
+            me={me}
+          />
         </div>
       </div>
     </aside>

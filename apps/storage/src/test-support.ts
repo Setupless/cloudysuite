@@ -30,6 +30,7 @@ const { openDrive } = await import("./client");
 
 export const ALICE = "user-alice" as UserId;
 export const BOB = "user-bob" as UserId;
+export const CAROL = "user-carol" as UserId;
 export const DRIVE_A = "8b3f4e30-ac2d-4f90-9e77-2c3d4e5f6071" as DriveId;
 export const DRIVE_B = "9c4f5e41-bd3e-4fa1-8f88-3d4e5f607182" as DriveId;
 
@@ -46,13 +47,16 @@ export async function createStorageTest() {
   const { sqlite: directory, d1 } = createTestDatabase();
   const bucket = new FakeBucket();
   const instances = new Map<string, Instance>();
-  const d1Failures = { usageWrites: false };
+  const d1Failures = { usageWrites: false, shareIndex: false };
 
   const database = new Proxy(d1, {
     get(target, property) {
       if (property !== "prepare") return Reflect.get(target, property);
       return (query: string) => {
         if (d1Failures.usageWrites && /^update "drives"/i.test(query)) {
+          throw new Error("D1 is unavailable");
+        }
+        if (d1Failures.shareIndex && /drive_shares/i.test(query)) {
           throw new Error("D1 is unavailable");
         }
         return target.prepare(query);
@@ -99,6 +103,7 @@ export async function createStorageTest() {
   for (const [id, name] of [
     [ALICE, "Alice Stone"],
     [BOB, "Bob Lee"],
+    [CAROL, "Carol Diaz"],
   ] as const) {
     directory.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
       id,

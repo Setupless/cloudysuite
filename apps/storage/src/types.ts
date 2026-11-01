@@ -1,5 +1,11 @@
 // Shared with the browser, so nothing here may import server code.
-import type { DriveId, DriveKind, UserId } from "@cloudysuite/access";
+import type {
+  AccessLevel,
+  DriveId,
+  DriveKind,
+  DriveRole,
+  UserId,
+} from "@cloudysuite/access";
 
 export type ItemId = string & { readonly __brand: "ItemId" };
 
@@ -29,12 +35,65 @@ export type DriveItem = FolderItem | FileItem;
 export type FolderListing = {
   // Null means the drive's root.
   folder: FolderItem | null;
-  // Outermost first, not counting the folder itself.
+  // Outermost first, not counting the folder itself. Stops at what the person can reach.
   ancestors: FolderItem[];
   contains: number;
   items: DriveItem[];
   nextCursor: string | null;
+  // Reached through a share rather than through being on the drive.
+  shared: boolean;
+  canEdit: boolean;
+  // Only when the folder can't be edited: what in it can be, through its own share.
+  editableIds: ItemId[];
 };
+
+// One item as a particular person can see it. A share's own item shows no parent.
+export type OpenedItem = { item: DriveItem; canEdit: boolean; shared: boolean };
+
+// Everyone in the organisation can only ever view. Null user ids and an edit level on it
+// aren't representable here or in the object's table.
+export type ItemShare =
+  | {
+      kind: "person";
+      userId: UserId;
+      level: AccessLevel;
+      sharedBy: UserId;
+      sharedAt: number;
+    }
+  | {
+      kind: "organisation";
+      level: "view";
+      sharedBy: UserId;
+      sharedAt: number;
+    };
+
+export type ItemShares = {
+  // On this item, so they can be changed from here.
+  here: ItemShare[];
+  // On a folder it's in.
+  above: ItemShare[];
+  canEdit: boolean;
+};
+
+export type SharedLine = {
+  item: DriveItem;
+  level: AccessLevel;
+  canEdit: boolean;
+  sharedBy: UserId;
+  sharedAt: number;
+};
+
+export type ShareResult =
+  { status: "done" } | { status: "gone" } | { status: "busy" } | NoAccess;
+
+export type CloseResult = { status: "closed" } | { status: "notEmpty" };
+
+// What a person sees beside a name in "Who can open this".
+export type AccessLabel = DriveRole | "owner";
+
+// The same answer whether the item is out of reach or doesn't exist, so changing an id
+// can't tell someone what else is in a drive.
+export type NoAccess = { status: "noAccess" };
 
 export type DriveSummary = {
   id: DriveId;
@@ -49,7 +108,8 @@ export type NewFolderResult =
   | { status: "created"; item: FolderItem }
   | { status: "nameTaken" }
   | { status: "noParent" }
-  | { status: "folderBusy" };
+  | { status: "folderBusy" }
+  | NoAccess;
 
 export const TRASH_DAYS = 30;
 export const TRASH_MS = TRASH_DAYS * 24 * 60 * 60 * 1000;
@@ -73,7 +133,8 @@ export type RenameResult =
   | { status: "renamed"; item: DriveItem }
   | { status: "nameTaken" }
   | { status: "gone" }
-  | { status: "busy" };
+  | { status: "busy" }
+  | NoAccess;
 
 export type MoveResult =
   | { status: "moved" }
@@ -86,15 +147,17 @@ export type MoveResult =
   | { status: "busy" }
   | { status: "folderBusy" }
   | { status: "overLimit"; bytes: number }
-  | { status: "tooMany" };
+  | { status: "tooMany" }
+  | NoAccess;
 
 export type TrashResult =
-  { status: "trashed" } | { status: "gone" } | { status: "busy" };
+  { status: "trashed" } | { status: "gone" } | { status: "busy" } | NoAccess;
 
 export type RestoreResult =
   | { status: "restored"; item: DriveItem; folderGone: boolean }
   | { status: "folderBusy" }
-  | { status: "gone" };
+  | { status: "gone" }
+  | NoAccess;
 
 // Two objects can't share a transaction, so what crosses in one must fit in one call.
 export const MAX_ITEMS_ACROSS_DRIVES = 2000;

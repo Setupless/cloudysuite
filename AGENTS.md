@@ -53,7 +53,7 @@ Do not guess or build around these. Ask the user first.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off. The only other exception is a `GET` of `/pwa/session` on the Mail host, which returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Production code runs on Workers, so it cannot use Bun APIs.
 - Each mailbox and each drive is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
-- D1 holds domains, users, addresses, mailbox access, drives, and drive access.
+- D1 holds domains, users, addresses, mailbox access, drives, drive access, `saved_mail_attachments`, and `drive_shares`, an index of shares. The Drive object owns the shares themselves.
 - Every mailbox or drive read and write goes through its one access-check function.
 - Every message enters a mailbox through `ingest`, including imports.
 - Durable Object alarms handle background work. Do not add Queues or Workflows.

@@ -1,6 +1,7 @@
 import { isBanned } from "@cloudysuite/access";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { type FilesToHand, readFilesToHand } from "./handover";
 import {
   addresses,
   drives,
@@ -24,6 +25,7 @@ export type PersonRow = {
   mailboxAddresses: string[];
   // Null until the person has a My files.
   myFiles: { usedBytes: number; limitBytes: number | null } | null;
+  filesToHand: FilesToHand;
 };
 
 export type InviteRow = {
@@ -64,6 +66,7 @@ export async function listPeople(
         .where(and(eq(drives.kind, "personal"), isNotNull(drives.ownerId))),
     ]);
   const withKey = new Set(keyOwners.map((row) => row.userId));
+  const filesToHand = await readFilesToHand(database);
   return {
     people: people.map((person) => {
       const drive = myFiles.find((row) => row.ownerId === person.id);
@@ -81,6 +84,11 @@ export async function listPeople(
         myFiles: drive
           ? { usedBytes: drive.usedBytes, limitBytes: drive.limitBytes }
           : null,
+        filesToHand: filesToHand.get(person.id) ?? {
+          myFiles: false,
+          aloneIn: 0,
+          managedAlone: 0,
+        },
       };
     }),
     invites: pending.map((invite) => ({

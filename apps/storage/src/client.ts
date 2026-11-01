@@ -1,21 +1,29 @@
 import {
+  type AccessLevel,
   checkDriveAccess,
   type DriveGrant,
   type DriveId,
+  type DriveRole,
   type UserId,
 } from "@cloudysuite/access";
 import type { MoveDelivery, ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
+import type { Actor } from "./store";
 import { driveStub } from "./stub";
 import type {
-  DriveItem,
+  CloseResult,
   FileItem,
   FolderListing,
   ItemId,
+  ItemShares,
   MoveResult,
   NewFolderResult,
+  NoAccess,
+  OpenedItem,
   RenameResult,
   RestoreResult,
+  SharedLine,
+  ShareResult,
   TrashEntry,
   TrashResult,
 } from "./types";
@@ -25,11 +33,14 @@ export type FileDownload = { file: FileItem; body: ReadableStream };
 
 export type DriveClient = {
   driveId: DriveId;
+  // Null for someone not on the drive's list, who reaches only what's shared with them.
+  role: DriveRole | null;
   list(
     folderId: ItemId | null,
     cursor: string | null,
   ): Promise<FolderListing | null>;
-  item(id: ItemId): Promise<DriveItem | null>;
+  opened(id: ItemId): Promise<OpenedItem | null>;
+  item(id: ItemId): Promise<OpenedItem["item"] | null>;
   file(id: ItemId): Promise<FileItem | null>;
   recent(limit: number): Promise<FileItem[]>;
   createFolder(
@@ -46,77 +57,121 @@ export type DriveClient = {
     to: DriveClient,
     toParentId: ItemId | null,
   ): Promise<MoveResult>;
+  mayAddTo(parentId: ItemId | null): Promise<boolean>;
   trash(id: ItemId): Promise<TrashResult>;
   trashEntries(limit: number): Promise<TrashEntry[]>;
   restore(id: ItemId): Promise<RestoreResult>;
-  deleteForever(id: ItemId): Promise<void>;
-  emptyTrash(): Promise<void>;
+  deleteForever(id: ItemId): Promise<NoAccess | void>;
+  emptyTrash(): Promise<NoAccess | void>;
   download(id: ItemId): Promise<FileDownload | null>;
+  sharePeople(
+    id: ItemId,
+    people: readonly UserId[],
+    level: AccessLevel,
+  ): Promise<ShareResult>;
+  unshare(id: ItemId, userId: UserId): Promise<ShareResult>;
+  setEveryone(id: ItemId, on: boolean): Promise<ShareResult>;
+  sharesOn(id: ItemId): Promise<ItemShares | null>;
+  sharedWith(limit: number): Promise<SharedLine[]>;
+  // Only for a manager of a team folder, which the caller has checked.
+  close(): Promise<CloseResult>;
+  reopen(): Promise<void>;
   uploads: DriveUploads;
 };
 
-// The only way for user-facing code to reach a drive. A grant cannot cross RPC, so the
-// check happens here, on the caller's side, and the Durable Object trusts its caller.
-// R2 reads also happen here, so large files don't pass through the object.
+// The only way for user-facing code to reach a drive. A grant cannot cross RPC, so D1's
+// part of the check happens here, on the caller's side. Every method hands who is asking
+// to the object, and the object decides what they reach in the call that does the work,
+// so nothing can move or be revoked in between. R2 reads also happen here, so large files
+// don't pass through the object.
 export function openDrive(env: Env, grant: DriveGrant): DriveClient {
   const stub = driveStub(env, grant.driveId);
-
-  const file = async (id: ItemId) => {
-    const item = (await stub.item(id)) as DriveItem | null;
-    return item?.kind === "file" ? item : null;
-  };
-
   const { driveId } = grant;
+  const actor: Actor = { userId: grant.userId, role: grant.role };
+
+  const opened = async (id: ItemId) =>
+    (await stub.opened(actor, id)) as OpenedItem | null;
+  const item = async (id: ItemId) => (await opened(id))?.item ?? null;
+  const file = async (id: ItemId) => {
+    const found = await item(id);
+    return found?.kind === "file" ? found : null;
+  };
 
   return {
     driveId,
+    role: grant.role,
     list: async (folderId, cursor) =>
-      (await stub.list(folderId, cursor)) as FolderListing | null,
-    item: async (id) => (await stub.item(id)) as DriveItem | null,
+      (await stub.list(actor, folderId, cursor)) as FolderListing | null,
+    opened,
+    item,
     file,
-    recent: async (limit) => (await stub.recent(limit)) as FileItem[],
+    recent: async (limit) => (await stub.recent(actor, limit)) as FileItem[],
     createFolder: async (parentId, name) =>
       (await stub.createFolder({
-        driveId: grant.driveId,
+        actor,
+        driveId,
         id: crypto.randomUUID() as ItemId,
         parentId,
         name,
-        createdBy: grant.userId,
       })) as NewFolderResult,
 
     rename: async (id, name) =>
-      (await stub.rename({ driveId, id, name })) as RenameResult,
-    move: async (id, to, toParentId) =>
-      (to.driveId === driveId
-        ? await stub.moveWithin({ driveId, id, toParentId })
-        : await stub.moveToDrive({
-            driveId,
-            id,
-            toDriveId: to.driveId,
-            toParentId,
-          })) as MoveResult,
-    trash: async (id) => (await stub.trash({ driveId, id })) as TrashResult,
+      (await stub.rename({ actor, driveId, id, name })) as RenameResult,
+    mayAddTo: async (parentId) => stub.mayAddTo(actor, parentId),
+    async move(id, to, toParentId) {
+      if (to.driveId === driveId) {
+        return (await stub.moveWithin({
+          actor,
+          driveId,
+          id,
+          toParentId,
+        })) as MoveResult;
+      }
+      if (!(await to.mayAddTo(toParentId))) return { status: "noAccess" };
+      return (await stub.moveToDrive({
+        actor,
+        driveId,
+        id,
+        toDriveId: to.driveId,
+        toParentId,
+      })) as MoveResult;
+    },
+    trash: async (id) =>
+      (await stub.trash({ actor, driveId, id })) as TrashResult,
     trashEntries: async (limit) =>
-      (await stub.trashEntries(limit)) as TrashEntry[],
+      (await stub.trashEntries(actor, limit)) as TrashEntry[],
     restore: async (id) =>
-      (await stub.restore({ driveId, id })) as RestoreResult,
-    deleteForever: (id) => stub.deleteForever(id),
-    emptyTrash: () => stub.emptyTrash(),
+      (await stub.restore({ actor, driveId, id })) as RestoreResult,
+    deleteForever: (id) => stub.deleteForever(actor, id),
+    emptyTrash: () => stub.emptyTrash(actor),
 
     async download(id) {
       const found = await file(id);
-      const key = found && (await stub.r2KeyOf(id));
+      const key = found && (await stub.r2KeyOf(actor, id));
       const object = key ? await env.BUCKET.get(key) : null;
       return found && object ? { file: found, body: object.body } : null;
     },
+
+    sharePeople: async (id, people, level) =>
+      (await stub.sharePeople({ actor, id, people, level })) as ShareResult,
+    unshare: async (id, userId) =>
+      (await stub.unshare({ actor, id, userId })) as ShareResult,
+    setEveryone: async (id, on) =>
+      (await stub.setEveryone({ actor, id, on })) as ShareResult,
+    sharesOn: async (id) =>
+      (await stub.sharesOn(actor, id)) as ItemShares | null,
+    sharedWith: async (limit) =>
+      (await stub.sharedWith(actor, limit)) as SharedLine[],
+    close: async () => (await stub.close(driveId)) as CloseResult,
+    reopen: () => stub.reopen(),
 
     uploads: createDriveUploads(env.DB, env.BUCKET, stub, grant),
   };
 }
 
-// The one door for a person changing a drive. For now anyone on a drive can change it,
-// and "Can view" will narrow this check.
-export async function openDriveToEdit(
+// For one request. A drive that doesn't exist, or a banned person, gets null. Everyone
+// else gets a client that reaches what they're allowed to, and nothing else.
+export async function openDriveAsPerson(
   env: Env,
   userId: UserId,
   driveId: DriveId,

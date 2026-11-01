@@ -23,7 +23,11 @@ async function respond(
   try {
     const drive = await openDriveFor(request, driveId);
     const itemId = parseItemId(params.itemId);
-    return itemId ? await answer(drive, itemId) : notFound();
+    const response = itemId ? await answer(drive, itemId) : notFound();
+    // Someone not on the drive gets one answer, so an id can't test what's in it.
+    return drive.role === null && response.status === 404
+      ? plainText(403, NO_ACCESS_MESSAGE)
+      : response;
   } catch (failure) {
     if (failure instanceof Response) return failure;
     throw failure;
