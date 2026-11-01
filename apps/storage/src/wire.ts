@@ -7,6 +7,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { AttachmentId, MessageId } from "@cloudysuite/mail/client";
+import { MAX_SEARCH_LENGTH } from "./search-text";
 import { type ItemId, parseItemId } from "./types";
 
 // Everything a browser sends to a Storage function passes through these.
@@ -203,6 +204,19 @@ export function parseEveryoneInput(raw: unknown) {
   const { on } = record(raw);
   if (typeof on !== "boolean") throw badRequest();
   return { ...parseItemInput(raw), on };
+}
+
+export function parseStarInput(raw: unknown) {
+  const { on } = record(raw);
+  if (typeof on !== "boolean") throw badRequest();
+  return { ...parseItemInput(raw), on };
+}
+
+// Any text is a fair thing to search for. Only its length is limited, by cutting it.
+export function parseSearchInput(raw: unknown) {
+  const { text } = record(raw);
+  if (typeof text !== "string") throw badRequest();
+  return { text: text.slice(0, MAX_SEARCH_LENGTH) };
 }
 
 export const parseDriveInput = (raw: unknown) => ({

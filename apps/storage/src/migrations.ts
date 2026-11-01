@@ -149,4 +149,37 @@ export const MIGRATIONS: Migrations = [
     // was found empty.
     `ALTER TABLE drive_state ADD COLUMN closed INTEGER NOT NULL DEFAULT 0`,
   ],
+  [
+    // Contentless because items already holds the name. Triggers keep it in the same
+    // transaction as every change to items, whichever code path makes it. Trashed items
+    // stay indexed and are left out when reading, so restoring has nothing to rebuild. An
+    // item's rowid lasts its whole life: only VACUUM renumbers, and nothing here runs it.
+    `CREATE VIRTUAL TABLE item_search USING fts5(
+      name,
+      content = '', contentless_delete = 1,
+      tokenize = 'unicode61 remove_diacritics 2',
+      prefix = '2 3'
+    )`,
+    `INSERT INTO item_search (rowid, name) SELECT rowid, name FROM items`,
+    `CREATE TRIGGER items_search_insert AFTER INSERT ON items BEGIN
+      INSERT INTO item_search (rowid, name) VALUES (new.rowid, new.name);
+    END`,
+    `CREATE TRIGGER items_search_rename AFTER UPDATE OF name ON items
+    WHEN old.name <> new.name BEGIN
+      DELETE FROM item_search WHERE rowid = old.rowid;
+      INSERT INTO item_search (rowid, name) VALUES (new.rowid, new.name);
+    END`,
+    `CREATE TRIGGER items_search_delete AFTER DELETE ON items BEGIN
+      DELETE FROM item_search WHERE rowid = old.rowid;
+    END`,
+    // Rows stay while the item is in Trash, so its star comes back on restore. The same
+    // transaction that removes an item removes its stars.
+    `CREATE TABLE stars (
+      user_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      starred_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, item_id)
+    ) WITHOUT ROWID`,
+    `CREATE INDEX stars_on_item ON stars(item_id)`,
+  ],
 ];

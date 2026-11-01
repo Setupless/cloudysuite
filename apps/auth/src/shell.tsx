@@ -18,6 +18,7 @@ export function SuiteShell({
   navigationLabel,
   navigation,
   sidebarFooter,
+  headerContent,
   signOutHref,
   children,
 }: {
@@ -26,6 +27,7 @@ export function SuiteShell({
   navigationLabel?: string;
   navigation?: ReactNode;
   sidebarFooter?: ReactNode;
+  headerContent?: ReactNode;
   // Mail's offline stand-in, because Account can't load without a connection.
   signOutHref?: string;
   children: ReactNode;
@@ -47,6 +49,7 @@ export function SuiteShell({
       navigationLabel={navigationLabel}
       navigation={navigation}
       sidebarFooter={sidebarFooter}
+      headerContent={headerContent}
     >
       {children}
     </AppShell>
