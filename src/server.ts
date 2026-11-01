@@ -18,7 +18,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const settings = await readSettings(env.DB);
-    const decision = gate(resolveHost(url.hostname, settings), url.pathname);
+    const decision = gate(
+      resolveHost(url.hostname, settings),
+      url.pathname,
+      request.method,
+    );
 
     switch (decision.action) {
       case "pass":

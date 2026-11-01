@@ -21,6 +21,9 @@ export function markUnreachable(): void {
   changed();
 }
 
+export const isPageHidden = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
+
 export const isOffline = (): boolean =>
   typeof navigator !== "undefined" && (!navigator.onLine || unreachable);
 

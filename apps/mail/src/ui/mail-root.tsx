@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { type ReactNode, useEffect, useState } from "react";
+import { isPageHidden } from "../pwa/connectivity";
 import { clearDevice, startDevice } from "../pwa/device";
 import { MailFailure, retryUnlessRefused } from "../queries";
 import { ToastProvider } from "./toast";
@@ -32,6 +33,9 @@ function createMailQueryClient() {
         staleTime: 20_000,
         retry: retryUnlessRefused,
         refetchOnWindowFocus: true,
+        // Query only stops its timed refresh while hidden. A request from a tab nobody
+        // is looking at would renew the session, so reconnecting waits for their return.
+        refetchOnReconnect: () => !isPageHidden(),
       },
     },
   });

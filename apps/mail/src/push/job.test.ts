@@ -167,6 +167,28 @@ test("only the inbox announces, so Spam and anything filed away stay quiet", () 
   expect(FOLDERS.filter(announces)).toEqual(["inbox"]);
 });
 
+test("mail the filter files in Spam makes no notification", async () => {
+  const w = world();
+  try {
+    await device(w.d1, ALICE, "a");
+    const instance = w.instanceOf(MAILBOX_A);
+    instance.object.addSender("pest@example.org", "block");
+    const stored = await ingest(w.env, {
+      ...inbound(),
+      raw: eml({
+        from: "Pest <pest@example.org>",
+        messageId: "pest@example.org",
+      }),
+      envelope: { from: "pest@example.org", to: "support@example.com" },
+    });
+    expect(stored).toMatchObject({ status: "stored", folder: "spam" });
+    if (instance.alarm !== null) await instance.fireAlarm();
+    expect(w.sent).toHaveLength(0);
+  } finally {
+    w.restore();
+  }
+});
+
 test("mail moved to Spam before its notification goes out is not announced", async () => {
   const w = world();
   try {

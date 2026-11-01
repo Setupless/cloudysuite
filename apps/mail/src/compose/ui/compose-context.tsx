@@ -7,7 +7,9 @@ import {
   useMemo,
   useState,
 } from "react";
+import { isOffline, OFFLINE_COMPOSE_REFUSED } from "../../pwa/saved-mail";
 import type { MailboxId, MessageId, ThreadId } from "../../types";
+import { useToast } from "../../ui/toast";
 import { composeContextQuery, composeKeys } from "./queries";
 import { SendNotices, SendTray } from "./send-tray";
 import type { ComposeMode, OutgoingId } from "../types";
@@ -35,6 +37,8 @@ export type ComposeSession =
 export type ComposeControls = {
   mailboxId: MailboxId;
   session: ComposeSession | null;
+  // Refused rather than queued: a message written on a train must not go out by surprise.
+  refuseIfOffline: () => boolean;
   startNew: () => void;
   startFrom: (
     mode: Exclude<ComposeMode, "new">,
@@ -70,12 +74,20 @@ export function ComposeProvider({
   // Loaded ahead, so the form opens at once when someone starts writing.
   useQuery(composeContextQuery(mailboxId));
 
-  const startNew = useCallback(
-    () => setSession({ kind: "new", id: newId(), host: "panel" }),
-    [],
-  );
+  const toast = useToast();
+  const refuseIfOffline = useCallback(() => {
+    if (!isOffline()) return false;
+    toast({ tone: "danger", message: OFFLINE_COMPOSE_REFUSED });
+    return true;
+  }, [toast]);
+
+  const startNew = useCallback(() => {
+    if (!refuseIfOffline())
+      setSession({ kind: "new", id: newId(), host: "panel" });
+  }, [refuseIfOffline]);
   const startFrom = useCallback<ComposeControls["startFrom"]>(
-    (mode, parentMessageId, threadId) =>
+    (mode, parentMessageId, threadId) => {
+      if (refuseIfOffline()) return;
       setSession({
         kind: "start",
         id: newId(),
@@ -83,19 +95,22 @@ export function ComposeProvider({
         threadId,
         mode,
         parentMessageId,
-      }),
-    [],
+      });
+    },
+    [refuseIfOffline],
   );
   const openDraft = useCallback<ComposeControls["openDraft"]>(
-    (id, options) =>
+    (id, options) => {
+      if (refuseIfOffline()) return;
       setSession({
         kind: "open",
         id,
         host: options?.threadId ? "inline" : "panel",
         threadId: options?.threadId ?? null,
         warning: options?.warning ?? null,
-      }),
-    [],
+      });
+    },
+    [refuseIfOffline],
   );
   const close = useCallback(() => {
     setSession(null);
@@ -105,8 +120,24 @@ export function ComposeProvider({
   }, [queryClient, mailboxId]);
 
   const value = useMemo(
-    () => ({ mailboxId, session, startNew, startFrom, openDraft, close }),
-    [mailboxId, session, startNew, startFrom, openDraft, close],
+    () => ({
+      mailboxId,
+      session,
+      refuseIfOffline,
+      startNew,
+      startFrom,
+      openDraft,
+      close,
+    }),
+    [
+      mailboxId,
+      session,
+      refuseIfOffline,
+      startNew,
+      startFrom,
+      openDraft,
+      close,
+    ],
   );
   return (
     <ComposeContext.Provider value={value}>

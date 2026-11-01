@@ -18,7 +18,14 @@ import {
 } from "react";
 import { safeFileName } from "../../attachment-headers";
 import type { SenderFacts } from "../addresses";
-import { call } from "../../queries";
+import { useOffline } from "../../pwa/connectivity";
+import {
+  isOffline,
+  OFFLINE_ACTION_REFUSED,
+  OFFLINE_DRAFT_NOT_SAVED,
+  OFFLINE_SEND_REFUSED,
+} from "../../pwa/saved-mail";
+import { call, callAction } from "../../queries";
 import type { Address, MailboxId } from "../../types";
 import { EmailFrame } from "../../ui/email-frame";
 import { formatSize } from "../../ui/format";
@@ -269,7 +276,7 @@ function EditorForm({
     const content = read.current();
     saving.current = saving.current.then(async () => {
       try {
-        const result = await call(() =>
+        const result = await callAction(() =>
           saveDraft({
             data: {
               mailboxId,
@@ -309,6 +316,13 @@ function EditorForm({
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), AUTOSAVE_MS);
   }, [flush]);
+
+  // What couldn't be saved offline goes as soon as it can. This is only ever the draft
+  // in front of the person, never a send.
+  const offline = useOffline();
+  useEffect(() => {
+    if (!offline && dirty.current) void flush();
+  }, [offline, flush]);
 
   // A later render holds the fields a save should read, so it runs after they settle.
   const firstRender = useRef(true);
@@ -382,7 +396,9 @@ function EditorForm({
     await flush();
     if (dirty.current) {
       setSaveProblem(
-        `We couldn't save this draft, so it's still open here. ${lastSaveError.current}`,
+        isOffline()
+          ? OFFLINE_DRAFT_NOT_SAVED
+          : `We couldn't save this draft, so it's still open here. ${lastSaveError.current}`,
       );
       return;
     }
@@ -398,7 +414,7 @@ function EditorForm({
     dirty.current = false;
     await saving.current;
     try {
-      await call(() =>
+      await callAction(() =>
         discardOutgoing({ data: { mailboxId, id: session.id } }),
       );
       close();
@@ -412,6 +428,10 @@ function EditorForm({
     if (sending || uploading.length > 0) {
       if (uploading.length > 0)
         setProblem("Wait for your files to finish uploading.");
+      return;
+    }
+    if (isOffline()) {
+      setProblem(OFFLINE_SEND_REFUSED);
       return;
     }
     setProblem(null);
@@ -443,6 +463,10 @@ function EditorForm({
 
   const addFiles = async (files: File[]) => {
     if (files.length === 0) return;
+    if (isOffline()) {
+      setProblem(OFFLINE_ACTION_REFUSED);
+      return;
+    }
     setProblem(null);
     if (
       attachments.length + uploading.length + files.length >
@@ -498,7 +522,7 @@ function EditorForm({
       current.filter((one) => one.id !== attachment.id),
     );
     try {
-      await call(() =>
+      await callAction(() =>
         removeOutgoingAttachment({
           data: { mailboxId, id: session.id, attachmentId: attachment.id },
         }),
@@ -586,7 +610,7 @@ function EditorForm({
           {title}
         </h2>
         <span role="status" className="flex-none text-xs text-secondary">
-          {saved ? "Saved" : ""}
+          {saved ? "Saved" : offline && dirty.current ? "Not saved yet" : ""}
         </span>
       </header>
 
@@ -595,6 +619,12 @@ function EditorForm({
           <Notice tone="danger">{session.warning}</Notice>
         )}
         {notice && <Notice tone="info">{notice}</Notice>}
+        {offline && (
+          <Notice tone="info">
+            You're offline. You can keep writing here, but this message can't be
+            saved or sent until you reconnect.
+          </Notice>
+        )}
 
         <div className="flex items-center gap-2 border-b border-line py-1.5">
           <label

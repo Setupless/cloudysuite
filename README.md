@@ -33,7 +33,7 @@ Every deployment contains every released app. An admin can turn each app off for
 - The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
-- The only other exception is `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
+- The only other exception is a `GET` of `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Auth cannot be turned off, because admins use it to turn the other apps back on.
 
 D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
@@ -147,7 +147,7 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - Admins can reset a member's sign-in and require 2FA for the organisation.
 - Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
 - Resetting a sign-in removes the member's passkeys, authenticator app, password, and sessions, then gives the admin a one-time link to hand over. CloudySuite never emails it, because the member's only address may be a mailbox they cannot open.
-- A session lasts 60 days and renews when it is used, at most once a day, so each session costs at most one database write a day. Someone who opens Mail now and then stays signed in and keeps getting notifications, which need a live session. Renewal happens on any request that reads the session, including Mail's, and someone unused for 60 days signs in again. The session cookie cache stays off, so a sign-out or reset takes effect at once.
+- A session lasts 60 days and renews when it is used, at most once a day, so each session costs at most one database write a day. Someone who opens Mail now and then stays signed in and keeps getting notifications, which need a live session. Renewal happens on any request that reads the session, including Mail's, and someone unused for 60 days signs in again. A tab nobody is looking at makes no requests, so it can't keep a session alive. The session cookie cache stays off, so a sign-out or reset takes effect at once.
 - A person's sign-in address is their new mailbox address when the invite creates one, and otherwise the address the invite went to.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
@@ -208,7 +208,7 @@ Mail installs from its own host as a PWA. The **App and notifications** page in 
 | ------------------------------------- | ------------------------------------------------------------------------------- |
 | Signing out                           | The sign-out page sends the browser through Mail's `/device-cleared`            |
 | A session ending elsewhere            | The service worker asks who is signed in on each page load, with no page code   |
-| A tab left open when a session ends   | Its next call gets a 401                                                        |
+| A tab left open when a session ends   | Its next call gets a 401, once someone is looking at the tab                    |
 | Someone else signing in               | The same check, and the page, comparing against the device's owner              |
 | 59 days with no check from the server | Offline, saved mail stops opening, because the session could have ended by then |
 
@@ -216,9 +216,13 @@ Sign-out happens on Account's host, which cannot reach Mail's storage, so it has
 
 Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 59 days, which is a session's 60 days less the day a renewal can lag. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
 
-Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because `/pwa/session` is the one Mail address that answers while Mail is off. It returns a person's id or a 401, and no mail.
+Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because a `GET` of `/pwa/session` is the one Mail request that gets an answer while Mail is off. It returns a person's id or a 401, and no mail.
 
-Saved mail stays on the disk until Mail is next opened on that device, because nothing can reach a closed browser. A person who loses a device should have an admin reset their sign-in, and the saved mail is still readable by anyone who can read that browser's files. CloudySuite does not encrypt it.
+**A tab nobody is looking at makes no requests.** Each request renews the session, so a forgotten background tab would otherwise keep someone signed in forever. Timed refreshes, saving mail for offline, and reconnecting all wait until the tab is visible again, then catch up at once. A visible tab counts as use, even with nobody at the screen.
+
+**Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A draft already open stays on screen and saves when the connection returns, but it is never sent then. A message already handed to CloudySuite still goes, and Undo comes back with the connection. Drafts are not saved on the device.
+
+[Privacy](#privacy) says what saved mail means for a lost device.
 
 ### Notifications
 
@@ -314,6 +318,12 @@ Import `src/styles/app.css` in the root route with `import "../styles/app.css"`.
 ## Privacy
 
 CloudySuite relies on Cloudflare's encryption at rest. Cloudflare and the organisation's admins are inside the trust boundary, and CloudySuite is not end-to-end encrypted. In exchange, server-side search and rules work without extra steps.
+
+**Saved mail on a device is not encrypted by CloudySuite.** So people can read offline, Mail keeps up to 50 MB of recent mail in the browser. Anyone who can get into that device and read the browser's files can read it.
+
+**A device kept offline can show its saved mail for up to 59 days,** even after the person signed out on another device or an admin removed their access. It can't find out until it next connects, and then it clears itself. After 59 days with no connection, it stops showing saved mail.
+
+**If a device is lost,** an admin should reset that person's sign-in straight away, which protects everything on the server. An admin can't erase the device remotely until it next comes online and opens Mail, so until then only the device's own lock protects the saved mail. Ask people to keep a passcode or password on any device they use for Mail.
 
 ## Cloudflare limits and costs
 

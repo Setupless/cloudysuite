@@ -2,7 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { IconAlertCircle, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
-import { call, mailKeys } from "../../queries";
+import { useOffline } from "../../pwa/connectivity";
+import { callAction, mailKeys } from "../../queries";
 import type { MailboxId } from "../../types";
 import { useToast } from "../../ui/toast";
 import { reopenOutgoing, undoSend } from "../functions";
@@ -13,7 +14,7 @@ import {
   UNKNOWN_OUTCOME_TEXT,
 } from "../types";
 import { useCompose } from "./compose-context";
-import { composeKeys, outgoingQuery } from "./queries";
+import { composeKeys, isOnItsWay, outgoingQuery } from "./queries";
 
 const SENT_NOTE_MS = 6_000;
 
@@ -21,6 +22,9 @@ const TRAY_ACTION =
   "cursor-pointer font-semibold underline outline-page focus-visible:outline-2";
 const NOTICE_ACTION =
   "cursor-pointer font-semibold text-accent underline outline-accent focus-visible:outline-2";
+
+const STILL_GOING_OFFLINE =
+  "You're offline, so Undo isn't available. This message doesn't need this device and will still go.";
 
 const DISMISSED_KEY = "cloudysuite-send-notices-put-aside";
 
@@ -52,7 +56,7 @@ function useUndoSend(mailboxId: MailboxId) {
   const toast = useToast();
   return async (job: OutgoingSummary) => {
     try {
-      const { undone } = await call(() =>
+      const { undone } = await callAction(() =>
         undoSend({ data: { mailboxId, id: job.id } }),
       );
       if (undone) {
@@ -137,6 +141,7 @@ export function SendNotices() {
   const mine = (outgoing.data ?? []).filter((job) => job.sentByViewer);
   const undo = useUndoSend(mailboxId);
   const [dismissed, setDismissed] = useState(readDismissed);
+  const offline = useOffline();
 
   const retrying = mine.filter((job) => job.retrying);
   const now = useTick(retrying.length > 0);
@@ -148,7 +153,9 @@ export function SendNotices() {
 
   const reopen = async (job: OutgoingSummary) => {
     try {
-      await call(() => reopenOutgoing({ data: { mailboxId, id: job.id } }));
+      await callAction(() =>
+        reopenOutgoing({ data: { mailboxId, id: job.id } }),
+      );
       openDraft(
         job.id,
         job.state === "unknown" ? { warning: UNKNOWN_OUTCOME_TEXT } : undefined,
@@ -172,7 +179,9 @@ export function SendNotices() {
   const hiddenCount =
     retrying.length + unsettled.length - (waiting || failed ? 1 : 0);
 
-  if (!waiting && !failed) return null;
+  // What this list knows stopped updating, and none of its buttons can work. The same
+  // messages are back here on reconnecting.
+  if (offline || (!waiting && !failed)) return null;
   return (
     <div className="flex-none">
       {waiting && (
@@ -272,10 +281,16 @@ export function SendTray() {
   }, [justSentId]);
 
   const undo = useUndoSend(mailboxId);
+  const offline = useOffline();
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-16 z-30 flex flex-col items-center gap-2 px-4">
       {mine.map((job) => {
+        if (offline) {
+          return isOnItsWay(job) ? (
+            <Card key={job.id} message={STILL_GOING_OFFLINE} />
+          ) : null;
+        }
         if (job.state === "scheduled" && !job.retrying) {
           const seconds = secondsLeft(job, fetchedAt, now);
           return (

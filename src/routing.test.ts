@@ -65,18 +65,38 @@ test.each([
   [unknown, "/setup", { action: "notFound" }],
   [unknown, "/setup/api", { action: "notFound" }],
 ] as const)("gate %j at %s", (route, pathname, expected) => {
-  expect(gate(route, pathname)).toEqual(expected);
+  expect(gate(route, pathname, "GET")).toEqual(expected);
+});
+
+test.each(["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])(
+  "with Mail off, %s on the device session address gets the off page",
+  (method) => {
+    expect(gate({ kind: "off", app: "mail" }, "/pwa/session", method)).toEqual({
+      action: "redirect",
+      to: "/off",
+    });
+  },
+);
+
+test("with Mail off, GET on the device session address still answers", () => {
+  expect(gate({ kind: "off", app: "mail" }, "/pwa/session", "GET")).toEqual({
+    action: "pass",
+  });
 });
 
 test("only Mail's host serves the offline shell, and only while Mail is on", () => {
   const app = (name: "auth" | "mail") => ({ kind: "app" as const, app: name });
-  expect(gate(app("mail"), "/offline-shell")).toEqual({ action: "pass" });
-  expect(gate(app("auth"), "/offline-shell")).toEqual({ action: "notFound" });
-  expect(gate({ kind: "off", app: "mail" }, "/offline-shell")).toEqual({
+  expect(gate(app("mail"), "/offline-shell", "GET")).toEqual({
+    action: "pass",
+  });
+  expect(gate(app("auth"), "/offline-shell", "GET")).toEqual({
+    action: "notFound",
+  });
+  expect(gate({ kind: "off", app: "mail" }, "/offline-shell", "GET")).toEqual({
     action: "redirect",
     to: "/off",
   });
-  expect(gate({ kind: "unknown" }, "/offline-shell")).toEqual({
+  expect(gate({ kind: "unknown" }, "/offline-shell", "GET")).toEqual({
     action: "notFound",
   });
 });

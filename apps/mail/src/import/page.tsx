@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isPageHidden } from "../pwa/connectivity";
 import type { ManagedMailbox } from "./functions";
 import {
   IMPORT_FAILURES,
@@ -191,6 +192,7 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
   useEffect(() => {
     if (!active || sending) return;
     const timer = setInterval(() => {
+      if (isPageHidden()) return;
       refresh().catch(() => {
         // The next tick tries again, and the job carries on regardless.
       });

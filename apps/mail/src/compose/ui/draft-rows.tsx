@@ -1,7 +1,8 @@
 import { Badge } from "@cloudysuite/ui";
 import { IconPaperclip } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { call } from "../../queries";
+import { callAction, isRefusal } from "../../queries";
+import { NotSavedOnDevice } from "../../failure";
 import { FOLDER_DISPLAY } from "../../model";
 import { recipientLabel } from "../../ui/format";
 import { FailureNotice, SkeletonLines, ThreadDate } from "../../ui/states";
@@ -55,7 +56,12 @@ export function DraftRows() {
     return (
       <FailureNotice
         message={outgoing.error.message}
-        onRetry={() => void outgoing.refetch()}
+        onRetry={
+          isRefusal(outgoing.error) ||
+          outgoing.error instanceof NotSavedOnDevice
+            ? undefined
+            : () => void outgoing.refetch()
+        }
       />
     );
   }
@@ -73,7 +79,9 @@ export function DraftRows() {
     if (isOnItsWay(job)) return;
     if (job.state !== "draft") {
       try {
-        await call(() => reopenOutgoing({ data: { mailboxId, id: job.id } }));
+        await callAction(() =>
+          reopenOutgoing({ data: { mailboxId, id: job.id } }),
+        );
       } catch (error) {
         toast({ tone: "danger", message: (error as Error).message });
         return;

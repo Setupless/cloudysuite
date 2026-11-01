@@ -79,13 +79,18 @@ async function setUp(mailboxId: MailboxId = MAILBOX_A) {
   const stateOf = (id: OutgoingId) =>
     rows<{ state: string }>("SELECT state FROM outgoing WHERE id = ?", id)[0]
       ?.state;
-  const deliver = (raw: ArrayBuffer) =>
-    ingest(kit.env, {
+  // Inbound mail wakes the mailbox at once to send its notification, ahead of any
+  // send's due time. A test's next alarm should be about the send.
+  const deliver = async (raw: ArrayBuffer) => {
+    const result = await ingest(kit.env, {
       source: "inbound",
       mailboxId,
       raw,
       envelope: { from: "pat@example.org", to: OWN },
     });
+    await instance.fireAlarm();
+    return result;
+  };
   const sent = () =>
     rows<{
       id: number;
@@ -1354,6 +1359,27 @@ test("leaving the quote out sends only what was written", async () => {
   await kit.instance.fireAlarm();
   expect(kit.email.sent[0]?.html).not.toContain("Original text");
   expect(kit.email.sent[0]?.text).not.toContain("Original text");
+});
+
+test("a sent copy makes no notification, though inbound mail does", async () => {
+  const { env, instance, rows, send, sent } = await setUp();
+  const queued = () =>
+    rows<{ message_id: number }>("SELECT message_id FROM push_outbox");
+
+  await ingest(env, {
+    source: "inbound",
+    mailboxId: MAILBOX_A,
+    raw: eml({ from: "Pat <pat@example.org>", to: OWN, messageId: "n@x" }),
+    envelope: { from: "pat@example.org", to: OWN },
+  });
+  expect(queued()).toHaveLength(1);
+  await instance.fireAlarm();
+  expect(queued()).toEqual([]);
+
+  await send(newId());
+  await instance.fireAlarm();
+  expect(sent()).toHaveLength(1);
+  expect(queued()).toEqual([]);
 });
 
 test("address suggestions come from past correspondents, and leave out spam and other mailboxes", async () => {

@@ -284,6 +284,12 @@ function MailView({
     if (outOfPlace) close();
   }, [openThreadId]);
 
+  const writeNew = () => {
+    if (compose.refuseIfOffline()) return;
+    if (openThreadId !== null) closeThread();
+    compose.startNew();
+  };
+
   const answerOpenThread = (mode: "reply" | "replyAll" | "forward") => {
     if (openThreadId === null) return;
     const latest = queryClient
@@ -356,14 +362,7 @@ function MailView({
     },
     hotkeys,
   );
-  useHotkey(
-    "C",
-    () => {
-      if (openThreadId !== null) closeThread();
-      compose.startNew();
-    },
-    hotkeys,
-  );
+  useHotkey("C", () => writeNew(), hotkeys);
   useHotkey("R", () => answerOpenThread("reply"), hotkeys);
   useHotkey("A", () => answerOpenThread("replyAll"), hotkeys);
   useHotkey("F", () => answerOpenThread("forward"), hotkeys);
@@ -447,14 +446,7 @@ function MailView({
                 </span>
               )}
               <span className="self-center">
-                <Button
-                  variant="action"
-                  icon={IconPencil}
-                  onClick={() => {
-                    if (openThreadId !== null) closeThread();
-                    compose.startNew();
-                  }}
-                >
+                <Button variant="action" icon={IconPencil} onClick={writeNew}>
                   Write
                 </Button>
               </span>
@@ -466,7 +458,9 @@ function MailView({
                 />
               </span>
             </header>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-2">{listBody}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+              {listBody}
+            </div>
           </section>
           <section
             key={openThreadId ?? "none"}

@@ -1,6 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import type { QueryClient } from "@tanstack/react-query";
-import { isOffline, markReachable } from "./connectivity";
+import { isOffline, isPageHidden, markReachable } from "./connectivity";
 import {
   clearDevice,
   onDeviceCleared,
@@ -12,6 +12,7 @@ import { isOwnerExpired, type DeviceOwner } from "./offline-model";
 import { setSavedMailReader } from "./saved-mail";
 import { DEVICE_CLEARED_PATH } from "./sw-policy";
 import { saveMailForOffline } from "./sync";
+import { runWhileVisible } from "./while-visible";
 
 const REFRESH_SAVED_MAIL_MS = 5 * 60 * 1000;
 
@@ -79,13 +80,18 @@ export function startDevice(user: SignedIn, client: QueryClient): () => void {
     if (isOffline()) return;
     if (await confirmOwner(user)) await saveMailForOffline(user.id);
   };
-  void refresh();
-  const timer = setInterval(() => void refresh(), REFRESH_SAVED_MAIL_MS);
+  const savedMail = runWhileVisible(
+    () => void refresh(),
+    REFRESH_SAVED_MAIL_MS,
+  );
 
+  // Hidden, this only marks everything out of date, and Query fetches it on return.
   const reconnect = () => {
     markReachable();
-    void client.invalidateQueries();
-    void refresh();
+    void client.invalidateQueries({
+      refetchType: isPageHidden() ? "none" : "active",
+    });
+    savedMail.runSoon();
   };
   addEventListener("online", reconnect);
 
@@ -99,7 +105,7 @@ export function startDevice(user: SignedIn, client: QueryClient): () => void {
   const stopListening = onDeviceCleared(() => location.reload());
   const stopColours = followColorScheme();
   return () => {
-    clearInterval(timer);
+    savedMail.stop();
     removeEventListener("online", reconnect);
     removeEventListener("pageshow", restored);
     stopListening();

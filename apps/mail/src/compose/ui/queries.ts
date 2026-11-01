@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { readDrafts } from "../../pwa/saved-mail";
 import { call, mailKeys, REFRESH_MS } from "../../queries";
 import type { MailboxId } from "../../types";
 import {
@@ -39,7 +40,8 @@ export const isOnItsWay = ({ state }: OutgoingSummary) =>
 export const outgoingQuery = (mailboxId: MailboxId) =>
   queryOptions({
     queryKey: composeKeys.outgoing(mailboxId),
-    queryFn: () => call(() => listOutgoing({ data: { mailboxId } })),
+    queryFn: () =>
+      call(() => readDrafts(() => listOutgoing({ data: { mailboxId } }))),
     refetchInterval: (query) =>
       query.state.data?.some(isOnItsWay) ? ACTIVE_REFRESH_MS : REFRESH_MS,
     refetchIntervalInBackground: false,

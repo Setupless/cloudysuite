@@ -41,6 +41,8 @@ const THREAD_NOT_SAVED =
   "You're offline, and this conversation isn't saved on this device. It will come back when you reconnect.";
 const BODY_NOT_SAVED =
   "You're offline, and this message isn't saved on this device. It may be too large, or it may not have been saved yet.";
+const DRAFTS_NOT_SAVED =
+  "You're offline, and drafts aren't saved on this device. They will come back when you reconnect.";
 const NOTHING_SAVED =
   "You're offline, and no mail is saved on this device yet. Connect to the internet and try again.";
 
@@ -101,6 +103,9 @@ export const readSearchPage = (fromServer: () => Promise<SearchPage>) =>
 export const readRules = <Result>(fromServer: () => Promise<Result>) =>
   readThrough(fromServer, nothingSaved, RULES_NOT_SAVED);
 
+export const readDrafts = <Result>(fromServer: () => Promise<Result>) =>
+  readThrough(fromServer, nothingSaved, DRAFTS_NOT_SAVED);
+
 export const readThread = <Result>(
   fromServer: () => Promise<Result>,
   mailboxId: MailboxId,
@@ -141,5 +146,12 @@ export const readFirstMailbox = (fromServer: () => Promise<MailboxId | null>) =>
 
 export const OFFLINE_ACTION_REFUSED =
   "You're offline, so nothing changed. Try again when you're back online.";
+
+export const OFFLINE_COMPOSE_REFUSED =
+  "You're offline, so you can't write a message right now. Try again when you're back online.";
+export const OFFLINE_SEND_REFUSED =
+  "You're offline, so this message wasn't sent. It's still here. Try again when you're back online.";
+export const OFFLINE_DRAFT_NOT_SAVED =
+  "You're offline, so this draft can't be saved yet, and it's still open here. Try again when you're back online.";
 
 export { isOffline };
