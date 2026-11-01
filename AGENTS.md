@@ -1,0 +1,79 @@
+# Agent instructions
+
+[README.md](README.md) holds product decisions and their reasons. Read the sections for the area you change. A rule below overrides your defaults and habits.
+
+The app is not scaffolded yet. Check `package.json` before you assume that a command exists.
+
+## Commands
+
+- `bun fmt` formats the code.
+- `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`.
+
+## Stop and ask
+
+Do not guess or build around these. Ask the user first.
+
+- The task conflicts with a rule here or a decision in the README.
+- The task touches an item in the README's "Open questions".
+- The task needs a dependency outside the README's tech stack, or another Better Auth plugin, Cloudflare service, or Worker. Installing the listed stack does not need approval.
+- The task needs a destructive data migration.
+
+## Scope
+
+- The first release contains Auth and Mail only.
+- Do not add a CLI, MCP server, chat integration, public API, or AI feature. Jev is the one exception, and every feature must work without a Jev key.
+- Do not add IMAP or SMTP servers. They cannot run on Workers.
+- Build what the task asks for. Do not add options, abstractions, or fallbacks that no current caller needs.
+
+## Before you write code
+
+- Define the data shape and types first.
+- Check a library's API in its installed version or current docs, not from memory. This stack moves quickly and includes release candidates.
+
+## Architecture
+
+- One Worker serves every app and routes by hostname.
+- Production code runs on Workers, so it cannot use Bun APIs.
+- Each mailbox is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies and attachments go in R2.
+- D1 holds domains, users, addresses, and mailbox access.
+- Every mailbox read and write goes through one access-check function.
+- Every message enters a mailbox through `ingest`, including imports.
+- Durable Object alarms handle background work. Do not add Queues or Workflows.
+- Make jobs safe to repeat. A retry must not duplicate messages or skip work.
+
+## Auth and security
+
+- Use the latest stable Better Auth release that no published advisory affects for the features we use. Do not use `rc`, `beta`, or `canary` releases of Better Auth.
+- Use only email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins.
+- Keep the session cookie cache off.
+- A user who loses a device can sign in with another passkey or a TOTP backup code. Otherwise an admin resets their sign-in. Do not add magic links or email recovery.
+- Invites use a single-use token sent to the invited address. A matching email string does not prove ownership.
+- Read the domain from stored settings, never from the `Host` header.
+- Use the Cloudflare API token during setup only. Never store or log it.
+- Render email HTML in a sandbox. Treat all message content as hostile.
+
+## UI
+
+- Follow the Daylight direction. `prototypes/look-and-feel` is a visual reference, so do not copy its code.
+- Use only the colour roles in `src/styles/theme.css`, through classes such as `bg-accent`. Add or change a colour only in that file.
+- Misspelled Tailwind classes build without an error, so check that each class has an effect.
+- Load `app.css` with `import "../styles/app.css"` in the root route.
+- Use Tabler icons.
+- Write UI text for non-technical users. Say what happened and what to do next, with no jargon.
+
+## Code
+
+- Comment only a non-obvious reason that the code cannot show.
+- Test behaviour that users can observe, not internals.
+
+## Definition of done
+
+1. Run the formatter, the theme check, and every other check in `package.json`.
+2. Run the change, and do not rely on a passing build alone.
+   - Run Worker behaviour on the Workers runtime. `vite dev` does not run the inbound `email()` handler.
+   - For a page, confirm that the first HTML response links CSS that returns 200, then view the page in light and dark.
+3. Report what you ran and the result, and name anything you did not verify. Do not write "verified" or "works" without that evidence.
+
+## Change this file
+
+Add a rule only if an agent would otherwise get it wrong. If a script can enforce a rule, write the script and delete the rule. Keep this file under 100 lines.

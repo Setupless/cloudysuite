@@ -1,0 +1,48 @@
+/* Every colour in the product lives here. After editing, run: bun scripts/check-theme.mjs */
+:root {
+	color-scheme: light dark;
+}
+
+@theme static {
+	--color-*: initial;
+
+	/* light-dark(light value, dark value) */
+	--color-page: light-dark(#ffffff, #1c1c1e);
+	--color-sidebar: light-dark(#f4f4f7, #262629);
+	--color-panel: light-dark(#ffffff, #1c1c1e);
+	--color-field: light-dark(#efeff3, #2e2e32);
+	--color-selected: light-dark(#e4effd, #153255);
+	--color-line: light-dark(#e4e4e9, #37373c);
+
+	--color-text: light-dark(#1c1c1e, #f5f5f7);
+	--color-secondary: light-dark(#66666e, #a3a3ab);
+
+	--color-accent: light-dark(#0a66d6, #4c9eff);
+	--color-on-accent: light-dark(#ffffff, #06213f);
+
+	--color-danger: light-dark(#c4291f, #ff7b72);
+	--color-success: light-dark(#2b7a4b, #5cc98b);
+
+	--color-tag-1: light-dark(#a84c08, #f0a15c);
+	--color-tag-2: light-dark(#2b7a4b, #5cc98b);
+
+	--color-on-avatar: #ffffff;
+	--color-avatar-1: #3a6ea5;
+	--color-avatar-2: #8a5a83;
+	--color-avatar-3: #3f7d6e;
+	--color-avatar-4: #a0603a;
+	--color-avatar-5: #5a6b8c;
+	--color-avatar-6: #a04a5a;
+
+	--font-sans: Inter, -apple-system, system-ui, sans-serif;
+	--font-mono: ui-monospace, monospace;
+	--radius: 9px;
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+}
