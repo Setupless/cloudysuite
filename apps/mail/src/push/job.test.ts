@@ -390,7 +390,7 @@ test("a crash before the push service answers sends the notice again", async () 
 });
 
 test("a job that cannot reach the database waits rather than spinning", async () => {
-  const { env, instanceOf } = createTestEnv();
+  const { env, instanceOf } = createTestEnv({} as D1Database);
   await ingest(env, inbound());
   const instance = instanceOf(MAILBOX_A);
   await instance.fireAlarm();

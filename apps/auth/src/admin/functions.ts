@@ -1,4 +1,10 @@
 import { env } from "cloudflare:workers";
+import {
+  jevKeyIsSet,
+  type JevUsage,
+  readJevUsage,
+  writeJevKey,
+} from "@cloudysuite/jev";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { eq } from "drizzle-orm";
@@ -30,6 +36,7 @@ import {
 } from "./domains";
 import {
   readFlag,
+  readJevAcknowledgement,
   readMailboxId,
   readMailboxRole,
   readOrgRole,
@@ -43,6 +50,7 @@ import {
   renewInvite,
   sendInviteEmail,
 } from "./invites";
+import { saveKey, type SavedKey } from "./jev";
 import {
   addAlias as addAliasRow,
   addPersonalMailbox,
@@ -245,16 +253,20 @@ export type OrganisationView = {
   peopleWithoutSecondWay: number;
   apps: { id: ToggleableApp; enabled: boolean }[];
   runningVersion: string;
+  jev: { keySet: boolean; usage: JevUsage };
 };
 
 export const getOrganisation = createServerFn({ method: "GET" })
   .middleware([adminOnly])
   .handler(async (): Promise<OrganisationView> => {
-    const [require2fa, peopleWithoutSecondWay, settings] = await Promise.all([
-      readRequire2fa(env.DB),
-      countPeopleWithoutSecondWay(env.DB),
-      readSettings(env.DB),
-    ]);
+    const [require2fa, peopleWithoutSecondWay, settings, keySet, usage] =
+      await Promise.all([
+        readRequire2fa(env.DB),
+        countPeopleWithoutSecondWay(env.DB),
+        readSettings(env.DB),
+        jevKeyIsSet(env.DB),
+        readJevUsage(env.DB, Date.now()),
+      ]);
     return {
       require2fa,
       peopleWithoutSecondWay,
@@ -263,6 +275,7 @@ export const getOrganisation = createServerFn({ method: "GET" })
         enabled: !settings.disabled.has(id),
       })),
       runningVersion: RUNNING_VERSION,
+      jev: { keySet, usage },
     };
   });
 
@@ -283,6 +296,26 @@ export const changeAppEnabled = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }): Promise<void> => {
     await setAppEnabled(env.DB, data.app, data.enabled);
+  });
+
+// The key goes in and is never sent back. getOrganisation says only that one is set.
+export const saveJevKey = createServerFn({ method: "POST" })
+  .middleware([adminOnly])
+  .validator((input: { key: string; acknowledged: true }) => ({
+    key: readText(input, "key"),
+    acknowledged: readJevAcknowledgement(input),
+  }))
+  .handler(({ data }): Promise<Outcome<SavedKey>> => {
+    const { CLOUDYSUITE_LOCAL_JEV_API: override } = env as {
+      CLOUDYSUITE_LOCAL_JEV_API?: string;
+    };
+    return saveKey(env.DB, data, override, (url, init) => fetch(url, init));
+  });
+
+export const removeJevKey = createServerFn({ method: "POST" })
+  .middleware([adminOnly])
+  .handler(async (): Promise<void> => {
+    await writeJevKey(env.DB, null);
   });
 
 const readUpdateNotice = createUpdateChecker(RUNNING_VERSION, (url, init) =>

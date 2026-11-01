@@ -36,6 +36,7 @@
       "dependencies": {
         "@better-auth/passkey": "1.7.14",
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/jev": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-router": "1.170.46",
@@ -50,6 +51,7 @@
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/jev": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-hotkeys": "0.20.1",
@@ -63,6 +65,12 @@
     },
     "packages/access": {
       "name": "@cloudysuite/access",
+      "dependencies": {
+        "drizzle-orm": "1.0.0-rc.5",
+      },
+    },
+    "packages/jev": {
+      "name": "@cloudysuite/jev",
       "dependencies": {
         "drizzle-orm": "1.0.0-rc.5",
       },
@@ -147,6 +155,8 @@
     "@cloudysuite/access": ["@cloudysuite/access@workspace:packages/access"],
 
     "@cloudysuite/auth": ["@cloudysuite/auth@workspace:apps/auth"],
+
+    "@cloudysuite/jev": ["@cloudysuite/jev@workspace:packages/jev"],
 
     "@cloudysuite/mail": ["@cloudysuite/mail@workspace:apps/mail"],
 

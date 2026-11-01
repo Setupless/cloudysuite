@@ -20,6 +20,7 @@ import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
 import { LabelStore, type LabelWrite } from "./labels/store";
 import { applyMigrations } from "./migrations";
+import type { JevPlan } from "./placement";
 import { RuleStore } from "./rules/store";
 import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
 import { SpamStore } from "./spam/store";
@@ -79,6 +80,10 @@ export class Mailbox extends DurableObject<Env> {
 
   findByHash(rawHash: string): MessageRef | null {
     return this.#store.findByHash(rawHash);
+  }
+
+  planJevCheck(message: NewMessage): JevPlan {
+    return this.#store.planJevCheck(message);
   }
 
   // `inboundTo` is set only by the inbound path. A Durable Object cannot reliably read

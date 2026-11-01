@@ -37,7 +37,7 @@ const WORDS: {
   markedRealNotProved: ({ address }) =>
     `Mail from ${address} was marked as not spam, but this message couldn't prove it came from them.`,
   movedByRule: () => "A rule in this mailbox moved this here.",
-  opinion: ({ why }) => why,
+  opinion: () => "The optional message check flagged this as likely spam.",
 };
 
 const say = <Kind extends SpamReason["kind"]>(

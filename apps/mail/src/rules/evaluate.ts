@@ -1,12 +1,21 @@
 import { recipientCandidates } from "../address";
 import type { Address, LabelId, NewMessage } from "../types";
-import type { Rule, RuleCondition, RuleFolder, RuleTextField } from "./types";
+import {
+  descriptionsIn,
+  needsJev,
+  type Rule,
+  type RuleCondition,
+  type RuleFolder,
+  type RuleTextField,
+} from "./types";
 
 // What a rule can read about an arriving message, lowercased once. A later signal
 // joins here and as a variant of RuleCondition.
 export type RuleFacts = Record<RuleTextField, string> & {
   hasAttachment: boolean;
   deliveredTo: readonly string[];
+  // The descriptions Jev said this message fits. Null means there is no key.
+  fits: ReadonlySet<string> | null;
 };
 
 const people = (list: Address[]) =>
@@ -25,6 +34,7 @@ export function factsOf(message: NewMessage): RuleFacts {
     body: message.searchBody.toLowerCase(),
     hasAttachment: message.attachments.some((one) => !one.inline),
     deliveredTo: recipientCandidates(message.envelopeTo ?? ""),
+    fits: message.fits ? new Set(message.fits) : null,
   };
 }
 
@@ -38,6 +48,7 @@ const CONDITION_TESTS: {
     facts[field].includes(text.toLowerCase()),
   hasAttachment: (_, facts) => facts.hasAttachment,
   sentToAlias: ({ address }, facts) => facts.deliveredTo.includes(address),
+  looksLike: ({ text }, facts) => facts.fits?.has(text) ?? false,
 };
 
 function holds(condition: RuleCondition, facts: RuleFacts): boolean {
@@ -67,6 +78,7 @@ export const NO_OUTCOME: RuleOutcome = {
 export function applyRules(rules: Rule[], facts: RuleFacts): RuleOutcome {
   const outcome: RuleOutcome = { ...NO_OUTCOME, labelIds: [] };
   for (const { match, conditions, actions } of rules) {
+    if (facts.fits === null && needsJev({ conditions })) continue;
     const matches =
       match === "all"
         ? conditions.every((condition) => holds(condition, facts))
@@ -78,4 +90,20 @@ export function applyRules(rules: Rule[], facts: RuleFacts): RuleOutcome {
     outcome.starred ||= actions.star;
   }
   return outcome;
+}
+
+// Only what could change the outcome is asked. A rule already settled by its other
+// conditions spends no tokens and sends nothing.
+export function descriptionsToAsk(rules: Rule[], facts: RuleFacts): string[] {
+  const asked = new Set<string>();
+  for (const { match, conditions } of rules) {
+    const plain = conditions.filter((one) => one.kind !== "looksLike");
+    const settled =
+      match === "all"
+        ? !plain.every((one) => holds(one, facts))
+        : plain.some((one) => holds(one, facts));
+    if (settled) continue;
+    for (const text of descriptionsIn(conditions)) asked.add(text);
+  }
+  return [...asked];
 }

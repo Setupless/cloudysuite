@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { jevKeyIsSet } from "@cloudysuite/jev";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { asc, eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { addresses } from "../../../../src/db/schema";
 import { openMailboxFor, openRuleEditorFor } from "../access";
 import { parseMailboxInput, refusal } from "../wire";
-import type { RuleWrite } from "./types";
+import { descriptionsIn, type RuleDraft, type RuleWrite } from "./types";
 import {
   parseNewRuleInput,
   parseReorderInput,
@@ -19,18 +20,40 @@ const savedRule = (write: RuleWrite) => {
   return write.rule;
 };
 
+// A description is only offered with a key, so this is a page left open while the key
+// was removed. A paused rule can still be renamed, turned off, or have that condition
+// taken out, so only new words are refused.
+async function refuseNewDescriptionWithoutKey(
+  draft: RuleDraft,
+  stored: readonly string[],
+): Promise<void> {
+  const added = descriptionsIn(draft.conditions).filter(
+    (text) => !stored.includes(text),
+  );
+  if (added.length > 0 && !(await jevKeyIsSet(env.DB))) {
+    throw refusal(
+      409,
+      "This needs the optional Jev check, and it isn't set up. Ask your admin to add a key, or choose another condition.",
+    );
+  }
+}
+
 export const getRules = createServerFn({ method: "GET" })
   .validator(parseMailboxInput)
   .handler(async ({ data }) => {
     const mailbox = await openMailboxFor(getRequest(), data.mailboxId);
-    const rows = await drizzle(env.DB)
-      .select({ address: addresses.address })
-      .from(addresses)
-      .where(eq(addresses.mailboxId, data.mailboxId))
-      .orderBy(asc(addresses.address));
+    const [rows, jevIsSet] = await Promise.all([
+      drizzle(env.DB)
+        .select({ address: addresses.address })
+        .from(addresses)
+        .where(eq(addresses.mailboxId, data.mailboxId))
+        .orderBy(asc(addresses.address)),
+      jevKeyIsSet(env.DB),
+    ]);
     return {
       rules: await mailbox.listRules(),
       addresses: rows.map((row) => row.address),
+      jevIsSet,
     };
   });
 
@@ -38,13 +61,23 @@ export const createRule = createServerFn({ method: "POST" })
   .validator(parseNewRuleInput)
   .handler(async ({ data }) => {
     const editor = await openRuleEditorFor(getRequest(), data.mailboxId);
+    await refuseNewDescriptionWithoutKey(data.rule, []);
     return savedRule(await editor.create(data.rule));
   });
 
 export const updateRule = createServerFn({ method: "POST" })
   .validator(parseRuleChangeInput)
   .handler(async ({ data }) => {
-    const editor = await openRuleEditorFor(getRequest(), data.mailboxId);
+    const request = getRequest();
+    const editor = await openRuleEditorFor(request, data.mailboxId);
+    const mailbox = await openMailboxFor(request, data.mailboxId);
+    const stored = (await mailbox.listRules()).find(
+      (rule) => rule.id === data.ruleId,
+    );
+    await refuseNewDescriptionWithoutKey(
+      data.rule,
+      descriptionsIn(stored?.conditions ?? []),
+    );
     return savedRule(await editor.update(data.ruleId, data.rule));
   });
 

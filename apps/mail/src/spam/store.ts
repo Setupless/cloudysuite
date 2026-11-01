@@ -17,6 +17,7 @@ import { SCAN_CHARS, tokensOf } from "./tokens";
 import {
   MAX_SENDER_ENTRIES,
   type MisleadingLink,
+  opinionCanCount,
   parseStoredVerdict,
   REASON_POINTS,
   type SenderEntry,
@@ -393,14 +394,14 @@ export class SpamStore {
       });
     }
     if (isShouting(message.subject)) reasons.push({ kind: "shouting" });
-    if (spamFacts?.opinion?.spam) {
-      reasons.push({ kind: "opinion", why: spamFacts.opinion.why });
-    }
     const learned = this.#learned(message, known, proved);
     if (learned === "spam") reasons.push({ kind: "learnedSpam" });
     if (learned === "real") reasons.push({ kind: "learnedReal" });
     if (this.#repliesToSent(message.references)) {
       reasons.push({ kind: "replyToSent" });
+    }
+    if (spamFacts?.opinion?.spam && opinionCanCount(reasons)) {
+      reasons.push({ kind: "opinion" });
     }
 
     const score = reasons.reduce(
