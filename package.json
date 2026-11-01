@@ -9,9 +9,37 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "bun fmt --check && oxlint && bun scripts/check-theme.mjs && bun test"
+    "dev": "vite dev",
+    "build": "vite build",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:seed:local": "wrangler d1 execute DB --local --command \"INSERT OR REPLACE INTO domains (name, is_primary) VALUES ('localhost', 1)\"",
+    "check": "bun fmt --check && oxlint && bun scripts/check-theme.mjs && bun test && vite build && wrangler types && tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudysuite/auth": "workspace:*",
+    "@cloudysuite/mail": "workspace:*",
+    "@cloudysuite/ui": "workspace:*",
+    "@tabler/icons-react": "3.50.0",
+    "@tanstack/react-router": "1.170.46",
+    "@tanstack/react-start": "1.169.4",
+    "drizzle-orm": "1.0.0-rc.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "oxlint": "1.90.0"
+    "@cloudflare/vite-plugin": "1.66.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/bun": "1.4.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "drizzle-kit": "1.0.0-rc.5",
+    "oxlint": "1.90.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "wrangler": "4.156.0"
   }
 }

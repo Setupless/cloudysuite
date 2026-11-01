@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** planning. This repository contains no application code yet, so this README describes the intended product.
+**Status:** early scaffold. The repository has one Worker, the hostname router, placeholder pages, and a mailbox that stores raw messages. The product features do not exist yet, so this README describes the intended product.
 
 ## Who it is for
 
@@ -35,12 +35,14 @@ Every deployment contains every released app. An admin can turn each app off for
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
 - Auth cannot be turned off, because admins use it to turn the other apps back on.
 
-D1 stores the setting as one row for each app that can be turned off:
+D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
 
 ```ts
-type ToggleableApp = "mail" | "calendar" | "storage";
+type ToggleableApp = "mail";
 type AppSetting = { app: ToggleableApp; enabled: boolean };
 ```
+
+The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type grows when Calendar and Storage ship.
 
 ## First release
 
@@ -123,7 +125,7 @@ Every colour lives in [`src/styles/theme.css`](src/styles/theme.css) as a role, 
 1. Edit the values in `src/styles/theme.css`. For a new accent colour, change `--color-accent`, `--color-on-accent`, and `--color-selected`.
 2. Run `bun scripts/check-theme.mjs`.
 
-The script fails if a text and background pair is below the WCAG AA contrast ratio of 4.5, if a role is missing, or if a file in `src` contains a colour value outside the theme file. It does not catch a misspelled class: `bg-acent` builds without an error and renders no colour.
+The script fails if a text and background pair is below the WCAG AA contrast ratio of 4.5, if a role is missing, or if a file in `src`, `apps`, or `packages` contains a colour value outside the theme file. It does not catch a misspelled class: `bg-acent` builds without an error and renders no colour.
 
 ### Load the stylesheet
 
@@ -153,12 +155,12 @@ These limits come from the Cloudflare docs and shape the product:
 
 The repository is a Bun workspace monorepo that builds into the one Worker:
 
-| Path              | Contents                                                        |
-| ----------------- | --------------------------------------------------------------- |
-| Repository root   | Wrangler config, `build` and `deploy` scripts                   |
-| `src`             | Worker entry, hostname routing, root route, and theme           |
-| `apps/<app>`      | The routes, UI, and server code of one app, such as `apps/mail` |
-| `packages/<name>` | Code that two or more apps share                                |
+| Path              | Contents                                                     |
+| ----------------- | ------------------------------------------------------------ |
+| Repository root   | Wrangler config, `build` and `deploy` scripts, D1 migrations |
+| `src`             | Worker entry, hostname routing, every route file, and theme  |
+| `apps/<app>`      | The UI and server code of one app, such as `apps/mail`       |
+| `packages/<name>` | Code that two or more apps share                             |
 
 The Deploy button treats a subdirectory as [the root of the new repository](https://developers.cloudflare.com/workers/platform/deploy-buttons/), and the app inside must be fully isolated. A Worker in `apps/worker` would lose its workspace siblings, so the Worker stays at the root and the button points at the root. The first scaffold must prove this layout with a real Deploy button run.
 

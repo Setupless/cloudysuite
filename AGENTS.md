@@ -2,12 +2,14 @@
 
 [README.md](README.md) holds product decisions and their reasons. Read the sections for the area you change. A rule below overrides your defaults and habits.
 
-The app is not scaffolded yet. Check `package.json` before you assume that a command exists.
-
 ## Commands
 
 - `bun fmt` formats the code.
-- `bun run check` runs every CI check except the PR format check.
+- `bun run check` runs every CI check except the PR format check, including the production build and `tsc`.
+- `bun run dev` serves `http://auth.localhost:5173` and `http://mail.localhost:5173` through Vite.
+- `bun run build && bunx wrangler dev` serves the production build on the Workers runtime.
+- `curl -X POST --data-binary @message.eml 'http://localhost:8787/cdn-cgi/handler/email?from=a@example.org&to=b@localhost'` sends inbound mail to `wrangler dev`.
+- `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores `localhost` as the primary domain.
 - `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
 - `bun test` runs the tests on Bun, not on the Workers runtime.
 - `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
@@ -46,6 +48,7 @@ Do not guess or build around these. Ask the user first.
 
 - One Worker serves every app and routes by hostname.
 - The Worker's config, entry, and TanStack Start routes stay at the repository root, because the Deploy button needs them there. Each app's code goes in `apps/<app>`, and shared code goes in `packages/<name>`.
+- Route files in `src/routes/<app>` only render components from `apps/<app>`. `src/router.tsx` adds that prefix from the hostname.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off.
 - Production code runs on Workers, so it cannot use Bun APIs.
 - Each mailbox is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies and attachments go in R2.
