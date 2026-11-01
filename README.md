@@ -19,6 +19,23 @@ Each app has its own subdomain on the organisation's primary domain.
 
 Later ideas include a password manager, docs, and sheets.
 
+### Turn an app off
+
+Every deployment contains every released app. An admin can turn each app off for the whole organisation, for example when the organisation keeps another mail provider.
+
+- A person who opens a turned-off app sees a page that says an admin turned it off. The app also leaves the app switcher.
+- The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
+- Turning an app off deletes nothing. Turning it back on restores everything.
+- Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
+- Auth cannot be turned off, because admins use it to turn the other apps back on.
+
+D1 stores the setting as one row for each app that can be turned off:
+
+```ts
+type ToggleableApp = "mail" | "calendar" | "storage";
+type AppSetting = { app: ToggleableApp; enabled: boolean };
+```
+
 ## Who it is for
 
 CloudySuite is for small companies and open source teams of about 2 to 100 people that do not yet have a cloud suite. One technical person deploys it. The people who use it every day do not need technical knowledge. We follow Apple's "it just works" philosophy.
@@ -132,6 +149,29 @@ These limits come from the Cloudflare docs and shape the product:
 - Each mailbox is one SQLite-backed Durable Object. Attachments go in R2. D1 holds the organisation directory: domains, users, addresses, and mailbox access.
 - The rule that every mailbox query checks the signed-in user's access lives in one place, because several people can share a mailbox.
 
+### Repository layout
+
+The repository is a Bun workspace monorepo that builds into the one Worker:
+
+| Path              | Contents                                                        |
+| ----------------- | --------------------------------------------------------------- |
+| Repository root   | Wrangler config, `build` and `deploy` scripts                   |
+| `src`             | Worker entry, hostname routing, root route, and theme           |
+| `apps/<app>`      | The routes, UI, and server code of one app, such as `apps/mail` |
+| `packages/<name>` | Code that two or more apps share                                |
+
+The Deploy button treats a subdirectory as [the root of the new repository](https://developers.cloudflare.com/workers/platform/deploy-buttons/), and the app inside must be fully isolated. A Worker in `apps/worker` would lose its workspace siblings, so the Worker stays at the root and the button points at the root. The first scaffold must prove this layout with a real Deploy button run.
+
+## Git and CI
+
+`main` is what the Deploy button copies, so it must always be deployable. We use one long-lived branch, `main`, and short-lived branches that merge through a PR. A `develop` branch would add a second state to keep healthy, and deployers would never see it.
+
+A ruleset on `main` blocks direct pushes, force pushes, and deletion. It requires a PR, a passing `check` job, and resolved review threads. Squash is the only merge method, so each PR becomes one commit on `main`, and the PR title becomes the commit subject. The ruleset needs no approving review while one person maintains the project. [`.github/rulesets/main.json`](.github/rulesets/main.json) defines the ruleset.
+
+GitHub Free applies rulesets only to public repositories, so this repository must stay public or move to a paid plan.
+
+The `check` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `bun run check` and checks the format of the branch name and the PR title.
+
 ## Tech stack
 
 We build around the TanStack libraries, so that the product is fast for end users and pleasant for developers. We use RC's under the thought that by the time we release, they will more than likely be stable.
@@ -139,11 +179,11 @@ We build around the TanStack libraries, so that the product is fast for end user
 - TanStack Start, Query, Form, Hotkeys, and DB
 - Tailwind CSS v4
 - Drizzle RC
-- Bun as the package manager, script runner, and formatter (`bun fmt`)
+- Bun as the package manager, workspace manager, script runner, test runner (`bun test`), and formatter (`bun fmt`)
 - oxc for linting
 - Tabler icons
 
-Bun is a development tool here. Production code runs on the Workers runtime, so it cannot use Bun-specific APIs.
+Bun is a development tool here. Production code runs on the Workers runtime, so it cannot use Bun-specific APIs. `bun test` also runs on Bun, so a passing test does not prove behaviour that depends on the Workers runtime, such as Durable Objects or the `email()` handler. Run that behaviour on the Workers runtime as well.
 
 ## Open questions
 
@@ -151,6 +191,7 @@ Bun is a development tool here. Production code runs on the Workers runtime, so 
 - How do updates reach a deployment? The Deploy button copies the repository into the deployer's GitHub account, and Better Auth security patches must reach every copy.
 - What does built-in spam filtering use when no Jev key is set?
 - What are Jev's API, pricing, and data-retention terms?
+- Should an admin also be able to turn an app off for one person or group? The first release turns an app off for the whole organisation.
 
 ## License
 

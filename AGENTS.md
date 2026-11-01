@@ -7,7 +7,19 @@ The app is not scaffolded yet. Check `package.json` before you assume that a com
 ## Commands
 
 - `bun fmt` formats the code.
-- `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`.
+- `bun run check` runs every CI check except the PR format check.
+- `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
+- `bun test` runs the tests on Bun, not on the Workers runtime.
+- `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
+
+## Git
+
+- Start each change on a new branch from an up-to-date `main`. Never commit to `main`.
+- Name the branch `<type>/<short-name>`, and write the PR title as `<type>(<app>): <summary>`, with the scope optional. `scripts/check-pr.mjs` lists the types.
+- Keep one change in each PR. Use a separate worktree when another agent works in the same checkout.
+- Open a PR with `gh pr create`, state why the change exists and how you tested it, then wait for CI. A red check is your task to fix.
+- Merge only when the user asks, with `gh pr merge --squash --delete-branch`.
+- Do not bypass a check, push with force to a branch that another person uses, or edit `.github/rulesets` or `.github/workflows` without being asked.
 
 ## Stop and ask
 
@@ -33,6 +45,8 @@ Do not guess or build around these. Ask the user first.
 ## Architecture
 
 - One Worker serves every app and routes by hostname.
+- The Worker's config, entry, and TanStack Start routes stay at the repository root, because the Deploy button needs them there. Each app's code goes in `apps/<app>`, and shared code goes in `packages/<name>`.
+- The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off.
 - Production code runs on Workers, so it cannot use Bun APIs.
 - Each mailbox is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies and attachments go in R2.
 - D1 holds domains, users, addresses, and mailbox access.
@@ -68,11 +82,12 @@ Do not guess or build around these. Ask the user first.
 
 ## Definition of done
 
-1. Run the formatter, the theme check, and every other check in `package.json`.
+1. Run `bun fmt` and `bun run check`.
 2. Run the change, and do not rely on a passing build alone.
    - Run Worker behaviour on the Workers runtime. `vite dev` does not run the inbound `email()` handler.
    - For a page, confirm that the first HTML response links CSS that returns 200, then view the page in light and dark.
-3. Report what you ran and the result, and name anything you did not verify. Do not write "verified" or "works" without that evidence.
+3. Open a PR and wait for CI to pass.
+4. Report what you ran and the result, and name anything you did not verify. Do not write "verified" or "works" without that evidence.
 
 ## Change this file
 
