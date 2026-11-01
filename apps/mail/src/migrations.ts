@@ -238,6 +238,50 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
      WHERE from_address IS NOT NULL AND folder NOT IN ('spam', 'trash')
      GROUP BY from_address COLLATE NOCASE`,
   ],
+  [
+    // Why the filter or a rule filed a message in Spam.
+    `ALTER TABLE messages ADD COLUMN spam_verdict TEXT`,
+    // Which side of the counts below this message is on, so a move is counted once
+    // and can be taken back.
+    `ALTER TABLE messages ADD COLUMN spam_training TEXT CHECK (spam_training IN ('spam', 'ham'))`,
+    // A hash of each word, with how many marked messages had it. It outlives the
+    // messages it was learned from, so it holds no readable text.
+    `CREATE TABLE spam_tokens (
+      token INTEGER PRIMARY KEY,
+      spam INTEGER NOT NULL,
+      ham INTEGER NOT NULL,
+      touched_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    `CREATE TABLE spam_model (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      spam_docs INTEGER NOT NULL,
+      ham_docs INTEGER NOT NULL
+    )`,
+    `INSERT INTO spam_model (id, spam_docs, ham_docs) VALUES (1, 0, 0)`,
+    `CREATE TABLE spam_senders (
+      pattern TEXT PRIMARY KEY,
+      list TEXT NOT NULL CHECK (list IN ('allow', 'block')),
+      created_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    // Scoring runs on every delivery, and messages has no index by sender. vouched
+    // means a person took this sender's mail out of Spam.
+    `CREATE TABLE spam_contacts (
+      address TEXT PRIMARY KEY,
+      last_at INTEGER NOT NULL,
+      vouched INTEGER NOT NULL DEFAULT 0
+    ) WITHOUT ROWID`,
+    // What the links and name of a message taken out of Spam showed and really pointed
+    // at, as sites. Marking a sender as spam leaves these in place, and they count only
+    // while the sender is trusted, so undoing that mark restores them.
+    `CREATE TABLE spam_accepted_links (
+      address TEXT NOT NULL,
+      shown TEXT NOT NULL,
+      actual TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (address, shown, actual, message_id)
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 export function applyMigrations(

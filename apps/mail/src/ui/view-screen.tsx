@@ -63,6 +63,7 @@ const SHORTCUTS: [string, string][] = [
   ["Enter", "Open the conversation"],
   ["e", "Archive"],
   ["#", "Move to Trash"],
+  ["!", "Mark as spam, or not spam when in Spam"],
   ["s", "Add or remove star"],
   ["u", "Mark as read or unread"],
   ["l", "Add or remove labels"],
@@ -318,6 +319,15 @@ function MailView({
   );
   useHotkey("E", () => moveTarget("archive"), hotkeys);
   useHotkey("#", () => moveTarget("trash"), hotkeys);
+  useHotkey(
+    "!",
+    () => {
+      if (target === null) return;
+      const offered = movesOf(foldersOf(target));
+      moveTarget(offered.includes("notSpam") ? "notSpam" : "spam");
+    },
+    hotkeys,
+  );
   useHotkey(
     "S",
     () => {

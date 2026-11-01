@@ -8,6 +8,7 @@ import type { LabelWrite } from "./labels/store";
 import { rawKey } from "./r2-keys";
 import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
 import type { SearchInput, SearchPage } from "./search/store";
+import type { SenderEntry, SenderList, SenderWrite } from "./spam/types";
 import { mailboxStub } from "./stub";
 import type {
   AttachmentId,
@@ -76,6 +77,7 @@ export type MailboxClient = {
   ): Promise<LabelWrite>;
   deleteLabel(id: LabelId): Promise<void>;
   listRules(): Promise<Rule[]>;
+  listSenders(): Promise<SenderEntry[]>;
   moveToFolder(
     selection: MessageSelection,
     folder: Folder,
@@ -119,6 +121,7 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       (await stub.updateLabel(id, change)) as LabelWrite,
     deleteLabel: (id) => stub.deleteLabel(id),
     listRules: async () => (await stub.listRules()) as Rule[],
+    listSenders: async () => (await stub.listSenders()) as SenderEntry[],
     moveToFolder,
     moveToTrash: (selection) => moveToFolder(selection, "trash"),
     restore: async (selection) =>
@@ -198,5 +201,26 @@ export function openMailboxRuleEditor(
       (await stub.updateRule(id, draft)) as RuleWrite,
     remove: (id) => stub.deleteRule(id),
     reorder: (ids) => stub.reorderRules(ids),
+  };
+}
+
+export type MailboxSenderListEditor = {
+  add(pattern: string, list: SenderList): Promise<SenderWrite>;
+  remove(pattern: string): Promise<void>;
+};
+
+// Anyone with access can read the lists and mark mail as spam. Only managers can
+// change the lists, because the allow list decides what the whole mailbox sees. Null
+// is a refusal, so no caller can change a list without facing it.
+export function openMailboxSenderListEditor(
+  env: Env,
+  grant: MailboxGrant,
+): MailboxSenderListEditor | null {
+  if (grant.role !== "manager") return null;
+  const stub = mailboxStub(env, grant.mailboxId);
+  return {
+    add: async (pattern, list) =>
+      (await stub.addSender(pattern, list)) as SenderWrite,
+    remove: (pattern) => stub.removeSender(pattern),
   };
 }

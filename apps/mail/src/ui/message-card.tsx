@@ -1,17 +1,20 @@
 import { Avatar, Badge, Button, Notice } from "@cloudysuite/ui";
 import {
+  IconAlertOctagon,
   IconChevronDown,
   IconDownload,
   IconPaperclip,
   IconPhoto,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { safeFileName } from "../attachment-headers";
 import { linkify } from "../email/linkify";
 import type { RenderedBody } from "../email/render-body";
 import { FOLDER_DISPLAY } from "../model";
 import { bodyQuery } from "../queries";
+import { whyInSpam } from "../spam/explain";
 import type {
   Address,
   AttachmentId,
@@ -281,6 +284,35 @@ function MessageDetails({
   );
 }
 
+function WhyInSpam({
+  message,
+  mailboxId,
+}: {
+  message: MessageDetail;
+  mailboxId: MailboxId;
+}) {
+  return (
+    <div className="flex items-start gap-2 rounded bg-sidebar px-3 py-2 text-sm text-secondary">
+      <IconAlertOctagon
+        size={18}
+        stroke={1.75}
+        className="mt-0.5 flex-none"
+        aria-hidden
+      />
+      <p className="min-w-0 break-words">
+        {whyInSpam(message)}{" "}
+        <Link
+          to="/mail/$mailboxId/senders"
+          params={{ mailboxId }}
+          className="text-accent underline outline-accent focus-visible:outline-2"
+        >
+          Blocked and allowed senders
+        </Link>
+      </p>
+    </div>
+  );
+}
+
 export function MessageCard({
   message,
   open,
@@ -374,6 +406,9 @@ export function MessageCard({
       </header>
       {showDetails && (
         <MessageDetails message={message} mailboxId={mailboxId} />
+      )}
+      {message.folder === "spam" && (
+        <WhyInSpam message={message} mailboxId={mailboxId} />
       )}
       <MessageBody message={message} mailboxId={mailboxId} />
     </article>

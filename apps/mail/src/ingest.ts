@@ -10,6 +10,7 @@ import {
   truncateUtf8,
 } from "./parse";
 import { attachmentKey, bodyKey, newMessagePrefix, rawKey } from "./r2-keys";
+import { findMisleadingLinks, listDomainOf } from "./spam/signals";
 import { mailboxStub } from "./stub";
 import {
   BODY_INLINE_LIMIT_BYTES,
@@ -132,6 +133,15 @@ function describeMessage(
       input.source === "inbound"
         ? parseAuthenticationResults(parsed.firstAuthenticationResults)
         : null,
+    spamFacts:
+      input.source === "inbound"
+        ? {
+            misleadingLinks: findMisleadingLinks(parsed.html),
+            listDomain: listDomainOf(parsed.listId),
+            ambiguousFrom: parsed.ambiguousFrom,
+            opinion: null,
+          }
+        : undefined,
     searchBody: truncateUtf8(text, SEARCH_BODY_LIMIT_BYTES),
     ...objects,
   };

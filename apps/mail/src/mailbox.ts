@@ -22,6 +22,8 @@ import { LabelStore, type LabelWrite } from "./labels/store";
 import { applyMigrations } from "./migrations";
 import { RuleStore } from "./rules/store";
 import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
+import { SpamStore } from "./spam/store";
+import type { SenderEntry, SenderList, SenderWrite } from "./spam/types";
 import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import type { SqlDriver } from "./sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
@@ -53,6 +55,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #labels: LabelStore;
   readonly #rules: RuleStore;
   readonly #outgoing: OutgoingStore;
+  readonly #spam: SpamStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -67,6 +70,7 @@ export class Mailbox extends DurableObject<Env> {
     this.#rules = new RuleStore(db);
     this.#labels = new LabelStore(db, this.#rules);
     this.#outgoing = new OutgoingStore(db, this.#store);
+    this.#spam = new SpamStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -149,6 +153,18 @@ export class Mailbox extends DurableObject<Env> {
 
   reorderRules(ids: RuleId[]): boolean {
     return this.#rules.reorder(ids);
+  }
+
+  listSenders(): SenderEntry[] {
+    return this.#spam.listSenders();
+  }
+
+  addSender(pattern: string, list: SenderList): SenderWrite {
+    return this.#spam.addSender(pattern, list);
+  }
+
+  removeSender(pattern: string): void {
+    this.#spam.removeSender(pattern);
   }
 
   threadOfMessage(messageId: MessageId): ThreadId | null {

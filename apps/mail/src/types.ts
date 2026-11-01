@@ -1,4 +1,5 @@
 import type { MailboxId } from "@cloudysuite/access";
+import type { SpamFacts, SpamTraining, SpamVerdict } from "./spam/types";
 
 type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
@@ -42,10 +43,20 @@ export const AUTH_VERDICTS = [
 ] as const;
 export type AuthVerdict = (typeof AUTH_VERDICTS)[number];
 
+// Weakest first.
+export const DMARC_POLICIES = ["none", "quarantine", "reject"] as const;
+export type DmarcPolicy = (typeof DMARC_POLICIES)[number];
+
 export type AuthResults = {
   spf: AuthVerdict | null;
   dkim: AuthVerdict | null;
   dmarc: AuthVerdict | null;
+  // Which domains those passes were for. A pass alone says nothing about the From
+  // line. These are absent when the header doesn't name them, and on older mail.
+  dkimPassDomains?: string[];
+  dmarcDomain?: string;
+  // What the domain asks receivers to do with mail that fails, when the header says.
+  dmarcPolicy?: DmarcPolicy;
 };
 
 export type Address = { name: string; address: string };
@@ -90,6 +101,8 @@ export type NewMessage = {
   sentAt: number | null;
   receivedAt: number;
   authResults: AuthResults | null;
+  // Only inbound mail is scored, so only inbound mail has these.
+  spamFacts?: SpamFacts | undefined;
   searchBody: string;
   bodies: NewBody[];
   attachments: NewAttachment[];
@@ -162,6 +175,8 @@ export type MessageDetail = {
   envelopeTo: string | null;
   parseStatus: ParseStatus;
   authResults: AuthResults | null;
+  spam: SpamVerdict | null;
+  spamTraining: SpamTraining | null;
   labelIds: LabelId[];
   attachments: AttachmentInfo[];
 };

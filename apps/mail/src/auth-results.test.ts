@@ -6,7 +6,24 @@ test("reads each method's result from Cloudflare's header", () => {
     parseAuthenticationResults(
       "mx.cloudflare.net; dkim=pass header.d=example.org; spf=softfail (domain; of sender) smtp.mailfrom=a@example.org; dmarc=none header.from=example.org",
     ),
-  ).toEqual({ spf: "softfail", dkim: "pass", dmarc: "none" });
+  ).toEqual({
+    spf: "softfail",
+    dkim: "pass",
+    dmarc: "none",
+    dkimPassDomains: ["example.org"],
+    dmarcDomain: "example.org",
+  });
+});
+
+test("keeps which domains passed, so a pass can't be claimed for another domain", () => {
+  const results = parseAuthenticationResults(
+    "mx.cloudflare.net; dkim=fail header.d=victim.example; dkim=pass header.d=Sender.Example header.s=a; dmarc=fail header.from=victim.example",
+  );
+  expect(results?.dkimPassDomains).toEqual(["sender.example"]);
+  expect(results?.dmarcDomain).toBe("victim.example");
+  expect(
+    parseAuthenticationResults("mx.cloudflare.net; dkim=pass")?.dkimPassDomains,
+  ).toBeUndefined();
 });
 
 test("ignores a header from any other server", () => {
@@ -52,6 +69,128 @@ test("a comment or quoted string cannot smuggle in a result", () => {
       'mx.cloudflare.net; spf=fail (a; dmarc=pass; (nested; dkim=pass)) x="; dkim=pass;"; dmarc=fail',
     ),
   ).toEqual({ spf: "fail", dkim: null, dmarc: "fail" });
+});
+
+test("reads the DMARC policy stated with the result", () => {
+  const policy = (dmarc: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; spf=pass; ${dmarc}`)
+      ?.dmarcPolicy;
+  expect(policy("dmarc=fail (p=NONE dis=none) header.from=shop.example")).toBe(
+    "none",
+  );
+  expect(policy("dmarc=fail (p=quarantine) header.from=a.example")).toBe(
+    "quarantine",
+  );
+  expect(policy("dmarc=fail (p=REJECT dis=NONE) header.from=a.example")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail header.from=a.example policy.dmarc=reject")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail header.from=a.example")).toBeUndefined();
+  expect(policy("dmarc=fail (p=nonsense)")).toBeUndefined();
+  expect(
+    parseAuthenticationResults(
+      "mx.cloudflare.net; dmarc=fail (p=NONE dis=none) header.from=shop.example",
+    ),
+  ).toEqual({
+    spf: null,
+    dkim: null,
+    dmarc: "fail",
+    dmarcDomain: "shop.example",
+    dmarcPolicy: "none",
+  });
+});
+
+test("when p and sp differ, the weaker stands, because the header doesn't say which applied", () => {
+  const policy = (comment: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; dmarc=fail (${comment})`)
+      ?.dmarcPolicy;
+  expect(policy("p=REJECT sp=NONE dis=NONE")).toBe("none");
+  expect(policy("p=NONE sp=REJECT dis=NONE")).toBe("none");
+  expect(policy("p=REJECT sp=QUARANTINE")).toBe("quarantine");
+});
+
+test("sp covers subdomains only, so it doesn't weaken a policy for the domain itself", () => {
+  const policy = (comment: string, from: string) =>
+    parseAuthenticationResults(
+      `mx.cloudflare.net; dmarc=fail (${comment}) header.from=${from}`,
+    )?.dmarcPolicy;
+  expect(policy("p=REJECT sp=NONE", "strict.example")).toBe("reject");
+  expect(policy("p=REJECT sp=NONE", "strict.co.uk")).toBe("reject");
+  expect(policy("p=NONE sp=REJECT", "strict.example")).toBe("none");
+  expect(policy("p=REJECT sp=NONE", "news.strict.example")).toBe("none");
+  expect(policy("p=NONE sp=REJECT", "news.strict.example")).toBe("none");
+  expect(policy("sp=REJECT", "strict.example")).toBeUndefined();
+});
+
+test("when one policy is stated more than once, the strongest stands", () => {
+  const policy = (dmarc: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; ${dmarc}`)?.dmarcPolicy;
+  expect(policy("dmarc=fail (p=none) (p=REJECT)")).toBe("reject");
+  expect(policy("dmarc=fail (p=REJECT) (p=none)")).toBe("reject");
+  expect(policy("dmarc=fail (p=none p=REJECT dis=NONE)")).toBe("reject");
+  expect(policy("dmarc=fail (p=none p=quarantine)")).toBe("quarantine");
+  expect(policy("dmarc=fail (policy=none p=reject)")).toBe("reject");
+  expect(policy("dmarc=fail (p=reject) policy.dmarc=none")).toBe("reject");
+  expect(policy("dmarc=fail policy.dmarc=none policy.dmarc=reject")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail (p=none p=reject sp=none sp=reject)")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail (p=none p=reject sp=none)")).toBe("none");
+});
+
+test("nothing in a quoted string can read as a property", () => {
+  const read = (dmarc: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; ${dmarc}`);
+  expect(
+    read('dmarc=fail (p=reject) header.from="a.example; policy.dmarc=none"')
+      ?.dmarcPolicy,
+  ).toBe("reject");
+  expect(
+    read('dmarc=fail (p=reject) x="y policy.dmarc=none" header.from=a.example')
+      ?.dmarcPolicy,
+  ).toBe("reject");
+  expect(
+    read('dmarc=fail "x policy.dmarc=none" policy.dmarc=reject')?.dmarcPolicy,
+  ).toBe("reject");
+  expect(read('dmarc=fail policy.dmarc="reject"')?.dmarcPolicy).toBe("reject");
+  expect(
+    read('dmarc=pass x="y header.from=victim.example"')?.dmarcDomain,
+  ).toBeUndefined();
+  expect(read('dmarc=pass header.from="a.example"')?.dmarcDomain).toBe(
+    "a.example",
+  );
+  expect(
+    read('dkim=pass x="y header.d=victim.example" header.d=evil.example')
+      ?.dkimPassDomains,
+  ).toEqual(["evil.example"]);
+  expect(
+    read('dkim=pass x="y \\" header.d=victim.example"')?.dkimPassDomains,
+  ).toBeUndefined();
+});
+
+test("a policy can't be read from anywhere but the DMARC result's own comment", () => {
+  const policy = (header: string) =>
+    parseAuthenticationResults(header)?.dmarcPolicy;
+  expect(
+    policy(
+      "mx.cloudflare.net; spf=pass (domain of p=none@a.example); dmarc=fail header.from=a.example",
+    ),
+  ).toBeUndefined();
+  expect(
+    policy(
+      "mx.cloudflare.net; dmarc=fail header.from=a.example (p=none) x=1 (policy=none)",
+    ),
+  ).toBeUndefined();
+  expect(
+    policy(
+      "mx.cloudflare.net; dmarc=fail (p=reject) header.from=a.example (p=none)",
+    ),
+  ).toBe("reject");
+  expect(policy("mx.cloudflare.net; dmarc=fail (dis=p=none)")).toBeUndefined();
 });
 
 test("one passing DKIM signature is enough", () => {

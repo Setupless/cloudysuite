@@ -160,6 +160,39 @@ test("a message nested past the limit falls back to its readable parts", async (
   );
 });
 
+test("the fallback reader notices a repeated From, and not one in the body", async () => {
+  const bomb = (head: string[], text: string) => {
+    let body = `${text}\r\ndeep`;
+    for (let index = PARSE_LIMITS.maxNestingDepth + 5; index > 0; index -= 1) {
+      body = `--b${index}\r\nContent-Type: multipart/mixed; boundary=b${index + 1}\r\n\r\n${body}\r\n--b${index}--`;
+    }
+    return parse(
+      [...head, "Content-Type: multipart/mixed; boundary=b1", "", body].join(
+        "\r\n",
+      ),
+    );
+  };
+  const single = await bomb(bombHeaders, "From: quoted@example.org");
+  expect(single.status).toBe("failed");
+  expect(single.ambiguousFrom).toBe(false);
+  const repeated = await bomb(
+    [...bombHeaders, "From: Other <other@example.org>"],
+    "Hello",
+  );
+  expect(repeated.status).toBe("failed");
+  expect(repeated.ambiguousFrom).toBe(true);
+});
+
+test("a repeated From header or a second address makes the sender ambiguous", async () => {
+  const of = async (...from: string[]) =>
+    (await parse([...from, "Subject: x", "", "Hello"].join("\r\n")))
+      .ambiguousFrom;
+  expect(await of("From: Jo <jo@example.org>")).toBe(false);
+  expect(await of("From: Smith, Jo <jo@example.org>")).toBe(false);
+  expect(await of("From: a@example.org, b@example.org")).toBe(true);
+  expect(await of("From: a@example.org", "From: b@example.org")).toBe(true);
+});
+
 test("a message with too many parts falls back to its readable parts", async () => {
   const parts = "--b\r\nContent-Type: text/plain\r\n\r\nx\r\n".repeat(
     PARSE_LIMITS.maxPartCount + 5,
