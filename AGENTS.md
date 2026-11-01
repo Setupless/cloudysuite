@@ -11,6 +11,7 @@
 - `curl -X POST --data-binary @message.eml 'http://localhost:8787/cdn-cgi/handler/email?from=a@example.org&to=b@localhost'` sends inbound mail to `wrangler dev`.
 - `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores this checkout's portless hostname as the primary domain. Run it again after a worktree's branch changes name.
 - `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
+- `cp dev.vars.local.example .dev.vars` gives this checkout the local `BETTER_AUTH_SECRET`. `bun run db:seed:user:local <email> <password> [admin|user]` adds a local sign-in.
 - `bun test` runs the tests on Bun, not on the Workers runtime.
 - `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
 

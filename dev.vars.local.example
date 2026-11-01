@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local development. The setup wizard generates the real
+# secret. This file is not named .dev.vars.example because the Deploy button
+# reads that name as the Worker's secrets, which would offer this public value.
+BETTER_AUTH_SECRET=local-development-only-secret-do-not-deploy-0123456789
