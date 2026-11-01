@@ -7,7 +7,8 @@ The app is not scaffolded yet. Check `package.json` before you assume that a com
 ## Commands
 
 - `bun fmt` formats the code.
-- `bun run check` runs every check that CI runs.
+- `bun run check` runs every CI check except the PR format check.
+- `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
 - `bun test` runs the tests on Bun, not on the Workers runtime.
 - `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
 

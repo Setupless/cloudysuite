@@ -25,6 +25,12 @@ const TEXT_PAIRS = [
 const REQUIRED_ROLES = [...new Set(TEXT_PAIRS.flat()), "line"];
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab)\(/i;
 const SOURCE_FILE = /\.(css|tsx?|jsx?)$/;
+const GENERATED_DIRS = new Set([
+  "node_modules",
+  "dist",
+  ".output",
+  ".wrangler",
+]);
 
 function parseTheme(css) {
   const roles = new Map();
@@ -61,7 +67,7 @@ function contrast(a, b) {
 function sourceFiles(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
-    if (name === "node_modules") return [];
+    if (GENERATED_DIRS.has(name)) return [];
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return sourceFiles(path);
     return SOURCE_FILE.test(name) ? [path] : [];

@@ -46,10 +46,13 @@ test.each(["src/a.ts", "apps/mail/src/a.ts", "packages/ui/src/a.ts"])(
   },
 );
 
-test("theme check ignores installed packages", () => {
-  const path = "apps/mail/node_modules/dep/a.js";
-  expect(themeCheckWith(path, 'const c = "#ff0000";').code).toBe(0);
-});
+test.each(["node_modules/dep", "dist", ".output", ".wrangler/tmp"])(
+  "theme check ignores generated files in %s",
+  (dir) => {
+    const path = `apps/mail/${dir}/a.js`;
+    expect(themeCheckWith(path, 'const c = "#ff0000";').code).toBe(0);
+  },
+);
 
 test.each([
   ["feat/mail-labels", "feat(mail): add labels"],
