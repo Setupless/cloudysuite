@@ -66,8 +66,39 @@ Each wizard step checks the current state in Cloudflare, applies the change thro
 
 The Deploy button copies the repository, so a deployment has no link back to this one. Security patches, such as Better Auth fixes, reach a deployment only when its admin applies them.
 
-- The admin screen compares the running version with the latest GitHub release and links to the written update steps.
+- The admin screen compares the running version with the latest GitHub release and links to these steps.
 - The admin applies the update by hand. CloudySuite never changes itself.
+
+The Deploy button puts the copy in your GitHub or GitLab account and connects it to Cloudflare, so a push to the copy's `main` branch deploys it and applies any database migrations. Updating means replacing the copy's files with a release's files.
+
+**Updating needs a terminal with Git.** GitHub's web page cannot merge a release into the copy, because the copy and this repository share no history, so there is no pull request to open. A terminal in the browser, such as GitHub Codespaces, would also work, but we have not tried it.
+
+Git's own merge does not suit this. With no shared history, Git has no common ancestor, so every file that differs is a conflict, and files the release deleted stay in your copy. These steps copy the release's files instead, and each update works the same way, however many you have skipped.
+
+1. Read the release notes, and note the release's tag, such as `v1.2.3`.
+2. Replace your copy's files with the release's:
+
+   ```sh
+   git clone <your copy's URL> cloudysuite
+   cd cloudysuite
+   git fetch --no-tags https://github.com/Setupless/cloudysuite.git tag v1.2.3
+   git read-tree -u --reset v1.2.3
+   ```
+
+3. Your copy's `wrangler.jsonc` now holds the release's version, which names the release's own resources. Run `git diff --cached HEAD -- wrangler.jsonc`. Lines starting with `-` are your copy's, and lines starting with `+` are the release's.
+   - Put back your own `name`, `database_name`, `database_id`, and `bucket_name` by editing `wrangler.jsonc`.
+   - Keep every other `+` line, including a binding that the release added, such as a new `kv_namespaces` entry. Cloudflare's [automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/) creates a new D1, R2, or KV resource for a binding with no ID when it deploys, and shows the ID in the dashboard only. The release notes say if a release needs anything more. We have not tried this on a real Deploy button copy.
+4. Run `git diff --cached --stat HEAD` to see what changes. This step overwrites any edit you made to your copy's own files, so if you made some, add them back.
+5. Run `git add -A`, then `git commit -m "Update to v1.2.3"`, then `git push`. Cloudflare builds and deploys your copy, which takes a few minutes.
+6. Open the admin's **Organisation** page and check that the version at the bottom is the new one.
+
+To publish a release, set `RUNNING_VERSION` in `apps/auth/src/admin/updates.ts` and tag that commit with the same version.
+
+### Email domains
+
+The app domain and email domains are separate ideas. The app domain, stored as the primary row in `domains`, is where the apps run. An email domain is one that addresses can use. They are often the same domain. When the app domain is a subdomain of another stored domain, such as `suite.example.com` under `example.com`, only the parent is an email domain, so nobody gets an address at the app domain.
+
+An admin adds another email domain by following a guide in their Cloudflare account, because CloudySuite does not store a token. **Check again** looks up the domain's public DNS records over HTTPS, and the domain is saved only once the records for receiving and sending exist. DNS cannot show the catch-all rule that sends mail to the Worker, so the guide says so and asks the admin to send a test message afterwards.
 
 ### Simplicity goal
 
@@ -75,7 +106,7 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 
 - One mail provider, Cloudflare Email Service, so that the deployer does not choose a provider or follow a separate setup track.
 - One Worker, with no queues or other services to configure.
-- No terminal commands. Dashboard steps are limited to creating the token and any step the API cannot complete, and the wizard links to and verifies each one.
+- No terminal commands to deploy. Updating needs Git, as the Updates section says. Dashboard steps are limited to creating the token and any step the API cannot complete, and the wizard links to and verifies each one.
 - No CLI, MCP server, chat integrations, or public API in the first release.
 
 ### Auth
@@ -84,6 +115,8 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - A password with a TOTP authenticator app is the fallback.
 - Admins can reset a member's sign-in and require 2FA for the organisation.
 - Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
+- Resetting a sign-in removes the member's passkeys, authenticator app, password, and sessions, then gives the admin a one-time link to hand over. CloudySuite never emails it, because the member's only address may be a mailbox they cannot open.
+- A person's sign-in address is their new mailbox address when the invite creates one, and otherwise the address the invite went to.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
 

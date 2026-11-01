@@ -10,9 +10,13 @@ export function SignOut() {
 
   async function signOut() {
     setFailed(false);
-    const { error } = await authClient.signOut();
-    if (error) setFailed(true);
-    else window.location.assign("/sign-in");
+    try {
+      const { error } = await authClient.signOut();
+      if (error) setFailed(true);
+      else window.location.assign("/sign-in");
+    } catch {
+      setFailed(true);
+    }
   }
 
   useEffect(() => {

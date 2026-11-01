@@ -4,7 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { APPS, type AppId, isAppId } from "../../../src/routing";
 import { getActiveSession, readViewer, type SessionUser } from "./auth";
-import { enrolUrl, safeReturnUrl, signInUrl } from "./origins";
+import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
 import { getAuth } from "./server";
 
 export type { SessionUser };
@@ -50,8 +50,22 @@ export function requireUser(
   return requireUserOnServer({ data: { app, path: location.publicHref } });
 }
 
+const requireAdminOnServer = createServerFn({ method: "GET" })
+  .validator((input: { path: string }) => input)
+  .handler(async ({ data }): Promise<SignedIn> => {
+    const signedIn = await readSignedIn({ app: "auth", path: data.path });
+    if (signedIn.role !== "admin") throw redirect({ href: "/" });
+    return signedIn;
+  });
+
+export function requireAdmin(location: {
+  publicHref: string;
+}): Promise<SignedIn> {
+  return requireAdminOnServer({ data: { path: location.publicHref } });
+}
+
 export const prepareSignIn = createServerFn({ method: "GET" })
-  .validator((input: { returnTo?: string }) => input)
+  .validator(parseReturnTo)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {
     const request = getRequest();
     const { auth, origins } = await getAuth(request);

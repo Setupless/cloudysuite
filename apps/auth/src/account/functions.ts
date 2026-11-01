@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { passkey } from "../../../../src/db/schema";
 import { readViewer } from "../auth";
 import { signedInOnly } from "../middleware";
-import { safeReturnUrl, signInUrl } from "../origins";
+import { parseReturnTo, safeReturnUrl, signInUrl } from "../origins";
 import { getAuth } from "../server";
 import type { SignInMethods } from "../sign-in-methods";
 import { readRequire2fa, readSignInMethods } from "../sign-in-methods-store";
@@ -44,7 +44,7 @@ export const getAccount = createServerFn({ method: "GET" })
   });
 
 export const prepareEnrol = createServerFn({ method: "GET" })
-  .validator((input: { returnTo?: string }) => input)
+  .validator(parseReturnTo)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {
     const request = getRequest();
     const { auth, origins } = await getAuth(request);

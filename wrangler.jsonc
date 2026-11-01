@@ -18,4 +18,5 @@
     "bindings": [{ "name": "MAILBOX", "class_name": "Mailbox" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
+  "send_email": [{ "name": "EMAIL" }],
 }

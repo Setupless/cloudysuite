@@ -11,7 +11,9 @@ const isLocal = (domain: string) =>
 function localBase(request: Request): { protocol: string; port: string } {
   const url = new URL(request.url);
   const forwarded = request.headers.get("x-forwarded-proto");
-  if (!forwarded) return { protocol: url.protocol, port: url.port };
+  if (forwarded !== "http" && forwarded !== "https") {
+    return { protocol: url.protocol, port: url.port };
+  }
   return {
     protocol: `${forwarded}:`,
     port: request.headers.get("x-forwarded-port") ?? "",
@@ -33,6 +35,13 @@ export function appOrigins(
   return Object.fromEntries(
     Object.keys(APPS).map((app) => [app, originOf(app as AppId)]),
   ) as Record<AppId, string>;
+}
+
+// A server function called by GET may arrive with no payload at all.
+export function parseReturnTo(input: unknown): { returnTo?: string } {
+  const returnTo = (input as { returnTo?: unknown } | null | undefined)
+    ?.returnTo;
+  return typeof returnTo === "string" ? { returnTo } : {};
 }
 
 export function safeReturnUrl(
