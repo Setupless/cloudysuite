@@ -6,6 +6,12 @@ CloudySuite is an open source workspace for small organisations. One technical p
 
 **Status:** planning. This repository contains no application code yet, so this README describes the intended product.
 
+## Who it is for
+
+CloudySuite is for small companies and open source teams of about 2 to 100 people that do not yet have a cloud suite. One technical person deploys it. The people who use it every day do not need technical knowledge. We follow Apple's "it just works" philosophy.
+
+One deployment serves one organisation. That organisation can use several email domains and aliases. Two organisations use two deployments in separate Cloudflare accounts, so they share no data.
+
 ## Apps
 
 Each app has its own subdomain on the organisation's primary domain.
@@ -35,12 +41,6 @@ D1 stores the setting as one row for each app that can be turned off:
 type ToggleableApp = "mail" | "calendar" | "storage";
 type AppSetting = { app: ToggleableApp; enabled: boolean };
 ```
-
-## Who it is for
-
-CloudySuite is for small companies and open source teams of about 2 to 100 people that do not yet have a cloud suite. One technical person deploys it. The people who use it every day do not need technical knowledge. We follow Apple's "it just works" philosophy.
-
-One deployment serves one organisation. That organisation can use several email domains and aliases. Two organisations use two deployments in separate Cloudflare accounts, so they share no data.
 
 ## First release
 
@@ -112,7 +112,7 @@ Jev is a third-party service. When an admin enables it, CloudySuite sends messag
 
 ## Design
 
-CloudySuite uses the Daylight direction, which is calm, neutral, and familiar, with blue for the next action. A left sidebar holds the app switcher and folders, and Mail has a message list beside a reading pane. [The Daylight prototype](prototypes/look-and-feel/index.html) shows each screen in light and dark, and it is a visual reference only.
+CloudySuite uses the Daylight direction, which is calm, neutral, and familiar, with blue for the next action. A left sidebar holds the app switcher and folders, and Mail has a message list beside a reading pane. [The design trial](https://github.com/Setupless/cloudysuite/blob/17574a1/prototypes/look-and-feel/index.html) shows Daylight and the three rejected directions on each screen, in light and dark. It is no longer in the repository, so open that revision for visual reference only.
 
 Appearance follows the device's light or dark setting by default. Setting `data-theme="light"` or `data-theme="dark"` on the `html` element overrides it.
 
@@ -174,11 +174,12 @@ The `check` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `
 
 ## Tech stack
 
-We build around the TanStack libraries, so that the product is fast for end users and pleasant for developers. We use RC's under the thought that by the time we release, they will more than likely be stable.
+We build around the TanStack libraries, so that the product is fast for end users and pleasant for developers. We accept release candidates because we expect them to be stable before our first release. Better Auth is the exception, as [Auth](#auth) explains.
 
 - TanStack Start, Query, Form, Hotkeys, and DB
 - Tailwind CSS v4
 - Drizzle RC
+- Better Auth, on its latest safe stable release
 - Bun as the package manager, workspace manager, script runner, test runner (`bun test`), and formatter (`bun fmt`)
 - oxc for linting
 - Tabler icons

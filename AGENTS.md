@@ -68,7 +68,7 @@ Do not guess or build around these. Ask the user first.
 
 ## UI
 
-- Follow the Daylight direction. `prototypes/look-and-feel` is a visual reference, so do not copy its code.
+- Follow the Daylight direction in the README's Design section. Do not copy code from the design trial it links to.
 - Use only the colour roles in `src/styles/theme.css`, through classes such as `bg-accent`. Add or change a colour only in that file.
 - Misspelled Tailwind classes build without an error, so check that each class has an effect.
 - Load `app.css` with `import "../styles/app.css"` in the root route.
