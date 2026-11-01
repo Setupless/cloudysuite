@@ -1,18 +1,28 @@
+import type { UserId } from "@cloudysuite/access";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import {
   createContext,
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { useOffline } from "../../pwa/connectivity";
+import { readKeptDrafts } from "../../pwa/device-store";
 import { isOffline, OFFLINE_COMPOSE_REFUSED } from "../../pwa/saved-mail";
+import { runWhileVisible } from "../../pwa/while-visible";
 import type { MailboxId, MessageId, ThreadId } from "../../types";
 import { useToast } from "../../ui/toast";
+import { keptDraftsQuery, saveKeptDrafts } from "./kept-drafts";
 import { composeContextQuery, composeKeys } from "./queries";
 import { SendNotices, SendTray } from "./send-tray";
-import type { ComposeMode, OutgoingId } from "../types";
+import type { ComposeMode, KeptDraft, OutgoingId } from "../types";
+
+const RETRY_KEPT_MS = 60_000;
 
 // What the editor should show, and where. A reply sits on its conversation's screen.
 // Anything else is a panel beside the list, which on a phone fills the screen.
@@ -32,10 +42,12 @@ export type ComposeSession =
       host: "panel" | "inline";
       threadId: ThreadId | null;
       warning: string | null;
-    };
+    }
+  | { kind: "kept"; id: OutgoingId; host: "panel"; kept: KeptDraft };
 
 export type ComposeControls = {
   mailboxId: MailboxId;
+  userId: UserId;
   session: ComposeSession | null;
   // Refused rather than queued: a message written on a train must not go out by surprise.
   refuseIfOffline: () => boolean;
@@ -49,6 +61,8 @@ export type ComposeControls = {
     id: OutgoingId,
     options?: { threadId?: ThreadId; warning?: string },
   ) => void;
+  // For a notice, which can outlast the screen the editor was on.
+  reopen: (id: OutgoingId) => Promise<void>;
   close: () => void;
 };
 
@@ -62,11 +76,47 @@ export function useCompose(): ComposeControls {
 
 const newId = () => crypto.randomUUID() as OutgoingId;
 
+function KeptBand({
+  count,
+  offline,
+  onOpen,
+}: {
+  count: number;
+  offline: boolean;
+  onOpen: () => void;
+}) {
+  const what =
+    count === 1
+      ? "A message you were writing is"
+      : `${count} messages you were writing are`;
+  return (
+    <p
+      role="status"
+      className="flex flex-none items-center gap-3 border-b border-line bg-sidebar px-4 py-2 text-sm text-secondary"
+    >
+      <span className="min-w-0 flex-1">
+        {offline
+          ? `${what} kept on this device, and will go to Drafts when you reconnect.`
+          : `${what} kept on this device, because we couldn't save to Drafts yet. We'll keep trying.`}
+      </span>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex-none cursor-pointer font-medium text-accent outline-accent focus-visible:outline-2"
+      >
+        Open
+      </button>
+    </p>
+  );
+}
+
 export function ComposeProvider({
   mailboxId,
+  userId,
   children,
 }: {
   mailboxId: MailboxId;
+  userId: UserId;
   children: ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -80,6 +130,13 @@ export function ComposeProvider({
     toast({ tone: "danger", message: OFFLINE_COMPOSE_REFUSED });
     return true;
   }, [toast]);
+
+  const kept = useQuery(keptDraftsQuery(userId)).data ?? [];
+  const keptNow = useRef(kept);
+  keptNow.current = kept;
+  const sessionNow = useRef(session);
+  sessionNow.current = session;
+  const navigate = useNavigate();
 
   const startNew = useCallback(() => {
     if (!refuseIfOffline())
@@ -101,6 +158,11 @@ export function ComposeProvider({
   );
   const openDraft = useCallback<ComposeControls["openDraft"]>(
     (id, options) => {
+      const held = keptNow.current.find((draft) => draft.id === id);
+      if (held) {
+        setSession({ kind: "kept", id, host: "panel", kept: held });
+        return;
+      }
       if (refuseIfOffline()) return;
       setSession({
         kind: "open",
@@ -119,23 +181,90 @@ export function ComposeProvider({
     });
   }, [queryClient, mailboxId]);
 
+  const reopen = useCallback<ComposeControls["reopen"]>(
+    async (id) => {
+      await navigate({
+        to: "/mail/$mailboxId/$view",
+        params: { mailboxId, view: "drafts" },
+      });
+      const drafts = await readKeptDrafts(userId);
+      keptNow.current = drafts;
+      openDraft(id);
+    },
+    [navigate, mailboxId, userId, openDraft],
+  );
+
+  const saving = useRef(false);
+  const saveKept = useCallback(async () => {
+    if (saving.current || isOffline()) return;
+    saving.current = true;
+    try {
+      const moved = await saveKeptDrafts(userId, sessionNow.current?.id);
+      if (moved.length === 0) return;
+      void queryClient.invalidateQueries({
+        queryKey: keptDraftsQuery(userId).queryKey,
+      });
+      for (const { draft } of moved) {
+        void queryClient.invalidateQueries({
+          queryKey: composeKeys.outgoing(draft.mailboxId),
+        });
+      }
+      const [first] = moved;
+      const onlyHere =
+        moved.length === 1 && first?.draft.mailboxId === mailboxId;
+      toast({
+        message:
+          moved.length === 1
+            ? "What you wrote while offline is now in Drafts."
+            : `${moved.length} messages you wrote while offline are now in Drafts.`,
+        action:
+          onlyHere && first
+            ? { label: "Open", run: () => void reopen(first.savedAs) }
+            : undefined,
+      });
+    } catch {
+      // This browser's storage can't be read, so the next try may do better.
+    } finally {
+      saving.current = false;
+    }
+  }, [userId, queryClient, mailboxId, toast, reopen]);
+
+  const retry = useRef<() => void>(() => {});
+  useEffect(() => {
+    const work = runWhileVisible(() => void saveKept(), RETRY_KEPT_MS);
+    retry.current = work.runSoon;
+    return work.stop;
+  }, [saveKept]);
+  const offline = useOffline();
+  const keptIds = kept.map((draft) => draft.id).join();
+  useEffect(() => {
+    if (!offline && keptIds) retry.current();
+  }, [offline, keptIds, session?.id]);
+  const keptHere = kept.filter(
+    (draft) => draft.mailboxId === mailboxId && draft.id !== session?.id,
+  );
+
   const value = useMemo(
     () => ({
       mailboxId,
+      userId,
       session,
       refuseIfOffline,
       startNew,
       startFrom,
       openDraft,
+      reopen,
       close,
     }),
     [
       mailboxId,
+      userId,
       session,
       refuseIfOffline,
       startNew,
       startFrom,
       openDraft,
+      reopen,
       close,
     ],
   );
@@ -143,7 +272,17 @@ export function ComposeProvider({
     <ComposeContext.Provider value={value}>
       <div className="flex h-[calc(100dvh-3.25rem)] flex-col">
         <SendNotices />
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        {keptHere[0] && (
+          <KeptBand
+            count={keptHere.length}
+            offline={offline}
+            onOpen={() => void reopen(keptHere[0]!.id)}
+          />
+        )}
+        {/* Positioned, so screen-reader-only controls further down can't stretch the document. */}
+        <div className="relative min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </div>
       </div>
       <SendTray />
     </ComposeContext.Provider>

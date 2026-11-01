@@ -1,5 +1,6 @@
 import {
   type Address,
+  type MailboxId,
   MAX_MESSAGE_BYTES,
   type ThreadId,
   type MessageId,
@@ -124,6 +125,19 @@ export type OutgoingDetail = OutgoingSummary & {
   content: DraftContent;
   attachments: OutgoingAttachment[];
   quote: { bytes: number; designed: boolean } | null;
+};
+
+// What the editor needs to pick up a message. The server's draft has it, and so does a
+// message kept on this device because it couldn't be saved.
+export type DraftForEditor = Pick<
+  OutgoingDetail,
+  "content" | "revision" | "mode" | "parent" | "attachments" | "quote"
+>;
+
+export type KeptDraft = DraftForEditor & {
+  id: OutgoingId;
+  mailboxId: MailboxId;
+  keptAt: number;
 };
 
 export type Editor = { id: string; name: string };

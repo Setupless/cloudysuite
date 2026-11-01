@@ -12,10 +12,78 @@ import { replyRecipients, composeSubject, defaultFromAddress } from "./reply";
 import { judgeSendError } from "./send-outcome";
 import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
-import { fitsSendLimit, type OutgoingId, writtenBytes } from "./types";
+import { moveToDrafts } from "./kept";
+import {
+  fitsSendLimit,
+  type KeptDraft,
+  type OutgoingId,
+  writtenBytes,
+} from "./types";
 import { isValidAddress, parseAddressList } from "./validate";
 
 const person = (address: string, name = "") => ({ name, address });
+
+const keptDraft: KeptDraft = {
+  id: "kept-id" as OutgoingId,
+  mailboxId: MAILBOX_A as KeptDraft["mailboxId"],
+  keptAt: 1,
+  revision: 3,
+  mode: "new",
+  parent: null,
+  quote: null,
+  attachments: [],
+  content: {
+    from: "alex@example.com",
+    to: [],
+    cc: [],
+    bcc: [],
+    subject: "Words",
+    html: "<p>Written on a train</p>",
+    includeQuote: false,
+  },
+};
+
+test("words kept on a device go to their own draft", async () => {
+  const savedTo: string[] = [];
+  const savedAs = await moveToDrafts(
+    keptDraft,
+    async (id) => {
+      savedTo.push(id);
+      return { status: "saved", revision: 4, overwrote: null };
+    },
+    () => "unused" as OutgoingId,
+  );
+  expect(savedAs).toBe(keptDraft.id);
+  expect(savedTo).toEqual([keptDraft.id]);
+});
+
+test("words kept for a message someone has since sent become a new draft", async () => {
+  const savedTo: string[] = [];
+  const savedAs = await moveToDrafts(
+    keptDraft,
+    async (id) => {
+      savedTo.push(id);
+      return id === keptDraft.id
+        ? { status: "locked", state: "sent" }
+        : { status: "saved", revision: 1, overwrote: null };
+    },
+    () => "fresh-id" as OutgoingId,
+  );
+  expect(savedAs).toBe("fresh-id" as OutgoingId);
+  expect(savedTo).toEqual([keptDraft.id, "fresh-id"]);
+});
+
+test("a kept draft that can't reach the server isn't reported as moved", async () => {
+  await expect(
+    moveToDrafts(
+      keptDraft,
+      async () => {
+        throw new Error("offline");
+      },
+      () => "unused" as OutgoingId,
+    ),
+  ).rejects.toThrow("offline");
+});
 
 test("the From check accepts this mailbox's addresses and refuses any other", async () => {
   const { d1 } = createTestDatabase();

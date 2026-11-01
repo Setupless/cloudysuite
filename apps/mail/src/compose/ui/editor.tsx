@@ -19,9 +19,12 @@ import {
 import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
 import { useOffline } from "../../pwa/connectivity";
+import { forgetKeptDraft, keepDraft } from "../../pwa/device-store";
 import {
+  DRAFT_KEPT_AFTER_FAILURE,
   isOffline,
   OFFLINE_ACTION_REFUSED,
+  OFFLINE_DRAFT_KEPT,
   OFFLINE_DRAFT_NOT_SAVED,
   OFFLINE_SEND_REFUSED,
 } from "../../pwa/saved-mail";
@@ -41,11 +44,11 @@ import {
 } from "../functions";
 import {
   type DraftContent,
+  type DraftForEditor,
   fitsSendLimit,
   MAX_ATTACHMENTS,
   type OutgoingId,
   type OutgoingAttachment,
-  type OutgoingDetail,
   TOO_LARGE_TEXT,
   TOO_MANY_ATTACHMENTS_TEXT,
 } from "../types";
@@ -56,17 +59,20 @@ import {
   UploadRefused,
   uploadAttachment,
 } from "./queries";
+import { keptDraftsQuery } from "./kept-drafts";
 import { RecipientField } from "./recipient-field";
 import { RichText } from "./rich-text";
 
 const AUTOSAVE_MS = 1_200;
+// Offline there's no request to spare, and a closed tab must not lose the last words.
+const OFFLINE_KEEP_MS = 150;
 // Leaves the browser's few connections free for autosave and the mailbox.
 const PARALLEL_UPLOADS = 3;
 const LOCKED_NOTICE =
   "This message has already gone, or someone else has sent it. Your changes here weren't saved.";
 
 type Loaded = {
-  draft: OutgoingDetail | null;
+  draft: DraftForEditor | null;
   quoteHtml: string | null;
   notice: string | null;
 };
@@ -203,7 +209,7 @@ function EditorForm({
   loaded: Loaded;
   addresses: SenderFacts["addresses"];
 }) {
-  const { mailboxId, close: closeSession, openDraft } = useCompose();
+  const { mailboxId, userId, close: closeSession, reopen } = useCompose();
   const queryClient = useQueryClient();
   const toast = useToast();
   const content = loaded.draft?.content;
@@ -236,10 +242,15 @@ function EditorForm({
   const lastHtml = useRef(content?.html ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
   const revision = useRef(loaded.draft?.revision ?? 0);
-  const dirty = useRef(false);
+  // Words from this device have never reached the server, so they still need saving.
+  const dirty = useRef(session.kind === "kept");
+  const keptHere = useRef(session.kind === "kept");
   const lastSaveError = useRef("");
   const lockedNow = useRef(false);
-  const everSaved = useRef(loaded.draft !== null && session.kind === "open");
+  const everSaved = useRef(
+    loaded.draft !== null &&
+      (session.kind === "open" || session.kind === "kept"),
+  );
   const saving = useRef<Promise<void>>(Promise.resolve());
   // Moving to another list or conversation takes the editor away without a word.
   const leftUnasked = useRef(true);
@@ -269,6 +280,40 @@ function EditorForm({
     includeQuote,
   });
 
+  const attachmentsNow = useRef(attachments);
+  attachmentsNow.current = attachments;
+  const refreshKept = () =>
+    void queryClient.invalidateQueries({
+      queryKey: keptDraftsQuery(userId).queryKey,
+    });
+  const keepHere = async (content: DraftContent) => {
+    try {
+      keptHere.current = await keepDraft(userId, {
+        id: session.id,
+        mailboxId,
+        keptAt: Date.now(),
+        content,
+        revision: revision.current,
+        mode:
+          session.kind === "start"
+            ? session.mode
+            : (loaded.draft?.mode ?? "new"),
+        parent: loaded.draft?.parent ?? null,
+        quote: loaded.draft?.quote ?? null,
+        attachments: attachmentsNow.current,
+      });
+    } catch {
+      keptHere.current = false;
+    }
+    refreshKept();
+  };
+  const forgetHere = async () => {
+    if (!keptHere.current) return;
+    keptHere.current = false;
+    await forgetKeptDraft(userId, session.id).catch(() => {});
+    refreshKept();
+  };
+
   const flush = useCallback((): Promise<void> => {
     clearTimeout(timer.current);
     if (!dirty.current) return saving.current;
@@ -287,6 +332,7 @@ function EditorForm({
           }),
         );
         setSaveProblem(null);
+        await forgetHere();
         if (result.status === "locked") {
           lockedNow.current = true;
           setLocked(true);
@@ -304,6 +350,7 @@ function EditorForm({
       } catch (error) {
         dirty.current = true;
         lastSaveError.current = (error as Error).message;
+        await keepHere(content);
       }
     });
     return saving.current;
@@ -314,7 +361,10 @@ function EditorForm({
     dirty.current = true;
     setSaved(false);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => void flush(), AUTOSAVE_MS);
+    timer.current = setTimeout(
+      () => void flush(),
+      isOffline() ? OFFLINE_KEEP_MS : AUTOSAVE_MS,
+    );
   }, [flush]);
 
   // What couldn't be saved offline goes as soon as it can. This is only ever the draft
@@ -349,13 +399,21 @@ function EditorForm({
   const untouchedNow = useRef(isUntouchedReply);
   untouchedNow.current = isUntouchedReply;
 
+  const keptToast = () => ({
+    message: isOffline() ? OFFLINE_DRAFT_KEPT : DRAFT_KEPT_AFTER_FAILURE,
+    action: { label: "Open", run: () => void reopen(session.id) },
+  });
+
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") void flush();
     };
+    const onPageHide = () => void flush();
     document.addEventListener("visibilitychange", onHide);
+    addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
+      removeEventListener("pagehide", onPageHide);
       clearTimeout(timer.current);
       if (leftUnasked.current && untouchedNow.current()) {
         void discardUntouched(
@@ -369,15 +427,19 @@ function EditorForm({
       void flush().then(() => {
         if (!leftUnasked.current) return;
         if (dirty.current) {
-          toast({
-            tone: "danger",
-            message:
-              "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
-          });
+          toast(
+            keptHere.current
+              ? keptToast()
+              : {
+                  tone: "danger",
+                  message:
+                    "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
+                },
+          );
         } else if (hadSomething && !lockedNow.current) {
           toast({
             message: "Saved to Drafts.",
-            action: { label: "Open", run: () => openDraft(session.id) },
+            action: { label: "Open", run: () => void reopen(session.id) },
           });
         }
       });
@@ -394,6 +456,11 @@ function EditorForm({
       dirty.current || everSaved.current || attachments.length > 0;
     const lockedBefore = lockedNow.current;
     await flush();
+    if (dirty.current && keptHere.current) {
+      close();
+      toast(keptToast());
+      return;
+    }
     if (dirty.current) {
       setSaveProblem(
         isOffline()
@@ -417,6 +484,7 @@ function EditorForm({
       await callAction(() =>
         discardOutgoing({ data: { mailboxId, id: session.id } }),
       );
+      await forgetHere();
       close();
       toast({ message: "Draft discarded." });
     } catch (error) {
@@ -452,6 +520,7 @@ function EditorForm({
           },
         }),
       );
+      await forgetHere();
       close();
       refreshList();
     } catch (error) {
@@ -610,7 +679,11 @@ function EditorForm({
           {title}
         </h2>
         <span role="status" className="flex-none text-xs text-secondary">
-          {saved ? "Saved" : offline && dirty.current ? "Not saved yet" : ""}
+          {saved
+            ? "Saved"
+            : offline && dirty.current
+              ? "Kept on this device"
+              : ""}
         </span>
       </header>
 
@@ -621,8 +694,9 @@ function EditorForm({
         {notice && <Notice tone="info">{notice}</Notice>}
         {offline && (
           <Notice tone="info">
-            You're offline. You can keep writing here, but this message can't be
-            saved or sent until you reconnect.
+            You're offline. You can keep writing. This message stays on this
+            device, goes to Drafts when you reconnect, and can't be sent until
+            then.
           </Notice>
         )}
 
@@ -799,14 +873,16 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
   const { mailboxId } = useCompose();
   // A form with no From address could only be refused, so it waits for the choices.
   const sender = useQuery(composeContextQuery(mailboxId));
-  const [loaded, setLoaded] = useState<Loaded | null>(
-    session.kind === "new" ? EMPTY : null,
-  );
+  const [loaded, setLoaded] = useState<Loaded | null>(() => {
+    if (session.kind === "new") return EMPTY;
+    if (session.kind === "kept") return { ...EMPTY, draft: session.kept };
+    return null;
+  });
   const [failed, setFailed] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (session.kind === "new") return;
+    if (session.kind === "new" || session.kind === "kept") return;
     let ignore = false;
     const load =
       session.kind === "start"
@@ -839,7 +915,13 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     // The session's id says everything that matters about it.
   }, [mailboxId, session.id, attempt]);
 
-  if (failed || sender.isError) {
+  // Words kept on this device must open with no connection, so they bring their own From.
+  const addresses =
+    sender.data?.addresses ??
+    (session.kind === "kept" && session.kept.content.from
+      ? [{ address: session.kept.content.from, kind: "primary" as const }]
+      : null);
+  if (failed || (sender.isError && !addresses)) {
     return (
       <FailureNotice
         message={failed ?? sender.error?.message ?? ""}
@@ -851,7 +933,7 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
       />
     );
   }
-  if (!loaded || !sender.data) {
+  if (!loaded || !addresses) {
     return (
       <div aria-hidden className="flex animate-pulse flex-col gap-3 px-6 py-5">
         <div className="h-4 w-1/3 rounded bg-field" />
@@ -865,7 +947,7 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
       key={session.id}
       session={session}
       loaded={loaded}
-      addresses={sender.data.addresses}
+      addresses={addresses}
     />
   );
 }

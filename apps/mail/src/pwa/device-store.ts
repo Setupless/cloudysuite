@@ -1,5 +1,7 @@
 import type { UserId } from "@cloudysuite/access";
 import { DEVICE_SESSION_PATH } from "../../../../src/routing";
+import type { KeptDraft } from "../compose/types";
+import type { OutgoingId } from "../compose/types";
 import type { MailboxEntry } from "../functions";
 import type {
   MailboxId,
@@ -28,6 +30,8 @@ const BODIES = "bodies";
 const OWNER_KEY = "owner";
 const MAILBOXES_KEY = "mailboxes";
 const ledgerKey = (mailboxId: MailboxId) => `ledger/${mailboxId}`;
+const KEPT_PREFIX = "kept/";
+const keptKey = (id: OutgoingId) => `${KEPT_PREFIX}${id}`;
 
 // Every person's mail on this device is in this one database and nowhere else: the
 // service worker's caches hold only the public build and an anonymous page. So clearing
@@ -132,6 +136,41 @@ async function readAsOwner<Value>(
     ? (value as Value | undefined)
     : undefined;
 }
+
+export const keepDraft = (userId: UserId, draft: KeptDraft) =>
+  writeAsOwner(userId, [], (transaction) => {
+    transaction.objectStore(META).put(draft, keptKey(draft.id));
+  });
+
+export async function readKeptDrafts(userId: UserId): Promise<KeptDraft[]> {
+  const database = await open();
+  const transaction = database.transaction(META);
+  const store = transaction.objectStore(META);
+  const [owner, drafts] = await Promise.all([
+    requested(store.get(OWNER_KEY)),
+    requested(
+      store.getAll(IDBKeyRange.bound(KEPT_PREFIX, `${KEPT_PREFIX}\uffff`)),
+    ),
+  ]);
+  return (owner as DeviceOwner | undefined)?.user.id === userId
+    ? (drafts as KeptDraft[])
+    : [];
+}
+
+// With `keptAt`, a copy written since that one was read stays.
+export const forgetKeptDraft = (
+  userId: UserId,
+  id: OutgoingId,
+  keptAt?: number,
+) =>
+  writeAsOwner(userId, [], async (transaction) => {
+    const store = transaction.objectStore(META);
+    const held = (await requested(store.get(keptKey(id)))) as
+      KeptDraft | undefined;
+    if (keptAt === undefined || held?.keptAt === keptAt) {
+      store.delete(keptKey(id));
+    }
+  });
 
 export const readSavedMailboxes = (userId: UserId) =>
   readAsOwner<MailboxEntry[]>(userId, META, MAILBOXES_KEY);

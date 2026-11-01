@@ -520,7 +520,7 @@ export class OutgoingStore {
       }
       const fits = fitsSendLimit({
         bodyBytes: writtenBytes(row.html, row.body_text),
-        quoteBytes: row.quote_bytes ?? 0,
+        quoteBytes: row.include_quote === 1 ? (row.quote_bytes ?? 0) : 0,
         attachmentSizes: [...existing.map((file) => file.size), size],
       });
       if (!fits) {

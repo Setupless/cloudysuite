@@ -603,6 +603,56 @@ test("uploads over the limits are refused, and a refused file leaves nothing beh
   expect(bucket.keys()).toHaveLength(objects);
 });
 
+test("a quote that was left out doesn't count against a new file", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const FILE_BYTES = 18 * 1024 * 1024;
+  const bigQuote = "<p>Quoted line</p>".repeat(30_000);
+  const start = async () => {
+    const id = newId();
+    const { draft } = await kit.mailbox.outgoing.start({
+      id,
+      mode: "reply",
+      parent,
+      body: { text: null, html: bigQuote },
+      inlineAttachments: [],
+      ownAddresses: [OWN],
+      ownDomain: DOMAIN,
+      editor: EDITOR,
+    });
+    expect(draft.quote!.bytes).toBeGreaterThan(300 * 1024);
+    return { id, draft };
+  };
+  const upload = (id: OutgoingId) =>
+    kit.mailbox.outgoing.upload({
+      id,
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+      body: {
+        declaredBytes: FILE_BYTES,
+        read: async () => new ArrayBuffer(FILE_BYTES),
+      },
+      fromAddress: OWN,
+      editor: EDITOR,
+    });
+
+  const withQuote = await start();
+  expect(await upload(withQuote.id)).toMatchObject({
+    status: "refused",
+    httpStatus: 413,
+  });
+
+  const withoutQuote = await start();
+  await kit.mailbox.outgoing.save({
+    id: withoutQuote.id,
+    baseRevision: withoutQuote.draft.revision,
+    content: { ...withoutQuote.draft.content, includeQuote: false },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect((await upload(withoutQuote.id)).status).toBe("added");
+});
+
 test("the 33rd attachment is refused", async () => {
   const { mailbox } = await setUp();
   const id = newId();
