@@ -9,7 +9,7 @@ import { MAILBOX_ROLES, ORG_ROLES } from "../../../../src/db/schema";
 import type { ToggleableApp } from "../../../../src/routing";
 import { isToggleableApp } from "./organisation";
 
-function badInput(): Response {
+export function badInput(): Response {
   return new Response(
     JSON.stringify({ message: "That request isn't valid." }),
     {
