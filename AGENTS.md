@@ -62,7 +62,7 @@ Do not guess or build around these. Ask the user first.
 ## Auth and security
 
 - Use the latest stable Better Auth release that no published advisory affects for the features we use. Do not use `rc`, `beta`, or `canary` releases of Better Auth.
-- Use only email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins.
+- Sign-in features are limited to email and password plus the `twoFactor`, `passkey`, and `admin` plugins. `tanstackStartCookies` is allowed because it is a cookie adapter that adds no sign-in method.
 - Keep the session cookie cache off.
 - A user who loses a device can sign in with another passkey or a TOTP backup code. Otherwise an admin resets their sign-in. Do not add magic links or email recovery.
 - Invites use a single-use token sent to the invited address. A matching email string does not prove ownership.
