@@ -4,8 +4,14 @@ const TRUSTED_AUTHSERV_ID = "mx.cloudflare.net";
 
 const METHODS = ["spf", "dkim", "dmarc"] as const;
 
+// RFC 8601: authserv-id [ CFWS authres-version ]. Anything else before the first
+// semicolon means the id is not what its first word claims.
+const AUTHSERV = /^(\S+)(?:\s+\d+)?$/;
+
 // Comments can hold semicolons and nest, and a quoted string can hold either, so
-// this walks the value once rather than splitting on a pattern.
+// this walks the value once rather than splitting on a pattern. Comments are
+// dropped. Quoted strings stay in the text, so they cannot vanish from beside the
+// authserv-id or a method and leave it looking clean.
 function splitResinfo(value: string): string[] {
   const parts: string[] = [];
   let current = "";
@@ -14,8 +20,11 @@ function splitResinfo(value: string): string[] {
   for (let index = 0; index < value.length; index += 1) {
     const char = value[index]!;
     if (quoted) {
-      if (char === "\\") index += 1;
-      else if (char === '"') quoted = false;
+      current += char;
+      if (char === "\\") {
+        current += value[index + 1] ?? "";
+        index += 1;
+      } else if (char === '"') quoted = false;
       continue;
     }
     if (depth > 0) {
@@ -25,8 +34,10 @@ function splitResinfo(value: string): string[] {
       continue;
     }
     if (char === "(") depth = 1;
-    else if (char === '"') quoted = true;
-    else if (char === ";") {
+    else if (char === '"') {
+      quoted = true;
+      current += char;
+    } else if (char === ";") {
       parts.push(current.trim());
       current = "";
     } else current += char;
@@ -47,7 +58,7 @@ export function parseAuthenticationResults(
 ): AuthResults | null {
   if (!firstHeader) return null;
   const [authserv, ...resinfo] = splitResinfo(firstHeader);
-  const authservId = authserv?.split(/\s+/)[0]?.toLowerCase();
+  const authservId = AUTHSERV.exec(authserv ?? "")?.[1]?.toLowerCase();
   if (authservId !== TRUSTED_AUTHSERV_ID) return null;
 
   const results: AuthResults = { spf: null, dkim: null, dmarc: null };

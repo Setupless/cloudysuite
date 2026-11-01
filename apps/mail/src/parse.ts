@@ -79,11 +79,13 @@ function parseDate(value: string | null | undefined): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
-const UNSAFE_FILENAME = /[\p{Cc}‪-‮⁦-⁩/\\]/gu;
+const STRIPPED_FROM_FILENAME = /[\p{Cc}"']/gu;
+const UNSAFE_FILENAME = /[‪-‮⁦-⁩/\\]/gu;
 
 function cleanFilename(filename: string | null): string | null {
   if (!filename) return null;
   const clean = filename
+    .replace(STRIPPED_FROM_FILENAME, "")
     .replace(UNSAFE_FILENAME, "_")
     .slice(0, MAX_FILENAME_LENGTH);
   return clean || null;

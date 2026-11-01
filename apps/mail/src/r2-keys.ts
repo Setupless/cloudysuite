@@ -1,10 +1,11 @@
 import type { MailboxId } from "@cloudysuite/access";
 import type { BodyKind } from "./types";
 
-// Keys come only from the mailbox id and the raw hash, so a retry writes to the
-// same keys, and nothing the sender chose, such as a file name, reaches a key.
-export function messagePrefix(mailboxId: MailboxId, rawHash: string): string {
-  return `mailboxes/${mailboxId}/messages/${rawHash}/`;
+// One prefix per delivery attempt, never derived from the content. Cleaning up a
+// deleted message can then never touch a later copy of the same bytes, and nothing
+// the sender chose, such as a file name, reaches a key.
+export function newMessagePrefix(mailboxId: MailboxId): string {
+  return `mailboxes/${mailboxId}/messages/${crypto.randomUUID()}/`;
 }
 
 export const rawKey = (prefix: string) => `${prefix}raw.eml`;

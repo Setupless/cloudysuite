@@ -38,8 +38,15 @@ export class Mailbox extends DurableObject<Env> {
     return this.#store.findByHash(rawHash);
   }
 
-  commit(message: NewMessage): CommitResult {
-    return this.#store.commit(message);
+  async commit(message: NewMessage): Promise<CommitResult> {
+    const result = this.#store.commit(message);
+    if (result.status === "duplicate") await this.#sweepLater();
+    return result;
+  }
+
+  async abandonUpload(prefix: string): Promise<void> {
+    this.#store.queueDeletion(prefix);
+    await this.#sweepLater();
   }
 
   listThreads(query: ThreadQuery): ThreadPage {
@@ -75,11 +82,16 @@ export class Mailbox extends DurableObject<Env> {
 
   async deleteForever(selection: MessageSelection): Promise<number> {
     const deleted = this.#store.deleteForever(selection);
-    // Set before any await, so the alarm commits together with the queued rows
-    // and a crash during the sweep still finishes the job.
-    await this.ctx.storage.setAlarm(Date.now() + SWEEP_RETRY_MS);
+    await this.#sweepLater();
     await this.#sweep();
     return deleted;
+  }
+
+  // Call before any other await, so the alarm commits together with the queued
+  // rows and a crash still finishes the job. The delay also outlasts any write
+  // still in flight from an abandoned upload.
+  #sweepLater(): Promise<void> {
+    return this.ctx.storage.setAlarm(Date.now() + SWEEP_RETRY_MS);
   }
 
   // One alarm serves every background job in a mailbox. A later job must add its

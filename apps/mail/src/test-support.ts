@@ -35,6 +35,8 @@ export class FakeBucket {
   objects = new Map<string, Uint8Array>();
   failPutsMatching: RegExp | null = null;
   failDeletes = false;
+  // Runs inside delete(), after the caller listed its keys and before they go.
+  beforeDelete: (() => Promise<void>) | null = null;
 
   async put(key: string, value: ArrayBuffer | Uint8Array) {
     if (this.failPutsMatching?.test(key)) throw new Error("R2 is unavailable");
@@ -63,6 +65,7 @@ export class FakeBucket {
   }
 
   async delete(keys: string[]) {
+    await this.beforeDelete?.();
     if (this.failDeletes) throw new Error("R2 is unavailable");
     for (const key of keys) this.objects.delete(key);
   }

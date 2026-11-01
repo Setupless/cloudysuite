@@ -108,7 +108,8 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
     `CREATE INDEX thread_views_page ON thread_views(view, last_at DESC, thread_id DESC)`,
     `CREATE INDEX thread_views_thread ON thread_views(thread_id)`,
     // Removing rows and removing R2 objects cannot share a transaction, so the
-    // rows go first and this queue carries the rest across a crash.
+    // rows go first and this queue carries the rest across a crash. An upload
+    // that lost a duplicate race or failed partway queues its objects here too.
     `CREATE TABLE r2_deletions (
       prefix TEXT PRIMARY KEY,
       queued_at INTEGER NOT NULL

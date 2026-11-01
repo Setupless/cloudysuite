@@ -588,11 +588,33 @@ test("deleting a thread's last message removes the thread and its references", (
   expect(store.getThread(again.threadId)?.messages).toHaveLength(1);
 });
 
-test("delivering a message again after a pending deletion cancels the clean-up", () => {
-  const first = store.commit(message({ rawHash: "again" }));
+test("delivering a message again does not cancel the clean-up of its deleted copy", () => {
+  const first = store.commit(
+    message({ rawHash: "again", r2Prefix: "attempt-1/" }),
+  );
   store.moveToFolder({ messageIds: [first.messageId] }, "trash");
   store.deleteForever({ messageIds: [first.messageId] });
-  expect(store.pendingDeletions(10)).toHaveLength(1);
-  expect(store.commit(message({ rawHash: "again" })).status).toBe("stored");
+  const again = store.commit(
+    message({ rawHash: "again", r2Prefix: "attempt-2/" }),
+  );
+  expect(again.status).toBe("stored");
+  expect(store.pendingDeletions(10)).toEqual(["attempt-1/"]);
+  expect(store.storagePrefix(again.messageId)).toBe("attempt-2/");
+});
+
+test("the copy that loses a duplicate race queues its own objects and nothing else", () => {
+  const winner = store.commit(
+    message({ rawHash: "race", r2Prefix: "winner/" }),
+  );
+  const loser = store.commit(message({ rawHash: "race", r2Prefix: "loser/" }));
+  expect(loser).toEqual({ ...winner, status: "duplicate" });
+  expect(store.pendingDeletions(10)).toEqual(["loser/"]);
+  expect(store.storagePrefix(winner.messageId)).toBe("winner/");
+});
+
+test("the winner's commit arriving twice does not queue the message's own objects", () => {
+  const winner = message({ rawHash: "twice", r2Prefix: "winner/" });
+  store.commit(winner);
+  expect(store.commit(winner).status).toBe("duplicate");
   expect(store.pendingDeletions(10)).toEqual([]);
 });

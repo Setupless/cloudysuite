@@ -40,7 +40,7 @@ test("a message is stored with its details and raw bytes under its mailbox", asy
   const keys = bucket.keys();
   expect(keys).toHaveLength(1);
   expect(keys[0]).toMatch(
-    new RegExp(`^mailboxes/${MAILBOX_A}/messages/[0-9a-f]{64}/raw\\.eml$`),
+    new RegExp(`^mailboxes/${MAILBOX_A}/messages/[0-9a-f-]{36}/raw\\.eml$`),
   );
   expect(bucket.objects.get(keys[0]!)).toEqual(new Uint8Array(raw));
 });
@@ -57,8 +57,23 @@ test("delivering the same bytes twice stores one message", async () => {
   expect(db.exec("SELECT id FROM messages").toArray()).toHaveLength(1);
 });
 
-test("two deliveries at the same time store one message", async () => {
-  const { env, instanceOf } = createTestEnv();
+test("deliveries that overlap store one message and keep one set of objects", async () => {
+  const { env, bucket, instanceOf } = createTestEnv();
+  const { object, db } = instanceOf(MAILBOX_A);
+  const findByHash = object.findByHash.bind(object);
+  let arrived = 0;
+  let allArrived!: () => void;
+  const everyoneChecked = new Promise<void>((resolve) => {
+    allArrived = resolve;
+  });
+  object.findByHash = (async (rawHash: string) => {
+    const found = findByHash(rawHash);
+    arrived += 1;
+    if (arrived === 3) allArrived();
+    await everyoneChecked;
+    return found;
+  }) as never;
+
   const raw = eml({ messageId: "one@x" });
   const results = await Promise.all([
     ingest(env, inbound(raw)),
@@ -70,8 +85,16 @@ test("two deliveries at the same time store one message", async () => {
     "duplicate",
     "stored",
   ]);
-  const { db } = instanceOf(MAILBOX_A);
   expect(db.exec("SELECT id FROM messages").toArray()).toHaveLength(1);
+  expect(bucket.keys()).toHaveLength(3);
+  expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
+
+  await object.alarm();
+  const [winner] = db
+    .exec<{ r2_prefix: string }>("SELECT r2_prefix FROM messages")
+    .toArray();
+  expect(bucket.keys()).toEqual([`${winner!.r2_prefix}raw.eml`]);
+  expect(instanceOf(MAILBOX_A).alarm).toBeNull();
 });
 
 test("the same message in two mailboxes is stored separately in each", async () => {
@@ -122,25 +145,30 @@ const withAttachment = toArrayBuffer(
   ].join("\r\n"),
 );
 
-test("a crash at any step before the commit leaves a state a retry finishes", async () => {
+test("a failed write leaves no objects behind once swept, and a retry stores the message", async () => {
   for (const failing of [/raw\.eml$/, /attachments\/0$/]) {
     const { env, bucket, instanceOf } = createTestEnv();
     bucket.failPutsMatching = failing;
-    await expect(ingest(env, inbound(withAttachment))).rejects.toThrow();
-    const { db } = instanceOf(MAILBOX_A);
+    await expect(ingest(env, inbound(withAttachment))).rejects.toThrow(
+      "R2 is unavailable",
+    );
+    const { db, object } = instanceOf(MAILBOX_A);
     expect(db.exec("SELECT id FROM messages").toArray()).toEqual([]);
+    expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
 
     bucket.failPutsMatching = null;
     const retry = await ingest(env, inbound(withAttachment));
     expect(retry.status).toBe("stored");
+    await object.alarm();
     expect(bucket.keys()).toHaveLength(2);
     expect(db.exec("SELECT id FROM attachments").toArray()).toHaveLength(1);
+    expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);
   }
 });
 
-test("a crash just before the commit leaves objects that a retry reuses", async () => {
+test("a crash just before the commit leaves its objects, and a retry stores its own", async () => {
   const { env, bucket, instanceOf } = createTestEnv();
-  const { object } = instanceOf(MAILBOX_A);
+  const { object, db } = instanceOf(MAILBOX_A);
   const commit = object.commit.bind(object);
   object.commit = () => {
     throw new Error("the Worker stopped here");
@@ -148,10 +176,28 @@ test("a crash just before the commit leaves objects that a retry reuses", async 
   await expect(ingest(env, inbound(withAttachment))).rejects.toThrow();
   const objectsAfterCrash = bucket.keys();
   expect(objectsAfterCrash).toHaveLength(2);
+  expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);
 
   object.commit = commit;
   expect((await ingest(env, inbound(withAttachment))).status).toBe("stored");
-  expect(bucket.keys()).toEqual(objectsAfterCrash);
+  expect(bucket.keys()).toHaveLength(4);
+  expect(bucket.keys()).toEqual(expect.arrayContaining(objectsAfterCrash));
+});
+
+test("a commit whose reply was lost does not remove the stored message's objects", async () => {
+  const { env, bucket, instanceOf } = createTestEnv();
+  const { object } = instanceOf(MAILBOX_A);
+  const commit = object.commit.bind(object);
+  object.commit = async (message) => {
+    await commit(message);
+    throw new Error("the reply was lost");
+  };
+  await expect(ingest(env, inbound(withAttachment))).rejects.toThrow();
+  object.commit = commit;
+
+  expect((await ingest(env, inbound(withAttachment))).status).toBe("duplicate");
+  await object.alarm();
+  expect(bucket.keys()).toHaveLength(2);
 });
 
 test("a body over the inline limit goes to R2 and reads back whole", async () => {

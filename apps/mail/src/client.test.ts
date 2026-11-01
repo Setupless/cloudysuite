@@ -173,3 +173,53 @@ test("trash, then delete for good, removes every object and can repeat", async (
   expect(await mailbox.deleteForever(selection)).toBe(0);
   expect(instanceOf(MAILBOX_A).alarm).toBeNull();
 });
+
+const readsBack = async (stream: ReadableStream | null, raw: ArrayBuffer) =>
+  Buffer.from(await new Response(stream).arrayBuffer()).equals(
+    Buffer.from(raw),
+  );
+
+test("mail redelivered while its deleted copy is leaving storage stays readable", async () => {
+  const { env, bucket, instanceOf } = createTestEnv();
+  const mailbox = openMailbox(env, await grantFor(MAILBOX_A));
+  const body = "y".repeat(1_500_000);
+  const raw = eml({ messageId: "again@x", body });
+  const first = await stored(ingest(env, inbound(raw)));
+  const selection = { messageIds: [first.messageId] };
+  await mailbox.moveToTrash(selection);
+
+  let redelivered: Awaited<ReturnType<typeof stored>> | undefined;
+  bucket.beforeDelete = async () => {
+    bucket.beforeDelete = null;
+    redelivered = await stored(ingest(env, inbound(raw)));
+  };
+  expect(await mailbox.deleteForever(selection)).toBe(1);
+
+  expect(redelivered).toMatchObject({ status: "stored", folder: "inbox" });
+  const { messageId } = redelivered!;
+  expect(messageId).not.toBe(first.messageId);
+  expect(await readsBack(await mailbox.getRaw(messageId), raw)).toBe(true);
+  expect((await mailbox.getBody(messageId))?.text?.trim() === body).toBe(true);
+
+  const { db } = instanceOf(MAILBOX_A);
+  expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);
+  expect((await ingest(env, inbound(raw))).status).toBe("duplicate");
+  expect(await readsBack(await mailbox.getRaw(messageId), raw)).toBe(true);
+});
+
+test("mail redelivered after its deleted copy has left storage is stored again", async () => {
+  const { env, bucket } = createTestEnv();
+  const mailbox = openMailbox(env, await grantFor(MAILBOX_A));
+  const raw = eml({ messageId: "again@x" });
+  const first = await stored(ingest(env, inbound(raw)));
+  const selection = { messageIds: [first.messageId] };
+  await mailbox.moveToTrash(selection);
+  expect(await mailbox.deleteForever(selection)).toBe(1);
+  expect(bucket.keys()).toEqual([]);
+
+  const again = await stored(ingest(env, inbound(raw)));
+  expect(again.folder).toBe("inbox");
+  expect(await readsBack(await mailbox.getRaw(again.messageId), raw)).toBe(
+    true,
+  );
+});

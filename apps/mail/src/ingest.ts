@@ -3,12 +3,13 @@ import { resolveRecipient } from "./address";
 import { parseAuthenticationResults } from "./auth-results";
 import {
   type ParsedAttachment,
+  type ParsedMessage,
   parseMessage,
   readableText,
   snippetOf,
   truncateUtf8,
 } from "./parse";
-import { attachmentKey, bodyKey, messagePrefix, rawKey } from "./r2-keys";
+import { attachmentKey, bodyKey, newMessagePrefix, rawKey } from "./r2-keys";
 import { mailboxStub } from "./stub";
 import {
   BODY_INLINE_LIMIT_BYTES,
@@ -65,11 +66,34 @@ async function storeAttachments(
   return stored;
 }
 
-// The only way a message enters a mailbox. Safe to repeat at every point: R2 keys
-// come from the raw hash, so a retry overwrites what a crash left behind, and the
-// row that makes the message visible goes in last, in one transaction, so it never
-// points at a missing object. If no retry ever comes, the objects stay unreferenced
-// and nothing shows them.
+async function storeObjects(
+  bucket: R2Bucket,
+  prefix: string,
+  raw: ArrayBuffer,
+  parsed: ParsedMessage,
+): Promise<Pick<NewMessage, "bodies" | "attachments">> {
+  await bucket.put(rawKey(prefix), raw);
+  const bodies: NewBody[] = [];
+  if (parsed.text !== null) {
+    bodies.push(await storeBody(bucket, prefix, "text", parsed.text));
+  }
+  if (parsed.html !== null) {
+    bodies.push(await storeBody(bucket, prefix, "html", parsed.html));
+  }
+  const attachments = await storeAttachments(
+    bucket,
+    prefix,
+    parsed.attachments,
+  );
+  return { bodies, attachments };
+}
+
+// The only way a message enters a mailbox. Safe to repeat at every point: each
+// attempt writes under its own prefix, and the row that makes the message visible
+// goes in last, in one transaction, so it never points at a missing object. An
+// attempt that fails while writing or loses to another copy queues its prefix for
+// removal. One that dies outright leaves objects that nothing shows or removes, so
+// parsing, the likeliest place to hit a Worker limit, runs before any write.
 export async function ingest(
   env: Env,
   input: IngestInput,
@@ -84,22 +108,15 @@ export async function ingest(
   const existing = await stub.findByHash(rawHash);
   if (existing) return { status: "duplicate", ...existing } as IngestResult;
 
-  const prefix = messagePrefix(mailboxId, rawHash);
-  await env.BUCKET.put(rawKey(prefix), raw);
-
   const parsed = await parseMessage(raw);
-  const bodies: NewBody[] = [];
-  if (parsed.text !== null) {
-    bodies.push(await storeBody(env.BUCKET, prefix, "text", parsed.text));
+  const prefix = newMessagePrefix(mailboxId);
+  let objects: Awaited<ReturnType<typeof storeObjects>>;
+  try {
+    objects = await storeObjects(env.BUCKET, prefix, raw, parsed);
+  } catch (error) {
+    await stub.abandonUpload(prefix);
+    throw error;
   }
-  if (parsed.html !== null) {
-    bodies.push(await storeBody(env.BUCKET, prefix, "html", parsed.html));
-  }
-  const attachments = await storeAttachments(
-    env.BUCKET,
-    prefix,
-    parsed.attachments,
-  );
 
   const now = Date.now();
   const text = readableText(parsed);
@@ -131,8 +148,7 @@ export async function ingest(
         ? parseAuthenticationResults(parsed.firstAuthenticationResults)
         : null,
     searchBody: truncateUtf8(text, SEARCH_BODY_LIMIT_BYTES),
-    bodies,
-    attachments,
+    ...objects,
   };
   return (await stub.commit(message)) as IngestResult;
 }

@@ -213,15 +213,18 @@ export class MailboxStore {
   commit(message: NewMessage): CommitResult {
     return this.#db.transaction(() => {
       const existing = this.findByHash(message.rawHash);
-      if (existing) return { status: "duplicate", ...existing };
+      if (existing) {
+        // The losing copy's objects are its own, unless this is the winner's
+        // commit arriving twice, and then they are the message's only copy.
+        if (this.storagePrefix(existing.messageId) !== message.r2Prefix) {
+          this.queueDeletion(message.r2Prefix);
+        }
+        return { status: "duplicate", ...existing };
+      }
 
       const placement = placementFor(message, this.#db);
       const threadId = this.#assignThread(message);
       const messageId = this.#insertMessage(message, threadId, placement);
-      this.#db.exec(
-        "DELETE FROM r2_deletions WHERE prefix = ?",
-        message.r2Prefix,
-      );
       this.refreshThread(threadId);
       return {
         status: "stored",
@@ -309,6 +312,7 @@ export class MailboxStore {
       }>(
         `SELECT thread_id, from_address, participants FROM messages
          WHERE normalized_subject = ?
+           AND normalized_subject <> ''
            AND thread_date BETWEEN ? AND ?
            AND (? = 1 OR is_orphan_reply = 1)
          ORDER BY thread_date DESC
@@ -625,6 +629,16 @@ export class MailboxStore {
       this.#refreshThreadsOf(rows);
       return rows.length;
     });
+  }
+
+  // A prefix in this queue is never written or referenced again, so the sweep can
+  // take its time: nothing that arrives later can share these objects.
+  queueDeletion(prefix: string): void {
+    this.#db.exec(
+      "INSERT OR IGNORE INTO r2_deletions (prefix, queued_at) VALUES (?, ?)",
+      prefix,
+      Date.now(),
+    );
   }
 
   pendingDeletions(limit: number): string[] {

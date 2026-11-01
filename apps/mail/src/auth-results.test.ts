@@ -23,6 +23,29 @@ test("ignores a header from any other server", () => {
   ).toBeNull();
 });
 
+test("anything but a version number after the server's name is refused", () => {
+  for (const header of [
+    "mx.cloudflare.net\t.evil.com; spf=pass",
+    "mx.cloudflare.net .evil.com; spf=pass",
+    "mx.cloudflare.net 1 2; spf=pass",
+    "mx.cloudflare.net 1a; spf=pass",
+    'mx.cloudflare.net "x"; spf=pass',
+    'mx.cloudflare.net"x"; spf=pass',
+    '"x"mx.cloudflare.net; spf=pass',
+    "mx.cloudflare.net spf=pass",
+  ]) {
+    expect(parseAuthenticationResults(header)).toBeNull();
+  }
+  for (const header of [
+    "mx.cloudflare.net 1; spf=pass",
+    "mx.cloudflare.net\t1 ; spf=pass",
+    "mx.cloudflare.net (comment) 1 (comment); spf=pass",
+    "MX.Cloudflare.NET; spf=pass",
+  ]) {
+    expect(parseAuthenticationResults(header)?.spf).toBe("pass");
+  }
+});
+
 test("a comment or quoted string cannot smuggle in a result", () => {
   expect(
     parseAuthenticationResults(
