@@ -13,10 +13,19 @@ export function createTestDatabase(): { sqlite: Database; d1: D1Database } {
     sqlite.run(readFileSync(join(MIGRATIONS, dir, "migration.sql"), "utf8"));
   }
   const prepare = (sql: string, params: never[] = []) => ({
+    sql,
+    params,
     bind: (...next: never[]) => prepare(sql, next),
     all: async () => ({ results: sqlite.query(sql).all(...params) }),
     raw: async () => sqlite.query(sql).values(...params),
     run: async () => sqlite.query(sql).run(...params),
   });
-  return { sqlite, d1: { prepare } as unknown as D1Database };
+  // D1 runs a batch as one transaction, so one failed statement undoes them all.
+  const batch = async (statements: ReturnType<typeof prepare>[]) =>
+    sqlite.transaction(() =>
+      statements.map(({ sql, params }) => ({
+        results: sqlite.query(sql).all(...params),
+      })),
+    )();
+  return { sqlite, d1: { prepare, batch } as unknown as D1Database };
 }
