@@ -22,7 +22,10 @@ const LOCAL_PART = /^[a-z0-9]+([._-][a-z0-9]+)*$/;
 export const isMailboxLocalPart = (local: string) =>
   local.length <= 64 && LOCAL_PART.test(local);
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The same rule Better Auth's sign-in applies, so an address saved here can
+// always sign in.
+const EMAIL =
+  /^(?:[A-Za-z0-9_'+-]+\.)*[A-Za-z0-9_'+-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/;
 export const isEmail = (email: string) =>
   email.length <= 254 && EMAIL.test(email);
 
@@ -91,8 +94,11 @@ export function parseSetupRequest(value: unknown): SetupRequest | null {
       const stepId = STEP_IDS.find((id: StepId) => id === value.stepId);
       const mode =
         value.mode === "check" || value.mode === "run" ? value.mode : null;
+      const { confirmReplace } = value;
+      if (confirmReplace !== undefined && !isString(confirmReplace))
+        return null;
       return claim && choice && stepId && mode
-        ? { action: "step", claim, choice, stepId, mode }
+        ? { action: "step", claim, choice, stepId, mode, confirmReplace }
         : null;
     }
     case "finish": {

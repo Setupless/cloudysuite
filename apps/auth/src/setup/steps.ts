@@ -1,5 +1,6 @@
 import { APPS } from "../../../../src/routing";
 import {
+  type CatchAll,
   type Cloudflare,
   CloudflareError,
   type DnsRecord,
@@ -126,6 +127,29 @@ function sendingDnsGaps(
 const describeRecord = (record: DnsRecord, zoneName: string) =>
   `${record.type} ${fullName(record.name, zoneName)} ${record.content}`;
 
+function catchAllGuide({ plan, scriptName }: StepContext): ManualGuide {
+  return {
+    action: `In Cloudflare, open Email Routing for ${plan.emailDomain}, then Routing rules. Set the catch-all address to "Send to a Worker" and pick ${scriptName}. Then check again.`,
+    dashboardUrl: dashboard("email-service/routing"),
+    docsUrl: DOCS.routing,
+  };
+}
+
+function describeAction({ type, value = [] }: CatchAll["actions"][number]) {
+  const targets = value.join(" and ");
+  if (type === "forward") return `is forwarded to ${targets}`;
+  if (type === "worker") return `goes to another Worker, ${targets}`;
+  if (type === "drop") return "is deleted";
+  return "is handled by a rule CloudySuite doesn't recognise";
+}
+
+function describeCatchAll(rule: CatchAll, emailDomain: string) {
+  const actions = rule.actions.length > 0 ? rule.actions : [{ type: "" }];
+  return `Right now, mail to any address at ${emailDomain} that has no rule of its own ${actions
+    .map(describeAction)
+    .join(" and ")}.`;
+}
+
 export const SETUP_STEPS: readonly SetupStep[] = [
   {
     id: "email-routing",
@@ -222,27 +246,40 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   },
   {
     id: "catch-all",
-    async check({ api, plan, scriptName }) {
+    async check(context) {
+      const { api, plan, scriptName } = context;
       const rule = await api.getCatchAll(plan.zoneId);
+      if (!rule) {
+        const guide = catchAllGuide(context);
+        return {
+          state: "needs-action",
+          guide: {
+            ...guide,
+            action: `Cloudflare didn't tell us what your catch-all rule does now, so we left it alone. ${guide.action}`,
+          },
+        };
+      }
+      if (!rule.enabled) {
+        return {
+          state: "missing",
+          detail: "Incoming mail doesn't reach CloudySuite yet.",
+        };
+      }
       const worker = rule.actions.find((action) => action.type === "worker");
-      if (rule.enabled && worker?.value?.[0] === scriptName) {
+      if (worker?.value?.[0] === scriptName) {
         return {
           state: "done",
           detail: `Mail to any address at ${plan.emailDomain} reaches CloudySuite.`,
         };
       }
       return {
-        state: "missing",
-        detail: "Incoming mail doesn't reach CloudySuite yet.",
+        state: "needs-confirmation",
+        current: describeCatchAll(rule, plan.emailDomain),
       };
     },
     apply: ({ api, plan, scriptName }) =>
       api.setCatchAllToWorker(plan.zoneId, scriptName),
-    guide: ({ plan, scriptName }) => ({
-      action: `In Cloudflare, open Email Routing for ${plan.emailDomain}, then Routing rules. Set the catch-all address to "Send to a Worker" and pick ${scriptName}. Then check again.`,
-      dashboardUrl: dashboard("email-service/routing"),
-      docsUrl: DOCS.routing,
-    }),
+    guide: catchAllGuide,
   },
   {
     id: "app-hostnames",
@@ -286,7 +323,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
         return {
           state: "needs-action",
           guide: {
-            action: `${blocked.join(" and ")} already point somewhere else, and CloudySuite needs these addresses. Delete those DNS records, or go back and choose a different address for your apps. Then check again.`,
+            action: `Something else already uses ${blocked.join(" and ")}, and CloudySuite needs ${blocked.length > 1 ? "those addresses" : "that address"}. Delete the DNS records for ${blocked.length > 1 ? "them" : "it"}, or reload this page and choose a different address for your apps. Then check again.`,
             dashboardUrl: dashboard(":zone/dns/records"),
             docsUrl: DOCS.domains,
           },
@@ -379,16 +416,24 @@ export async function runStep(
   step: SetupStep,
   context: StepContext,
   mode: StepMode,
+  confirmReplace?: string,
 ): Promise<StepResult> {
   const guide = step.guide(context);
   try {
     const before = await step.check(context);
-    if (mode === "check" || before.state !== "missing") return asResult(before);
+    // The wording must still match, so a rule that changed after the person
+    // looked at it is shown to them again instead of being replaced unseen.
+    const confirmed =
+      before.state === "needs-confirmation" &&
+      before.current === confirmReplace;
+    if (mode === "check" || (before.state !== "missing" && !confirmed))
+      return asResult(before);
 
     await step.apply(context);
 
     const after = await step.check(context);
-    if (after.state !== "missing") return asResult(after);
+    if (after.state !== "missing" && after.state !== "needs-confirmation")
+      return asResult(after);
     return {
       state: "needs-action",
       guide: { ...guide, action: after.action ?? guide.action },

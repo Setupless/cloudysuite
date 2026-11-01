@@ -1,6 +1,6 @@
-import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
+  account,
   addresses,
   domains,
   mailboxAccess,
@@ -9,16 +9,15 @@ import {
   type UserId,
   user,
 } from "../../../../src/db/schema";
+import { readSettings } from "../../../../src/settings";
 import type { createAuth } from "../auth";
 import type { DomainPlan, FirstAdminInput } from "./model";
 
-// The domain rows go in the same atomic batch as the admin's mailbox, and the
-// router opens the apps only once a primary domain exists. So until this batch
-// commits, nobody can sign in and the wizard stays open, and any user or
-// mailbox here came from an earlier attempt that stopped partway. That attempt
-// may have used another address, so remove it and start clean. The condition
-// repeats the check inside the delete, so a second, racing request cannot
-// remove what a finished setup just stored.
+// One atomic batch, so the unique primary-domain index picks one winner among
+// parallel requests, and the others leave nothing behind. `auth.api.createUser`
+// would commit the user first, so this writes the same rows itself, with Better
+// Auth's own hasher, so sign-in can verify the password. Returns false when
+// setup was already finished.
 export async function createFirstAdmin({
   database,
   auth,
@@ -29,25 +28,14 @@ export async function createFirstAdmin({
   auth: ReturnType<typeof createAuth>;
   plan: DomainPlan;
   admin: FirstAdminInput;
-}): Promise<void> {
+}): Promise<boolean> {
+  const { password } = await auth.$context;
+  const passwordHash = await password.hash(admin.password);
+
   const db = drizzle(database);
-  const unfinished = sql`not exists (select 1 from ${domains} where ${domains.isPrimary} = 1)`;
-  await db.batch([
-    db.delete(user).where(unfinished),
-    db.delete(mailboxes).where(unfinished),
-  ]);
-
-  const { user: created } = await auth.api.createUser({
-    body: {
-      email: admin.email,
-      password: admin.password,
-      name: admin.name,
-      role: "admin",
-    },
-  });
-  const userId = created.id as UserId;
+  const now = new Date();
+  const userId = crypto.randomUUID() as UserId;
   const mailboxId = crypto.randomUUID() as MailboxId;
-
   const domainRows =
     plan.appDomain === plan.emailDomain
       ? [{ name: plan.appDomain, isPrimary: true }]
@@ -56,17 +44,41 @@ export async function createFirstAdmin({
           { name: plan.appDomain, isPrimary: true },
         ];
 
-  await db.batch([
-    db.insert(domains).values(domainRows),
-    db
-      .insert(mailboxes)
-      .values({ id: mailboxId, kind: "personal", name: admin.name }),
-    db.insert(addresses).values({
-      address: `${admin.mailboxLocalPart}@${plan.emailDomain}`,
-      domain: plan.emailDomain,
-      mailboxId,
-      kind: "primary",
-    }),
-    db.insert(mailboxAccess).values({ mailboxId, userId, role: "manager" }),
-  ]);
+  try {
+    await db.batch([
+      db.insert(domains).values(domainRows),
+      db.insert(user).values({
+        id: userId,
+        name: admin.name,
+        email: admin.email,
+        role: "admin",
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: userId,
+        providerId: "credential",
+        userId,
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db
+        .insert(mailboxes)
+        .values({ id: mailboxId, kind: "personal", name: admin.name }),
+      db.insert(addresses).values({
+        address: `${admin.mailboxLocalPart}@${plan.emailDomain}`,
+        domain: plan.emailDomain,
+        mailboxId,
+        kind: "primary",
+      }),
+      db.insert(mailboxAccess).values({ mailboxId, userId, role: "manager" }),
+    ]);
+    return true;
+  } catch (error) {
+    const { primaryDomain } = await readSettings(database);
+    if (primaryDomain !== null) return false;
+    throw error;
+  }
 }

@@ -41,6 +41,13 @@ export type SendingDomain = { tag: string; name: string; enabled: boolean };
 
 export type WorkerDomain = { hostname: string; service: string };
 
+type ScriptSettings = {
+  logpush?: unknown;
+  observability?: unknown;
+  tags?: unknown;
+  tail_consumers?: unknown;
+};
+
 export class CloudflareError extends Error {
   constructor(
     readonly status: number,
@@ -64,6 +71,18 @@ type Envelope<Result> = {
 };
 
 const MAX_PAGES = 20;
+
+const noResult = () =>
+  new CloudflareError(502, null, "Cloudflare sent back an empty answer.");
+
+// Cloudflare reads unset settings back as null, and its reference lists no null
+// for a patch.
+const withoutNulls = (settings: ScriptSettings): unknown =>
+  JSON.parse(
+    JSON.stringify(settings, (_key, value) =>
+      value === null ? undefined : value,
+    ),
+  );
 
 export type Cloudflare = ReturnType<typeof createCloudflare>;
 
@@ -151,11 +170,11 @@ export function createCloudflare({
     // this Worker can have it. The version tag is set by the uploader, so it proves nothing.
     async hasVersion(accountId: string, name: string, versionId: string) {
       try {
-        await call(
+        const version = await result<{ id?: string } | null>(
           "GET",
           `${script(accountId, name)}/versions/${encodeURIComponent(versionId)}`,
         );
-        return true;
+        return version?.id === versionId;
       } catch (error) {
         if (error instanceof CloudflareError && error.status === 404)
           return false;
@@ -163,10 +182,21 @@ export function createCloudflare({
       }
     },
 
-    // An empty patch changes nothing, and it is not a versioned setting, so it
-    // adds no version. Only a token that can edit this Worker gets a success.
-    async patchScriptSettings(accountId: string, name: string) {
-      await call("PATCH", `${script(accountId, name)}/script-settings`, {});
+    // Writing back what Cloudflare just returned changes nothing, and these are
+    // not versioned settings, so it adds no version. Only a token that can edit
+    // this Worker gets a success. Cloudflare's reference doesn't say what a patch
+    // does to a field it leaves out, so this sends each one that has a value.
+    async rewriteScriptSettings(accountId: string, name: string) {
+      const path = `${script(accountId, name)}/script-settings`;
+      const current = await result<ScriptSettings | null>("GET", path);
+      if (!current) throw noResult();
+      const { logpush, observability, tags, tail_consumers } = current;
+      const written = await result<ScriptSettings | null>(
+        "PATCH",
+        path,
+        withoutNulls({ logpush, observability, tags, tail_consumers }),
+      );
+      if (!written) throw noResult();
     },
 
     listSecretNames: async (accountId: string, name: string) =>
@@ -204,12 +234,15 @@ export function createCloudflare({
       await call("POST", `${zonePath(zoneId)}/email/routing/dns`, {});
     },
 
-    async getCatchAll(zoneId: string): Promise<CatchAll> {
+    // Null means Cloudflare didn't say, which is not the same as having no rule.
+    async getCatchAll(zoneId: string): Promise<CatchAll | null> {
       const rule = await result<Partial<CatchAll> | null>(
         "GET",
         `${zonePath(zoneId)}/email/routing/rules/catch_all`,
       );
-      return { enabled: rule?.enabled ?? false, actions: rule?.actions ?? [] };
+      return typeof rule?.enabled === "boolean"
+        ? { enabled: rule.enabled, actions: rule.actions ?? [] }
+        : null;
     },
     async setCatchAllToWorker(zoneId: string, name: string) {
       await call("PUT", `${zonePath(zoneId)}/email/routing/rules/catch_all`, {

@@ -87,7 +87,7 @@ export function claimError(reason: ClaimFailure): SetupError {
 
 async function canEdit(api: Cloudflare, accountId: string, scriptName: string) {
   try {
-    await api.patchScriptSettings(accountId, scriptName);
+    await api.rewriteScriptSettings(accountId, scriptName);
     return true;
   } catch (error) {
     if (error instanceof CloudflareError && error.denied) return false;

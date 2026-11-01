@@ -32,6 +32,7 @@ type FakeWorker = {
   anyVersion: boolean;
   secrets: Set<string>;
   modifiedOn: string;
+  settings: Record<string, unknown>;
 };
 
 type FakeZone = {
@@ -92,7 +93,7 @@ export function createFakeCloudflare({
     workerDomains: new Map(),
   };
   const failures: Failure[] = [];
-  const calls: { method: string; path: string }[] = [];
+  const calls: { method: string; path: string; body?: unknown }[] = [];
   let echoToken = false;
 
   const ok = (result: unknown, info?: object) =>
@@ -223,11 +224,24 @@ export function createFakeCloudflare({
       ),
     ],
     [
+      "GET",
+      /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/script-settings$/,
+      needs(
+        ["workers:read", "workers:write"],
+        workerRoute((worker) => ok(worker.settings)),
+      ),
+    ],
+    [
       "PATCH",
       /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/script-settings$/,
       needs(
         "workers:write",
-        workerRoute(() => ok({})),
+        workerRoute((worker, { body }) => {
+          if (JSON.stringify(body).includes(":null"))
+            return error(400, 10014, "Settings cannot be null");
+          worker.settings = { ...worker.settings, ...body };
+          return ok(worker.settings);
+        }),
       ),
     ],
     [
@@ -438,7 +452,15 @@ export function createFakeCloudflare({
     const request = new Request(input, init);
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/client\/v4/, "");
-    calls.push({ method: request.method, path: `${path}${url.search}` });
+    const body =
+      request.method === "GET"
+        ? {}
+        : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
+    calls.push({
+      method: request.method,
+      path: `${path}${url.search}`,
+      ...(request.method === "GET" ? {} : { body }),
+    });
 
     const header = request.headers.get("authorization") ?? "";
     const tokenValue = header.replace(/^Bearer /, "");
@@ -465,13 +487,6 @@ export function createFakeCloudflare({
       if (method !== request.method) continue;
       const match = pattern.exec(path);
       if (!match) continue;
-      const body =
-        request.method === "GET"
-          ? {}
-          : ((await request.json().catch(() => ({}))) as Record<
-              string,
-              unknown
-            >);
       const response = handler({
         token,
         params: match.slice(1).map(decodeURIComponent),
@@ -508,6 +523,12 @@ export function createFakeCloudflare({
         anyVersion: versions === "any",
         secrets: new Set(),
         modifiedOn,
+        settings: {
+          logpush: false,
+          observability: { enabled: false },
+          tags: null,
+          tail_consumers: null,
+        },
       });
     },
     addZone(

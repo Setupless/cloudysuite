@@ -54,7 +54,7 @@ const STEP_TEXT: Record<StepId, { title: string; description: string }> = {
   "catch-all": {
     title: "Bring mail to CloudySuite",
     description:
-      "Sends mail for every address at your domain to CloudySuite. This replaces any catch-all rule you have now.",
+      "Sends mail for every address at your domain to CloudySuite. If a catch-all rule is already in use, we ask you first.",
   },
   "app-hostnames": {
     title: "Give your apps their addresses",
@@ -120,7 +120,7 @@ type Stage =
   | { name: "domain"; claim: Claim; zones: ZoneSummary[] }
   | { name: "steps"; claim: Claim; choice: DomainChoice }
   | { name: "admin"; claim: Claim; choice: DomainChoice; plan: DomainPlan }
-  | { name: "finished"; authUrl: string | null };
+  | { name: "finished"; authUrl: string | null; created: boolean };
 
 const STAGE_NUMBER: Record<Stage["name"], number> = {
   token: 1,
@@ -133,6 +133,8 @@ const STAGE_NUMBER: Record<Stage["name"], number> = {
 export function SetupWizard() {
   // The token lives only in this state, so closing the page forgets it.
   const [stage, setStage] = useState<Stage>({ name: "token" });
+  const onAlreadyFinished = () =>
+    setStage({ name: "finished", authUrl: null, created: false });
   return (
     <main className="min-h-dvh bg-page p-6 text-text">
       <div className="mx-auto flex w-full max-w-xl flex-col gap-6 py-6">
@@ -154,7 +156,7 @@ export function SetupWizard() {
             onClaimed={(claim, zones) =>
               setStage({ name: "domain", claim, zones })
             }
-            onFinished={() => setStage({ name: "finished", authUrl: null })}
+            onFinished={onAlreadyFinished}
           />
         )}
         {stage.name === "domain" && (
@@ -164,7 +166,7 @@ export function SetupWizard() {
             onChosen={(choice) =>
               setStage({ name: "steps", claim: stage.claim, choice })
             }
-            onFinished={() => setStage({ name: "finished", authUrl: null })}
+            onFinished={onAlreadyFinished}
           />
         )}
         {stage.name === "steps" && (
@@ -179,7 +181,7 @@ export function SetupWizard() {
                 plan,
               })
             }
-            onFinished={() => setStage({ name: "finished", authUrl: null })}
+            onFinished={onAlreadyFinished}
           />
         )}
         {stage.name === "admin" && (
@@ -187,10 +189,14 @@ export function SetupWizard() {
             claim={stage.claim}
             choice={stage.choice}
             plan={stage.plan}
-            onFinished={(authUrl) => setStage({ name: "finished", authUrl })}
+            onFinished={(authUrl, created) =>
+              setStage({ name: "finished", authUrl, created })
+            }
           />
         )}
-        {stage.name === "finished" && <FinishedStage authUrl={stage.authUrl} />}
+        {stage.name === "finished" && (
+          <FinishedStage authUrl={stage.authUrl} created={stage.created} />
+        )}
       </div>
     </main>
   );
@@ -581,6 +587,11 @@ const STATE_ICON: Record<
     className: "text-danger",
     label: "Needs you",
   },
+  "needs-confirmation": {
+    icon: IconAlertTriangle,
+    className: "text-danger",
+    label: "Needs your decision",
+  },
   failed: { icon: IconCircleX, className: "text-danger", label: "Didn't work" },
   working: {
     icon: IconLoader2,
@@ -618,6 +629,7 @@ function StepsStage({
   async function callStep(
     stepId: StepId,
     mode: StepMode,
+    confirmReplace?: string,
   ): Promise<StepResult | null> {
     setViews((current) => ({ ...current, [stepId]: { state: "working" } }));
     const outcome = await call<StepResponse>({
@@ -626,6 +638,7 @@ function StepsStage({
       choice,
       stepId,
       mode,
+      confirmReplace,
     });
     if (outcome.ok === "finished") {
       onFinished();
@@ -651,12 +664,20 @@ function StepsStage({
     setBusy(false);
   }
 
-  async function runFrom(mode: StepMode, ids: readonly StepId[]) {
+  async function runFrom(
+    mode: StepMode,
+    ids: readonly StepId[],
+    confirmed?: { stepId: StepId; current: string },
+  ) {
     setBusy(true);
     setError(null);
     for (const stepId of ids) {
       if (mode === "run" && views[stepId].state === "done") continue;
-      const result = await callStep(stepId, mode);
+      const result = await callStep(
+        stepId,
+        mode,
+        confirmed?.stepId === stepId ? confirmed.current : undefined,
+      );
       if (result?.state !== "done") break;
     }
     setBusy(false);
@@ -699,6 +720,9 @@ function StepsStage({
               retries.current = 0;
               return runFrom("check", [id]);
             }}
+            onConfirm={(current) =>
+              runFrom("run", STEP_IDS, { stepId: id, current })
+            }
           />
         ))}
       </ul>
@@ -727,11 +751,13 @@ function StepRow({
   view,
   busy,
   onCheckAgain,
+  onConfirm,
 }: {
   id: StepId;
   view: StepView;
   busy: boolean;
   onCheckAgain: () => void;
+  onConfirm: (current: string) => void;
 }) {
   const { title, description } = STEP_TEXT[id];
   const { icon: StateIcon, className, label } = STATE_ICON[view.state];
@@ -753,13 +779,30 @@ function StepRow({
           </p>
         </div>
         {view.state === "needs-action" && <GuideBox guide={view.guide} />}
+        {view.state === "needs-confirmation" && (
+          <div className="flex flex-col gap-2 rounded bg-sidebar p-3 text-sm">
+            <p>{view.current}</p>
+            <p>
+              If you replace this rule, that stops and this mail comes to
+              CloudySuite instead. To keep the rule, stop here. It stays as it
+              is until you choose.
+            </p>
+            <div>
+              <Button disabled={busy} onClick={() => onConfirm(view.current)}>
+                Replace this rule
+              </Button>
+            </div>
+          </div>
+        )}
         {view.state === "failed" && (
           <p role="alert" className="text-sm text-danger">
             {view.message} Your earlier steps are safe, so you can try this one
             again.
           </p>
         )}
-        {(view.state === "needs-action" || view.state === "failed") && (
+        {(view.state === "needs-action" ||
+          view.state === "needs-confirmation" ||
+          view.state === "failed") && (
           <div>
             <Button
               variant="secondary"
@@ -785,7 +828,7 @@ function AdminStage({
   claim: Claim;
   choice: DomainChoice;
   plan: DomainPlan;
-  onFinished: (authUrl: string | null) => void;
+  onFinished: (authUrl: string | null, created: boolean) => void;
 }) {
   const [error, setError] = useState<SetupError | null>(null);
   const [pending, setPending] = useState(false);
@@ -809,9 +852,9 @@ function AdminStage({
     });
     setPending(false);
     if (result.ok === "finished")
-      return onFinished(`https://auth.${plan.appDomain}/`);
+      return onFinished(`https://auth.${plan.appDomain}/`, false);
     if (!result.ok) return setError(result.error);
-    onFinished(result.authUrl);
+    onFinished(result.authUrl, true);
   }
 
   return (
@@ -872,13 +915,19 @@ function AdminStage({
   );
 }
 
-function FinishedStage({ authUrl }: { authUrl: string | null }) {
+function FinishedStage({
+  authUrl,
+  created,
+}: {
+  authUrl: string | null;
+  created: boolean;
+}) {
   return (
     <Card>
       <Heading title="CloudySuite is ready">
-        {authUrl
+        {created
           ? "Sign in with the account you just made. A new address can take a few minutes to start working, so if the page doesn't open, wait and try again."
-          : "Setup is already finished. Sign in at your Auth address."}
+          : "Setup was already finished, so this didn't create an account. If you don't have one yet, ask the person who finished setup to invite you."}
       </Heading>
       {authUrl && (
         <a

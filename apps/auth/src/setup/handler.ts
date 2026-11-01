@@ -20,13 +20,7 @@ import type {
   StepResult,
 } from "./model";
 import { scanZone } from "./scan";
-import {
-  appHostnames,
-  planDomains,
-  runStep,
-  SETUP_STEPS,
-  type StepContext,
-} from "./steps";
+import { planDomains, runStep, SETUP_STEPS, type StepContext } from "./steps";
 import { parseSetupRequest } from "./validate";
 
 export type SetupDependencies = {
@@ -74,11 +68,34 @@ const BAD_REQUEST: SetupError = {
     "Something in that request wasn't right. Reload this page and try again.",
 };
 
+const ALREADY_FINISHED: SetupError = {
+  code: "already-finished",
+  message:
+    "Setup has already been finished, so nothing changed. If you don't have an account yet, ask the person who finished setup to invite you.",
+};
+
+// Until the claim is proven the caller may be anyone, and Cloudflare's text can
+// describe this Worker, so it stays out of the response.
+async function beforeProof<Result>(work: () => Promise<Result>) {
+  try {
+    return await work();
+  } catch (error) {
+    if (!(error instanceof CloudflareError)) throw error;
+    throw new SetupFailure({
+      code: "cloudflare",
+      message:
+        "We couldn't check your token with Cloudflare just now. Wait a moment and try again.",
+    });
+  }
+}
+
 async function claim(
   token: string,
   deps: SetupDependencies,
 ): Promise<ClaimResponse> {
-  const outcome = await claimWorker(client(token, deps), deps.versionId);
+  const outcome = await beforeProof(() =>
+    claimWorker(client(token, deps), deps.versionId),
+  );
   if (!outcome.ok) throw new SetupFailure(claimError(outcome.reason));
   return {
     worker: outcome.worker,
@@ -98,7 +115,9 @@ async function proven(
   deps: SetupDependencies,
 ): Promise<Cloudflare> {
   const api = client(request.claim.token, deps);
-  const reason = await proveClaim(api, deps.versionId, request.claim);
+  const reason = await beforeProof(() =>
+    proveClaim(api, deps.versionId, request.claim),
+  );
   if (reason) throw new SetupFailure(claimError(reason));
   return api;
 }
@@ -160,11 +179,15 @@ async function scan(
       ? null
       : resumedDomain.slice(0, -(zone.name.length + 1))
     : undefined;
-  const ownHosts = new Set([
-    ...own.map((domain) => domain.hostname),
-    ...appHostnames(zone.name),
-  ]);
-  return { scan: scanZone(zone.name, records, ownHosts, resumedLabel) };
+  return {
+    scan: scanZone(
+      zone.name,
+      records,
+      attached,
+      request.claim.scriptName,
+      resumedLabel,
+    ),
+  };
 }
 
 async function step(
@@ -176,7 +199,12 @@ async function step(
   const definition = SETUP_STEPS.find(({ id }) => id === request.stepId);
   if (!definition) throw new SetupFailure(BAD_REQUEST);
   return {
-    result: await runStep(definition, context, request.mode),
+    result: await runStep(
+      definition,
+      context,
+      request.mode,
+      request.confirmReplace,
+    ),
     plan: context.plan,
   };
 }
@@ -203,7 +231,7 @@ async function finish(
 
   const { plan } = context;
   const origins = appOrigins(plan.appDomain, http);
-  await createFirstAdmin({
+  const created = await createFirstAdmin({
     database: deps.database,
     auth: createAuth({
       database: deps.database,
@@ -214,6 +242,7 @@ async function finish(
     plan,
     admin: request.admin,
   });
+  if (!created) throw new SetupFailure(ALREADY_FINISHED);
   return { authUrl: `${origins.auth}/` };
 }
 
@@ -251,12 +280,7 @@ export async function handleSetupRequest(
 ): Promise<Response> {
   try {
     const { primaryDomain } = await readSettings(deps.database);
-    if (primaryDomain !== null) {
-      return failure({
-        code: "already-finished",
-        message: "Setup has already been finished.",
-      });
-    }
+    if (primaryDomain !== null) return failure(ALREADY_FINISHED);
 
     const parsed = parseSetupRequest(await http.json().catch(() => null));
     if (!parsed) return failure(BAD_REQUEST);

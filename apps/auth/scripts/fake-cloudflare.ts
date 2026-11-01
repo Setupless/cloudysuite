@@ -23,6 +23,15 @@ fake.addWorker(
   "2020-01-01T00:00:00Z",
 );
 fake.addWorker(OWNER, "cloudysuite", "any", "2026-11-01T00:00:00Z");
+const running = fake.state.accounts.get(OWNER)?.workers.get("cloudysuite");
+if (running) {
+  running.settings = {
+    logpush: true,
+    observability: { enabled: true, head_sampling_rate: 0.5 },
+    tags: ["team-a"],
+    tail_consumers: [{ service: "log-reader" }],
+  };
+}
 fake.addZone(OWNER, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "quiet.localhost");
 fake.addZone(OWNER, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "busy.localhost", [
   { type: "CNAME", name: "www.busy.localhost", content: "hosting.example.net" },
@@ -59,6 +68,13 @@ const server = Bun.serve({
       const zone = fake.state.zones.get("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
       if (zone) zone.dns = zone.dns.filter((record) => record.type !== "MX");
       return new Response("deleted\n");
+    }
+    // Shows what the proof wrote, so a manual run can see it changed nothing.
+    if (pathname === "/__settings") {
+      return Response.json({
+        current: running?.settings,
+        patches: fake.calls.filter(({ method }) => method === "PATCH"),
+      });
     }
     return fake.fetch(request);
   },

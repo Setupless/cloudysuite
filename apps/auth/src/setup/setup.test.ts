@@ -5,6 +5,7 @@ import { createAuth } from "../auth";
 import { appOrigins } from "../origins";
 import { CLOUDFLARE_API, cloudflareApiBase } from "./cloudflare";
 import { createFakeCloudflare } from "./fake-cloudflare";
+import { createFirstAdmin } from "./first-admin";
 import { handleSetupRequest, type SetupDependencies } from "./handler";
 import { STEP_IDS, type StepId, type StepResult } from "./model";
 import { scanZone } from "./scan";
@@ -405,7 +406,7 @@ test("finish refuses while a step is unfinished, and stores nothing", async () =
 
 const SECRET = "test-secret-test-secret-test-secret-0123";
 
-async function signIn(appDomain: string) {
+async function signIn(appDomain: string, email = admin.email) {
   const auth = createAuth({
     database: d1,
     secret: SECRET,
@@ -419,7 +420,7 @@ async function signIn(appDomain: string) {
         "content-type": "application/json",
         origin: `https://auth.${appDomain}`,
       },
-      body: JSON.stringify({ email: admin.email, password: admin.password }),
+      body: JSON.stringify({ email, password: admin.password }),
     }),
   );
 }
@@ -491,20 +492,16 @@ test("with a parent domain, apps sit under it while email stays on the apex", as
   expect(cookie).toContain("Domain=suite.example.com");
 });
 
-test("a finish that stops before its commit leaves setup open, and a retry starts clean", async () => {
+test("a finish that stops before its commit stores nothing, and a retry works", async () => {
   await runEverything({ secret: SECRET });
   const failing = {
     ...d1,
     prepare: d1.prepare,
-    // Reading settings and clearing leftovers come first. The third batch is the commit.
-    batch: (() => {
-      let calls = 0;
-      return async (statements: never[]) => {
-        calls++;
-        if (calls === 3) throw new Error("D1 is unavailable");
-        return d1.batch(statements);
-      };
-    })(),
+    // Reading settings is a batch of two. Only the commit is larger.
+    batch: async (statements: never[]) => {
+      if (statements.length > 2) throw new Error("D1 is unavailable");
+      return d1.batch(statements);
+    },
   } as unknown as D1Database;
 
   const crashed = await post(
@@ -517,14 +514,8 @@ test("a finish that stops before its commit leaves setup open, and a retry start
     { secret: SECRET, database: failing },
   );
   expect(crashed.status).toBe(500);
-  expect(count("domains")).toBe(0);
-  expect(sqlite.query("SELECT email FROM user").all()).toEqual([
-    { email: "typo@other.example.net" },
-  ]);
-
-  expect((await post({ action: "claim", token: OWNER_TOKEN })).status).toBe(
-    200,
-  );
+  for (const table of ["domains", "user", "account", "mailboxes"])
+    expect(count(table)).toBe(0);
 
   const retried = await post(
     { action: "finish", claim, choice, admin },
@@ -534,8 +525,119 @@ test("a finish that stops before its commit leaves setup open, and a retry start
   expect(sqlite.query("SELECT email FROM user").all()).toEqual([
     { email: admin.email },
   ]);
-  expect(count("mailboxes")).toBe(1);
   expect((await signIn("example.com")).status).toBe(200);
+});
+
+function expectOneOfEverything() {
+  for (const table of [
+    "domains",
+    "user",
+    "account",
+    "mailboxes",
+    "addresses",
+    "mailbox_access",
+  ])
+    expect(`${table}: ${count(table)}`).toBe(`${table}: 1`);
+}
+
+test.each([
+  ["different emails", (i: number) => `person${i}@other.example.net`],
+  ["the same email", () => admin.email],
+])("parallel finishes with %s leave one admin", async (_name, email) => {
+  await runEverything({ secret: SECRET });
+  const admins = Array.from({ length: 5 }, (_, i) => ({
+    ...admin,
+    email: email(i),
+    mailboxLocalPart: `person${i}`,
+  }));
+  const results = await Promise.all(
+    admins.map((person) =>
+      post(
+        { action: "finish", claim, choice, admin: person },
+        { secret: SECRET },
+      ),
+    ),
+  );
+
+  expect(results.filter(({ status }) => status === 200).length).toBe(1);
+  for (const { status, body } of results) {
+    if (status === 200) continue;
+    expect(status).toBe(409);
+    expect(body.error.code).toBe("already-finished");
+    expect(body.error.message).toContain("nothing changed");
+  }
+  expectOneOfEverything();
+  expect(sqlite.query("SELECT role FROM user").all()).toEqual([
+    { role: "admin" },
+  ]);
+
+  const stored = sqlite.query("SELECT email FROM user").get() as {
+    email: string;
+  };
+  expect((await signIn("example.com", stored.email)).status).toBe(200);
+  const loser = admins.find((person) => person.email !== stored.email);
+  if (loser)
+    expect((await signIn("example.com", loser.email)).status).toBe(401);
+});
+
+test("creating the first admin after setup finished changes nothing", async () => {
+  await runEverything({ secret: SECRET });
+  await post({ action: "finish", claim, choice, admin }, { secret: SECRET });
+  const tables = [
+    "domains",
+    "user",
+    "account",
+    "mailboxes",
+    "addresses",
+    "mailbox_access",
+  ];
+  const dump = () =>
+    tables.map((table) => sqlite.query(`SELECT * FROM ${table}`).all());
+  const before = dump();
+
+  const auth = createAuth({
+    database: d1,
+    secret: SECRET,
+    primaryDomain: "example.com",
+    origins: appOrigins(
+      "example.com",
+      new Request("https://auth.example.com/"),
+    ),
+  });
+  for (const appDomain of ["example.com", "suite.example.com", "other.test"]) {
+    const created = await createFirstAdmin({
+      database: d1,
+      auth,
+      plan: {
+        zoneId: ZONE,
+        zoneName: "example.com",
+        emailDomain: "example.com",
+        appDomain,
+      },
+      admin: {
+        ...admin,
+        email: "eve@other.example.net",
+        mailboxLocalPart: "eve",
+      },
+    });
+    expect(created).toBe(false);
+  }
+  expect(dump()).toEqual(before);
+});
+
+test("an address sign-in would refuse is refused at setup", async () => {
+  await runEverything({ secret: SECRET });
+  const { status } = await post(
+    {
+      action: "finish",
+      claim,
+      choice,
+      admin: { ...admin, email: "a!b@other.example.net" },
+    },
+    { secret: SECRET },
+  );
+  expect(status).toBe(400);
+  expect(count("user")).toBe(0);
 });
 
 test("once finished, nobody can run any part of setup again, even with the right token", async () => {
@@ -717,7 +819,9 @@ test("the token never reaches the database, a response, or the log", async () =>
 });
 
 test("the DNS scan recommends the apex only when no other site is hosted there", () => {
-  expect(scanZone("example.com", [], new Set()).recommendedLabel).toBeNull();
+  expect(
+    scanZone("example.com", [], [], "cloudysuite").recommendedLabel,
+  ).toBeNull();
 
   const quiet = scanZone(
     "example.com",
@@ -730,7 +834,8 @@ test("the DNS scan recommends the apex only when no other site is hosted there",
       },
       { type: "AAAA", name: "auth.example.com", content: "100::" },
     ],
-    new Set(["auth.example.com"]),
+    [{ hostname: "auth.example.com", service: "cloudysuite" }],
+    "cloudysuite",
   );
   expect(quiet.hostedHosts).toEqual([]);
   expect(quiet.recommendedLabel).toBeNull();
@@ -748,7 +853,8 @@ test("the DNS scan recommends the apex only when no other site is hosted there",
       { type: "MX", name: "example.com", content: "mx.oldmail.example.net." },
       { type: "MX", name: "example.com", content: "route1.mx.cloudflare.net" },
     ],
-    new Set(),
+    [],
+    "cloudysuite",
   );
   expect(busy.hostedHosts).toEqual([
     "example.com",
@@ -809,3 +915,273 @@ test("only a loopback address can replace Cloudflare's API", () => {
     "http://127.0.0.1:8799/client/v4",
   );
 });
+
+const FORWARD = {
+  enabled: true,
+  actions: [{ type: "forward", value: ["ada@old.example"] }],
+};
+const OTHER_WORKER = {
+  enabled: true,
+  actions: [{ type: "worker", value: ["old-mail"] }],
+};
+
+const stepBody = (extra: object = {}) => ({
+  action: "step",
+  claim,
+  choice,
+  stepId: "catch-all",
+  mode: "run",
+  ...extra,
+});
+
+const catchAll = () => fake.state.zones.get(ZONE)?.catchAll;
+
+test.each([
+  ["a forward", FORWARD, "is forwarded to ada@old.example"],
+  ["another Worker", OTHER_WORKER, "goes to another Worker, old-mail"],
+  [
+    "a delete rule",
+    { enabled: true, actions: [{ type: "drop" }] },
+    "is deleted",
+  ],
+])(
+  "a catch-all that is %s stays until the person confirms it",
+  async (_name, rule, words) => {
+    const zone = fake.state.zones.get(ZONE);
+    if (zone) zone.catchAll = rule;
+
+    const checked = await runStep("catch-all", "check");
+    expect(checked.state).toBe("needs-confirmation");
+    if (checked.state !== "needs-confirmation") throw new Error(checked.state);
+    expect(checked.current).toContain(words);
+
+    const refused = [
+      stepBody(),
+      stepBody({ confirmReplace: "yes" }),
+      stepBody({ mode: "check", confirmReplace: checked.current }),
+    ];
+    for (const body of refused) {
+      const { status, body: response } = await post(body);
+      expect(status).toBe(200);
+      expect(response.result).toEqual(checked);
+    }
+    expect(catchAll()).toEqual(rule);
+    expect(fake.writes()).toEqual([]);
+
+    const { body } = await post(stepBody({ confirmReplace: checked.current }));
+    expect(body.result.state).toBe("done");
+    expect(catchAll()).toEqual({
+      enabled: true,
+      actions: [{ type: "worker", value: ["cloudysuite"] }],
+    });
+  },
+);
+
+test("a confirmation does not cover a rule that changed since the person saw it", async () => {
+  const zone = fake.state.zones.get(ZONE);
+  if (zone) zone.catchAll = FORWARD;
+  const seen = await runStep("catch-all", "check");
+  if (seen.state !== "needs-confirmation") throw new Error(seen.state);
+
+  if (zone) zone.catchAll = OTHER_WORKER;
+  const { body } = await post(stepBody({ confirmReplace: seen.current }));
+  expect(body.result.state).toBe("needs-confirmation");
+  expect(body.result.current).toContain("old-mail");
+  expect(catchAll()).toEqual(OTHER_WORKER);
+});
+
+test("finish refuses while a catch-all waits for confirmation", async () => {
+  await runEverything({ secret: SECRET });
+  const zone = fake.state.zones.get(ZONE);
+  if (zone) zone.catchAll = FORWARD;
+  const { status, body } = await post(
+    { action: "finish", claim, choice, admin },
+    { secret: SECRET },
+  );
+  expect(status).toBe(409);
+  expect(body.error.code).toBe("steps-unfinished");
+  expect(count("user")).toBe(0);
+});
+
+test("a catch-all Cloudflare won't describe is left alone", async () => {
+  const original = fake.fetch;
+  deps.fetch = async (url, init) =>
+    init.method === "GET" && url.endsWith("catch_all")
+      ? Response.json({ success: true, result: null })
+      : original(url, init);
+  const result = await runStep("catch-all");
+  expect(result.state).toBe("needs-action");
+  expect(fake.writes()).toEqual([]);
+});
+
+test("a confirmation that isn't text is a bad request", async () => {
+  const { status } = await post(stepBody({ confirmReplace: true }));
+  expect(status).toBe(400);
+  expect(fake.calls).toEqual([]);
+});
+
+test("an existing site on an app name counts as hosted, and is not overwritten", async () => {
+  const record = { type: "A", name: "mail.example.com", content: "192.0.2.1" };
+  fake.state.zones.get(ZONE)?.dns.push(record);
+
+  const { body } = await post({ action: "scan", claim, zoneId: ZONE });
+  expect(body.scan.hostedHosts).toEqual(["mail.example.com"]);
+  expect(body.scan.recommendedLabel).toBe("suite");
+
+  const result = await runStep("app-hostnames");
+  expect(result.state).toBe("needs-action");
+  if (result.state === "needs-action")
+    expect(result.guide.action).toContain("mail.example.com");
+  expect(fake.writes()).toEqual([]);
+  expect(fake.state.zones.get(ZONE)?.dns).toEqual([record]);
+});
+
+test("an app name on another Worker counts as hosted", async () => {
+  fake.state.workerDomains.set(OWNER, [
+    {
+      hostname: "auth.example.com",
+      service: "someone-else",
+      zone_id: ZONE,
+    } as never,
+  ]);
+  const { body } = await post({ action: "scan", claim, zoneId: ZONE });
+  expect(body.scan.hostedHosts).toEqual(["auth.example.com"]);
+  expect(body.scan.recommendedLabel).toBe("suite");
+});
+
+test("a repeat run's own app names don't count as hosted", async () => {
+  await runStep("app-hostnames");
+  const zone = fake.state.zones.get(ZONE);
+  for (const name of ["auth.example.com", "mail.example.com"])
+    zone?.dns.push({ type: "AAAA", name, content: "100::" });
+
+  const { body } = await post({ action: "scan", claim, zoneId: ZONE });
+  expect(body.scan.hostedHosts).toEqual([]);
+  expect(body.scan.recommendedLabel).toBeNull();
+  expect(body.scan.resumedLabel).toBeNull();
+});
+
+test.each([
+  ["no result", null],
+  ["another version", { id: "some-other-version" }],
+  ["a result with no id", {}],
+])("a version lookup with %s proves nothing", async (_name, result) => {
+  const original = fake.fetch;
+  deps.fetch = async (url, init) =>
+    url.includes("/versions/")
+      ? Response.json({ success: true, result })
+      : original(url, init);
+  const claimed = await post({ action: "claim", token: OWNER_TOKEN });
+  expect(claimed.status).toBe(403);
+  const stepped = await post(stepBody());
+  expect(stepped.status).toBe(403);
+  expect(fake.writes()).toEqual([]);
+});
+
+test("a zone lookup with no result stops the step", async () => {
+  const original = fake.fetch;
+  deps.fetch = async (url, init) =>
+    url.endsWith(`/zones/${ZONE}`)
+      ? Response.json({ success: true, result: null })
+      : original(url, init);
+  const spy = spyOn(console, "error").mockImplementation(() => {});
+  const { status } = await post(stepBody());
+  spy.mockRestore();
+  expect(status).toBe(500);
+  expect(fake.writes()).toEqual([]);
+});
+
+test("Cloudflare's text reaches only a proven owner", async () => {
+  const secretText = `script cloudysuite at version ${VERSION}`;
+  for (const path of [/\/versions\//, /script-settings$/]) {
+    for (const body of [{ action: "claim", token: OWNER_TOKEN }, stepBody()]) {
+      fake.failOnce({ method: "GET", path, status: 500, message: secretText });
+      const response = await post(body);
+      expect(response.status).toBe(502);
+      expect(JSON.stringify(response.body)).not.toContain(VERSION);
+      expect(response.body.error.message).toContain(
+        "couldn't check your token",
+      );
+    }
+  }
+
+  fake.failOnce({
+    method: "GET",
+    path: /email\/routing\/rules\/catch_all$/,
+    status: 500,
+    message: "the rule store is down",
+  });
+  expect(await runStep("catch-all")).toEqual({
+    state: "failed",
+    message: "Cloudflare said: the rule store is down",
+  });
+});
+
+test("the proof writes back the Worker's settings exactly as they were", async () => {
+  const worker = fake.state.accounts.get(OWNER)?.workers.get("cloudysuite");
+  if (!worker) throw new Error("no worker");
+  const settings = {
+    logpush: true,
+    observability: {
+      enabled: true,
+      head_sampling_rate: 0.5,
+      traces: { enabled: true },
+    },
+    tags: ["team-a"],
+    tail_consumers: [{ service: "log-reader" }],
+  };
+  worker.settings = {
+    ...settings,
+    observability: {
+      ...settings.observability,
+      traces: { enabled: true, propagation_policy: null },
+    },
+  };
+
+  expect((await post({ action: "claim", token: OWNER_TOKEN })).status).toBe(
+    200,
+  );
+  expect((await post(stepBody({ mode: "check" }))).status).toBe(200);
+
+  const patches = fake.calls.filter((call) => call.method === "PATCH");
+  expect(patches.length).toBe(2);
+  for (const patch of patches) expect(patch.body).toEqual(settings);
+  const reads = fake.calls.filter(
+    (call) => call.method === "GET" && call.path.endsWith("/script-settings"),
+  );
+  expect(reads.length).toBe(2);
+  expect(worker.settings).toMatchObject(settings);
+});
+
+test("default settings with nothing set write back cleanly", async () => {
+  expect((await post({ action: "claim", token: OWNER_TOKEN })).status).toBe(
+    200,
+  );
+  const [patch] = fake.calls.filter((call) => call.method === "PATCH");
+  expect(patch?.body).toEqual({
+    logpush: false,
+    observability: { enabled: false },
+  });
+});
+
+test.each([
+  ["reading", "GET"],
+  ["writing", "PATCH"],
+])(
+  "settings with no result when %s prove nothing, and nothing is written blind",
+  async (_name, method) => {
+    const original = fake.fetch;
+    deps.fetch = async (url, init) =>
+      url.endsWith("/script-settings") && init.method === method
+        ? Response.json({ success: true, result: null })
+        : original(url, init);
+    const { status, body } = await post({
+      action: "claim",
+      token: OWNER_TOKEN,
+    });
+    expect(status).toBe(502);
+    expect(body.error.message).toContain("couldn't check your token");
+    if (method === "GET")
+      expect(fake.calls.filter((call) => call.method === "PATCH")).toEqual([]);
+  },
+);

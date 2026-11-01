@@ -15,9 +15,12 @@ export type ManualGuide = {
 
 // "missing" means the wizard can apply the change itself. "needs-action" means
 // only the person can, and only another check can move it on.
+// "needs-confirmation" means applying it would replace something in use, so the
+// wizard waits until the request repeats `current`, the wording the person saw.
 export type StepResult =
   | { state: "done"; detail: string }
   | { state: "missing"; detail: string }
+  | { state: "needs-confirmation"; current: string }
   | { state: "needs-action"; guide: ManualGuide; retry?: boolean }
   | { state: "failed"; message: string };
 
@@ -74,6 +77,7 @@ export type SetupRequest =
       choice: DomainChoice;
       stepId: StepId;
       mode: StepMode;
+      confirmReplace?: string;
     }
   | {
       action: "finish";

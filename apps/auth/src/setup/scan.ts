@@ -1,4 +1,4 @@
-import type { DnsRecord } from "./cloudflare";
+import type { DnsRecord, WorkerDomain } from "./cloudflare";
 import type { ZoneScan } from "./model";
 
 const WEB_RECORDS = new Set(["A", "AAAA", "CNAME"]);
@@ -35,17 +35,26 @@ export function externalMxHosts(
 export function scanZone(
   zoneName: string,
   records: DnsRecord[],
-  ownHosts: ReadonlySet<string>,
+  attached: WorkerDomain[],
+  scriptName: string,
   resumedLabel?: string | null,
 ): ZoneScan {
+  // Only a custom domain on this Worker is ours. Any other name is someone's site.
+  const isOurs = (domain: WorkerDomain) => domain.service === scriptName;
+  const ownHosts = new Set(
+    attached.filter(isOurs).map((domain) => bare(domain.hostname)),
+  );
   const hostedHosts = [
-    ...new Set(
-      records
+    ...new Set([
+      ...records
         .filter((record) => WEB_RECORDS.has(record.type))
         .map((record) => fullName(record.name, zoneName))
         // Names starting with `_` are verification records, not websites.
         .filter((host) => !host.startsWith("_") && !ownHosts.has(host)),
-    ),
+      ...attached
+        .filter((domain) => !isOurs(domain))
+        .map((domain) => bare(domain.hostname)),
+    ]),
   ].sort();
 
   const isFree = (label: string) => {

@@ -60,8 +60,8 @@ export function createAuth({
       provider: "sqlite",
       schema,
     }),
-    // Accounts come from the setup wizard and invites, through
-    // auth.api.createUser on the server, which this setting does not block.
+    // Accounts come from invites, through auth.api.createUser on the server,
+    // which this setting does not block, and from the setup wizard's first admin.
     emailAndPassword: { enabled: true, disableSignUp: true },
     session: { cookieCache: { enabled: false } },
     // The default store is per isolate and the default switch reads NODE_ENV,
