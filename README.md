@@ -254,7 +254,7 @@ A proxy that is already running without wildcard routing returns a portless 404 
 
 To try the setup wizard without a Cloudflare account, use the fake API in `apps/auth/scripts/fake-cloudflare.ts`:
 
-1. Remove `.wrangler/state`, then write `CLOUDYSUITE_LOCAL_CLOUDFLARE_API=http://localhost:8799/client/v4` as the only line in `.dev.vars`.
+1. Remove `.wrangler/state`, then write `CLOUDYSUITE_LOCAL_CLOUDFLARE_API=http://127.0.0.1:8799/client/v4` as the only line in `.dev.vars`.
 2. Run `bun apps/auth/scripts/fake-cloudflare.ts`, then `bun run build`, `bun run db:migrate:local`, and `bunx wrangler dev`.
 3. Open `http://localhost:8787` and paste `owner-token-owner-token-owner-token`. The script also has a stranger's token and a read-only token.
 4. When the wizard waits for its new secret, restart `wrangler dev`. A real Worker restarts by itself.

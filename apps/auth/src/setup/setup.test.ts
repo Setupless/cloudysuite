@@ -141,6 +141,17 @@ test("a read-only token for the right account cannot claim or finish", async () 
   expect(count("user")).toBe(0);
 });
 
+test("a success response without Cloudflare's confirmation proves nothing", async () => {
+  const original = fake.fetch;
+  deps.fetch = async (url, init) =>
+    url.endsWith("/script-settings")
+      ? new Response("", { status: 200 })
+      : original(url, init);
+  const { status } = await post({ action: "claim", token: OWNER_TOKEN });
+  expect(status).toBe(502);
+  expect(count("user")).toBe(0);
+});
+
 test("an unknown running version fails closed", async () => {
   const { status, body } = await post(
     { action: "claim", token: OWNER_TOKEN },
@@ -351,6 +362,20 @@ test("the sending step adds only missing records, and leaves an existing SPF for
   expect(dmarc?.map((record) => record.content)).toEqual([
     "v=DMARC1; p=reject",
   ]);
+});
+
+test("an SPF record merged by hand passes the sending check", async () => {
+  const zone = fake.state.zones.get(ZONE);
+  const spf = {
+    type: "TXT",
+    name: "cf-bounce.example.com",
+    content: "v=spf1 include:other ~all",
+  };
+  zone?.dns.push(spf);
+  expect((await runStep("email-sending")).state).toBe("needs-action");
+
+  spf.content = '"v=spf1 include:other include:_spf.mx.cloudflare.net ~all"';
+  expect((await runStep("email-sending", "check")).state).toBe("done");
 });
 
 test("the secret is set when missing and then never replaced", async () => {

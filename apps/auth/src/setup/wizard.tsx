@@ -101,7 +101,7 @@ async function call<Body>(request: SetupRequest): Promise<CallOutcome<Body>> {
   const body = (await response
     .json()
     .catch(() => null)) as SetupResult<Body> | null;
-  if (!body) {
+  if (!body || typeof body.ok !== "boolean" || (!body.ok && !body.error)) {
     return {
       ok: false,
       error: {
@@ -409,8 +409,10 @@ function DomainStage({
   const [label, setLabel] = useState("suite");
   const [error, setError] = useState<SetupError | null>(null);
   const [pending, setPending] = useState(false);
+  const latestZone = useRef<string | null>(null);
 
   async function chooseZone(next: ZoneSummary) {
+    latestZone.current = next.id;
     setZone(next);
     setScan(null);
     setError(null);
@@ -420,6 +422,8 @@ function DomainStage({
       claim,
       zoneId: next.id,
     });
+    // The person may have picked another domain while this one was loading.
+    if (latestZone.current !== next.id) return;
     setPending(false);
     if (result.ok === "finished") return onFinished();
     if (!result.ok) return setError(result.error);

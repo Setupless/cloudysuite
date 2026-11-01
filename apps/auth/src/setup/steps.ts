@@ -72,6 +72,18 @@ function isPolicy(content: string, prefix: "v=dmarc1" | "v=spf1") {
   return unquote(content).toLowerCase().startsWith(prefix);
 }
 
+const spfTerms = (content: string) =>
+  unquote(content)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term !== "v=spf1" && !/^[-~?+]?all$/.test(term));
+
+// A merged record keeps its own terms as well as the ones Cloudflare needs.
+function spfCovers(existing: string, expected: string) {
+  const terms = spfTerms(existing);
+  return spfTerms(expected).every((term) => terms.includes(term));
+}
+
 // A domain may already publish DMARC, and that stays. It may also publish SPF,
 // and a second SPF record would break mail, so only a person can merge it.
 function sendingDnsGaps(
@@ -98,7 +110,12 @@ function sendingDnsGaps(
       isPolicy(record.content, "v=spf1") &&
       sameName.some((other) => isPolicy(other.content, "v=spf1"))
     ) {
-      conflicts.push(record);
+      const merged = sameName.some(
+        (other) =>
+          isPolicy(other.content, "v=spf1") &&
+          spfCovers(other.content, record.content),
+      );
+      if (!merged) conflicts.push(record);
       continue;
     }
     creatable.push({ ...record, name });

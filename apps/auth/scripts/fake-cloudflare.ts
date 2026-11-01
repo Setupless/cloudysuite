@@ -50,6 +50,7 @@ fake.addZone(
 fake.addToken("stranger-token-stranger-token-stranger", STRANGER);
 
 const server = Bun.serve({
+  hostname: "127.0.0.1",
   port: 8799,
   fetch(request) {
     const { pathname } = new URL(request.url);
@@ -62,4 +63,4 @@ const server = Bun.serve({
     return fake.fetch(request);
   },
 });
-console.log(`Fake Cloudflare API on http://localhost:${server.port}/client/v4`);
+console.log(`Fake Cloudflare API on http://127.0.0.1:${server.port}/client/v4`);

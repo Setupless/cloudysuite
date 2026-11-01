@@ -100,7 +100,8 @@ export function createCloudflare({
     const envelope = (await response
       .json()
       .catch(() => ({}))) as Envelope<Result>;
-    if (response.ok && envelope.success !== false) return envelope;
+    // Anything less than an explicit success must not count as proof.
+    if (response.ok && envelope.success === true) return envelope;
     const first = envelope.errors?.[0];
     throw new CloudflareError(
       response.status,
