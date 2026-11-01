@@ -17,6 +17,7 @@ const ZONE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const VERSION = "aaaaaaaa-0000-4000-8000-000000000001";
 const OWNER_TOKEN = "owner-token-owner-token-owner-token";
 const READ_TOKEN = "read-only-token-read-only-token";
+const NO_WORKERS_TOKEN = "no-workers-token-no-workers-token";
 const STRANGER_TOKEN = "stranger-token-stranger-token-stranger";
 const admin = {
   name: "Ada Admin",
@@ -45,6 +46,7 @@ beforeEach(() => {
   fake.addZone(OWNER, ZONE, "example.com");
   fake.addToken(OWNER_TOKEN, OWNER);
   fake.addToken(READ_TOKEN, OWNER, ["workers:read", "zone:read"]);
+  fake.addToken(NO_WORKERS_TOKEN, OWNER, ["zone:read", "dns:write"]);
   fake.addAccount(STRANGER, "Stranger");
   fake.addWorker(STRANGER, "theirs", ["their-version"]);
   fake.addZone(
@@ -110,6 +112,31 @@ test("a stranger's token for their own account cannot claim", async () => {
   expect(status).toBe(403);
   expect(body.error.code).toBe("claim-failed");
   expect(body.error.message).toContain("different Cloudflare account");
+});
+
+test("a token that can see no Workers is told which permission it lacks", async () => {
+  const { status, body } = await post({
+    action: "claim",
+    token: NO_WORKERS_TOKEN,
+  });
+  expect(status).toBe(403);
+  expect(body.error.message).not.toContain("different Cloudflare account");
+  expect(body.error.guide.action).toContain("Workers Scripts: Edit");
+  expect(body.error.guide.action).toContain("account");
+  expect(JSON.stringify(body)).not.toContain("cloudysuite");
+  expect(JSON.stringify(body)).not.toContain(OWNER);
+});
+
+test("a stranger with no Workers of their own gets the same answer, and nothing about this one", async () => {
+  fake.state.accounts.get(STRANGER)?.workers.clear();
+  const { status, body } = await post({
+    action: "claim",
+    token: STRANGER_TOKEN,
+  });
+  expect(status).toBe(403);
+  expect(body.error.guide.action).toContain("Workers Scripts: Edit");
+  expect(JSON.stringify(body)).not.toContain("cloudysuite");
+  expect(JSON.stringify(body)).not.toContain(OWNER);
 });
 
 test("a stranger cannot get through by naming their own Worker, or ours", async () => {
@@ -337,8 +364,157 @@ test("a denied step explains the permission, and does not call itself failed", a
   );
   const result = await runStep("catch-all");
   expect(result.state).toBe("needs-action");
-  if (result.state === "needs-action")
+  if (result.state === "needs-action") {
     expect(result.guide.action).toContain("isn't allowed");
+    expect(result.guide.action).toContain("Email Routing Rules: Edit");
+  }
+});
+
+test.each([
+  ["email-routing", "Zone Settings: Edit"],
+  ["email-sending", "Email Sending: Edit"],
+  ["catch-all", "Email Routing Rules: Edit"],
+  ["app-hostnames", "Workers Scripts: Edit"],
+  ["auth-secret", "Workers Scripts: Edit"],
+] as const)(
+  "an authentication error on %s names %s, whatever the status",
+  async (stepId, permission) => {
+    const original = fake.fetch;
+    let intercepted = false;
+    deps.fetch = async (url, init) => {
+      const proof = /\/(script-settings|versions\/[^/]+)$|\/zones\/[^/]+$/.test(
+        url,
+      );
+      if (proof || intercepted) return original(url, init);
+      intercepted = true;
+      return Response.json(
+        {
+          success: false,
+          errors: [{ code: 10000, message: "Authentication error" }],
+        },
+        { status: 400 },
+      );
+    };
+    const result = await runStep(stepId);
+    expect(result.state).toBe("needs-action");
+    if (result.state === "needs-action")
+      expect(result.guide.action).toContain(permission);
+  },
+);
+
+// The live run: Cloudflare adds its records as soon as sending is turned on, and
+// its two endpoints write the MX content differently.
+test("the sending step finishes on the records Cloudflare added itself", async () => {
+  const before = await runStep("email-sending", "check");
+  expect(before.state === "missing" && before.detail).toContain("DMARC record");
+  const result = await runStep("email-sending");
+  expect(result.state).toBe("done");
+  expect(result.state === "done" && result.detail).toContain("DMARC record");
+  const records = fake.state.zones.get(ZONE)?.dns ?? [];
+  expect(records.find(({ type }) => type === "MX")?.content).toBe(
+    "route1.mx.cloudflare.net",
+  );
+  expect(
+    records.find(({ name }) => name === "_dmarc.example.com")?.content,
+  ).toBe('"v=DMARC1; p=reject;"');
+  expect(
+    fake.writes().filter((call) => call.path.endsWith("/dns_records")),
+  ).toEqual([]);
+});
+
+const sendingRecord = (name: string) =>
+  fake.state.zones
+    .get(ZONE)
+    ?.dns.find((record) => record.name === name && record.type === "TXT");
+
+test("a long value split into several quoted strings counts as the same record", async () => {
+  expect((await runStep("email-sending")).state).toBe("done");
+  const dkim = sendingRecord("cf-bounce._domainkey.example.com");
+  if (!dkim) throw new Error("no DKIM record");
+  dkim.content = '"v=DKIM1; h=sha256; k=rsa; p=FakeKey" "WithMixedCase"';
+
+  expect((await runStep("email-sending", "check")).state).toBe("done");
+});
+
+test("a key that differs only in case is a different key", async () => {
+  expect((await runStep("email-sending")).state).toBe("done");
+  const dkim = sendingRecord("cf-bounce._domainkey.example.com");
+  if (!dkim) throw new Error("no DKIM record");
+  dkim.content = dkim.content.toLowerCase();
+
+  expect((await runStep("email-sending", "check")).state).toBe("missing");
+});
+
+test("a record that appears while the step runs doesn't fail it", async () => {
+  await runStep("email-sending");
+  const zone = fake.state.zones.get(ZONE);
+  if (!zone) throw new Error("no zone");
+  const added = zone.dns.filter(({ type }) => type === "MX");
+  zone.dns = zone.dns.filter(({ type }) => type !== "MX");
+
+  const original = fake.fetch;
+  deps.fetch = async (url, init) => {
+    if (init.method === "POST" && url.endsWith("/dns_records"))
+      zone.dns.push(...added);
+    return original(url, init);
+  };
+  expect((await runStep("email-sending")).state).toBe("done");
+});
+
+test("when Cloudflare calls a record identical but the check can't see it, the step names the record", async () => {
+  await runStep("email-sending");
+  const zone = fake.state.zones.get(ZONE);
+  if (!zone) throw new Error("no zone");
+  zone.dns = zone.dns.filter(
+    ({ name }) => name !== "cf-bounce._domainkey.example.com",
+  );
+  fake.failOnce({
+    method: "POST",
+    path: /dns_records$/,
+    status: 400,
+    code: 81058,
+    message: "An identical record already exists.",
+  });
+  const result = await runStep("email-sending");
+  expect(result.state).toBe("needs-action");
+  if (result.state === "needs-action")
+    expect(result.guide.action).toContain("cf-bounce._domainkey.example.com");
+});
+
+test("any other refusal to add a record still fails the step", async () => {
+  await runStep("email-sending");
+  const zone = fake.state.zones.get(ZONE);
+  if (!zone) throw new Error("no zone");
+  zone.dns = zone.dns.filter(({ type }) => type !== "MX");
+  fake.failOnce({
+    method: "POST",
+    path: /dns_records$/,
+    status: 400,
+    code: 1004,
+    message: "DNS validation failed",
+  });
+  expect(await runStep("email-sending")).toEqual({
+    state: "failed",
+    message: "Cloudflare said: DNS validation failed",
+  });
+});
+
+test("an existing DMARC record stays as it is", async () => {
+  const zone = fake.state.zones.get(ZONE);
+  zone?.dns.push({
+    type: "TXT",
+    name: "_dmarc.example.com",
+    content: "v=DMARC1; p=none; rua=mailto:reports@example.com",
+  });
+  expect((await runStep("email-sending")).state).toBe("done");
+  expect(
+    zone?.dns
+      .filter(({ name }) => name === "_dmarc.example.com")
+      .map(({ content }) => content),
+  ).toEqual(["v=DMARC1; p=none; rua=mailto:reports@example.com"]);
+  expect(
+    fake.writes().filter((call) => call.path.endsWith("/dns_records")),
+  ).toEqual([]);
 });
 
 test("the sending step adds only missing records, and leaves an existing SPF for the person", async () => {
@@ -917,20 +1093,27 @@ test("a reloaded wizard reads its earlier choice back from Cloudflare", async ()
   expect(body.scan.hostedHosts).toEqual([]);
 });
 
-test("the token form link fills what Cloudflare documents and lists the rest", () => {
+test("the token form link fills in every permission the wizard needs", () => {
   const url = new URL(tokenFormUrl());
   expect(url.origin).toBe("https://dash.cloudflare.com");
   expect(url.searchParams.get("to")).toBe("/:account/api-tokens");
   expect(url.searchParams.get("name")).toBe("CloudySuite setup");
-  expect(
-    JSON.parse(url.searchParams.get("permissionGroupKeys") ?? "[]"),
-  ).toContainEqual({
-    key: "workers_scripts",
-    type: "edit",
-  });
-  expect(TOKEN_PERMISSIONS.map(({ label }) => label)).toContain(
-    "Email Sending",
+  const filled = JSON.parse(
+    url.searchParams.get("permissionGroupKeys") ?? "[]",
   );
+  expect(filled).toEqual([
+    { key: "workers_scripts", type: "edit" },
+    { key: "5df633d6b41c42bcaf5b4a62b9d14b64", type: "edit" },
+    { key: "zone", type: "read" },
+    { key: "dns", type: "edit" },
+    { key: "zone_settings", type: "edit" },
+    { key: "79b3ec0d10ce4148a8f8bdc0cc5f97f2", type: "edit" },
+  ]);
+  expect(
+    TOKEN_PERMISSIONS.filter(({ scope }) => scope === "account").map(
+      ({ label }) => label,
+    ),
+  ).toEqual(["Workers Scripts", "Email Sending"]);
 });
 
 test("only a loopback address can replace Cloudflare's API", () => {
@@ -1211,10 +1394,7 @@ test("default settings with nothing set write back cleanly", async () => {
     200,
   );
   const [patch] = fake.calls.filter((call) => call.method === "PATCH");
-  expect(patch?.body).toEqual({
-    logpush: false,
-    observability: { enabled: false },
-  });
+  expect(patch?.body).toEqual({ logpush: false });
 });
 
 test.each([

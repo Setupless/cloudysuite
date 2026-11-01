@@ -184,9 +184,10 @@ export function createCloudflare({
 
     // Writing back what Cloudflare just returned changes nothing, and these are
     // not versioned settings, so it adds no version. Only a token that can edit
-    // this Worker gets a success. Cloudflare's reference doesn't say what a patch
-    // does to a field it leaves out, so this sends each one that has a value.
-    // Returns false, having written nothing, when there is no value to send.
+    // this Worker gets a success. A real run confirmed it on 2026-11-02: settings
+    // and versions were the same afterwards. Cloudflare's reference doesn't say
+    // what a patch does to a field it leaves out, so this sends each one that has
+    // a value. Returns false, having written nothing, when there is no value to send.
     async rewriteScriptSettings(accountId: string, name: string) {
       const path = `${script(accountId, name)}/script-settings`;
       const current = await result<ScriptSettings | null>("GET", path);

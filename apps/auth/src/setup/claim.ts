@@ -50,9 +50,9 @@ const FAILURES: Record<ClaimFailure, Omit<SetupError, "code">> = {
   },
   "no-workers-permission": {
     message:
-      "This token can't look at your Workers, so we can't confirm that this copy is yours.",
+      "This token can't see any Workers, so we can't confirm that this copy of CloudySuite is yours.",
     guide: tokenGuide(
-      "Create the token again from the link on this page, keep every permission it fills in, and paste the new token.",
+      "Create the token again from the link on this page. Keep Workers Scripts: Edit, and set it to the whole account, not to one domain. Then paste the new token.",
     ),
   },
   "other-account": {
@@ -136,6 +136,7 @@ export async function claimWorker(
   let budget = MAX_WORKERS_CHECKED;
   let denied = false;
   let gaveUp = false;
+  let sawScripts = false;
 
   for (const [accountId, accountName] of accounts) {
     let scripts: Awaited<ReturnType<Cloudflare["listScripts"]>>;
@@ -146,6 +147,7 @@ export async function claimWorker(
       denied = true;
       continue;
     }
+    if (scripts.length > 0) sawScripts = true;
     // A fresh deployment is the newest Worker, so this usually finds it first.
     const newestFirst = [...scripts].sort((a, b) =>
       (b.modified_on ?? "").localeCompare(a.modified_on ?? ""),
@@ -174,7 +176,11 @@ export async function claimWorker(
       };
     }
   }
-  if (denied) return { ok: false, reason: "no-workers-permission" };
+  // Cloudflare answers a token without Workers permission with an empty list, not
+  // a refusal. This Worker exists, so its own account can't really have none. The
+  // same answer reaches a stranger with no Workers, and says nothing about this one.
+  if (denied || !sawScripts)
+    return { ok: false, reason: "no-workers-permission" };
   return { ok: false, reason: gaveUp ? "too-many-workers" : "other-account" };
 }
 
