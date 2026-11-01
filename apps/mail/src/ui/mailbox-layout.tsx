@@ -5,6 +5,7 @@ import {
   IconAlertOctagon,
   IconArchive,
   IconFile,
+  IconFileImport,
   IconInbox,
   IconMailbox,
   IconSend,
@@ -119,6 +120,16 @@ function MailNavigation({
             />
           ))}
         </>
+      )}
+      {current?.role === "manager" && (
+        <Link
+          to="/mail/import"
+          className={NAV_ITEM}
+          activeProps={{ className: NAV_ITEM_ACTIVE }}
+        >
+          <IconFileImport size={18} stroke={1.75} aria-hidden />
+          <span className="min-w-0 truncate">Import mail</span>
+        </Link>
       )}
       {mailboxes.length > 1 && (
         <>
