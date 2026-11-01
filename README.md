@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** early scaffold. The repository has one Worker, the hostname router, placeholder pages, and a mailbox that stores raw messages. The product features do not exist yet, so this README describes the intended product.
+**Status:** not released yet. Auth and Mail are built, and Storage has its first part: team folders, My files, uploading, and downloading. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -20,8 +20,8 @@ Each app has its own subdomain on the organisation's primary domain.
 | ---------------------- | ------------------------------------------- | ------------------------ | ------- |
 | `auth.example.com`     | Organisation, accounts, and email addresses | Google Admin and Account | First   |
 | `mail.example.com`     | Mailboxes                                   | Gmail                    | First   |
+| `storage.example.com`  | Files                                       | Google Drive             | First   |
 | `calendar.example.com` | Calendars, also synced over CalDAV          | Google Calendar          | Later   |
-| `storage.example.com`  | Files, also synced over WebDAV              | Google Drive             | Later   |
 
 Later ideas include a password manager, docs, and sheets.
 
@@ -39,15 +39,15 @@ Every deployment contains every released app. An admin can turn each app off for
 D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
 
 ```ts
-type ToggleableApp = "mail";
+type ToggleableApp = "mail" | "storage";
 type AppSetting = { app: ToggleableApp; enabled: boolean };
 ```
 
-The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type grows when Calendar and Storage ship.
+The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type grows when Calendar ships.
 
 ## First release
 
-The first release contains Auth and Mail. Mail must be good enough to replace Gmail for daily use before work on the other apps starts.
+The first release contains Auth, Mail, and Storage, and it waits for all three. Mail was built first, because it had to be good enough to replace Gmail for daily use before work on another app started. Calendar comes after the first release.
 
 ### Deployment
 
@@ -57,7 +57,7 @@ You need a domain on Cloudflare DNS and the Workers Paid plan. The wizard links 
 2. Open the Worker's URL to start the first-run wizard.
 3. Create an API token from the wizard's link, which pre-fills the token form, and paste the token into the wizard.
 4. Choose your domain and where your apps should live. The wizard checks the domain's DNS and explains its recommendation.
-5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth` and `mail` hostnames, and generates the sign-in secret. Turning on Email Sending makes Cloudflare add DNS records to your domain itself: `cf-bounce` MX and SPF, a DKIM key, and `_dmarc` with `v=DMARC1; p=reject;`. That last record tells other mail systems to refuse mail that claims to be from your domain but cannot prove it, so check that any other service sending as your domain signs its mail. The wizard never changes a DMARC record you already have.
+5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth`, `mail`, and `storage` hostnames, and generates the sign-in secret. Turning on Email Sending makes Cloudflare add DNS records to your domain itself: `cf-bounce` MX and SPF, a DKIM key, and `_dmarc` with `v=DMARC1; p=reject;`. That last record tells other mail systems to refuse mail that claims to be from your domain but cannot prove it, so check that any other service sending as your domain signs its mail. The wizard never changes a DMARC record you already have.
 6. Create the first admin account, which also gets a personal mailbox. The wizard then sends you to `auth.<app domain>`.
 
 The wizard calls the Cloudflare API from the Worker. It does not store the token: the token stays in the browser tab, and each call sends it again.
@@ -81,12 +81,12 @@ The primary domain is stored last, in one atomic batch with the admin's user, pa
 
 These are separate, and either may be the zone apex:
 
-| Domain       | What it is                                                     | Stored as                                   |
-| ------------ | -------------------------------------------------------------- | ------------------------------------------- |
-| App domain   | Parent of `auth.` and `mail.`, and the session cookie's domain | The `domains` row with `is_primary = 1`     |
-| Email domain | What follows `@` in addresses                                  | A `domains` row, used by `addresses.domain` |
+| Domain       | What it is                                                    | Stored as                                   |
+| ------------ | ------------------------------------------------------------- | ------------------------------------------- |
+| App domain   | Parent of each app's address, and the session cookie's domain | The `domains` row with `is_primary = 1`     |
+| Email domain | What follows `@` in addresses                                 | A `domains` row, used by `addresses.domain` |
 
-The session cookie covers the app domain and every site under it, so whoever runs any site there could read a signed-in person's cookie. The wizard scans the zone's DNS and custom domains for that reason. A name counts as CloudySuite's own only when Cloudflare says it is a custom domain attached to this Worker, and anything else counts as another site, even `auth` or `mail`:
+The session cookie covers the app domain and every site under it, so whoever runs any site there could read a signed-in person's cookie. The wizard scans the zone's DNS and custom domains for that reason. A name counts as CloudySuite's own only when Cloudflare says it is a custom domain attached to this Worker, and anything else counts as another site, even `auth`, `mail`, or `storage`:
 
 - With no other hosted site, the app domain is the apex, such as `auth.example.com`.
 - With other sites, such as a third-party `www`, the wizard explains the risk and recommends a parent such as `suite.example.com`. Apps become `auth.suite.example.com`, and email stays `@example.com`.
@@ -286,7 +286,7 @@ Some details of how this works:
 - A mailbox runs one import at a time. An upload with no new part for 3 days is removed, ahead of R2's own 7-day clean-up, which would otherwise leave the job pointing at nothing.
 - Gmail labels in `X-Gmail-Labels` are not imported yet, and the screen says so.
 
-New import sources add only a reader that yields raw messages. IMAP is the likely next source, because Workers can open outbound TLS connections. Calendar needs `.ics` import when it ships. Storage needs no importer, because upload and WebDAV already move files in.
+New import sources add only a reader that yields raw messages. IMAP is the likely next source, because Workers can open outbound TLS connections. Calendar needs `.ics` import when it ships. Storage needs no importer, because uploading moves files in, and WebDAV will too once it is built.
 
 ### Optional Jev integration
 
@@ -330,6 +330,34 @@ A question is asked only when its answer could change something:
 **Safe to repeat.** A redelivered message is found by its hash before anything is asked, so it makes no call and can't change where a person put it. A delivery that asked and then died leaves a claim in the mailbox. Its retry spends nothing and files the message on the built-in result, because the paid answer went with the attempt. Two copies arriving together ask once.
 
 **Rule descriptions.** Only a mailbox's managers can write them. A mailbox can have 5 different descriptions across its rules, of up to 200 characters each, and one message makes one call however many it needs. Without a key, a rule with a description is paused as a whole, even if it matches on "any" condition, because its conditions were written to work together. The Rules page says so, the option is offered only while a key is set, and removing the description or adding a key brings the rule back. While a key is set but a check fails, a description doesn't match and the rule's other conditions still count.
+
+### Storage
+
+Storage replaces Google Drive. A person lands on Home, which shows their team folders and recent files. Inside a folder, a table lists what is there, and a panel describes the chosen file or, with nothing chosen, the folder itself. One click opens a folder. One click on a file chooses it, and another click lets it go.
+
+**Built so far:** team folders, subfolders, My files, uploading with resume, downloading, and previews of pictures.
+
+**Not built yet:** adding people to a folder, sharing, Shared with me, rename, move, delete, Trash, search, starring, storage limits, WebDAV, and the row of mail attachments on Home. A control appears only once it works, so none of these has a button yet.
+
+- **A team folder is its own member list,** like a shared mailbox. There are no teams across the organisation to keep in step. Anyone signed in can create a team folder and becomes its manager, so sharing files never has to wait for an admin. Until adding people is built, only its creator can open a team folder.
+- **My files is made on first use, not on first look.** Viewing the page changes nothing, because no `GET` request changes a person's data. The first upload or folder makes it, and the database allows one for each person, so two tabs can't make two.
+- **No links for people outside the organisation.** A link that works without signing in would be the one way into a file with no access check behind it. Sharing will offer people added by hand, and everyone in the organisation.
+- **WebDAV comes after the first release.** Each folder holds one item for each name, ignoring case, so every item already has one path. WebDAV clients can't use a passkey, so it needs app passwords, which [the sign-in features](#auth) don't include yet.
+- **Limits will be an organisation total, plus an optional limit per person for My files,** both set by an admin. Neither is built, and there is no default, so the sidebar shows only the amount used.
+- **Each drive is one SQLite-backed Durable Object.** A drive is a team folder or a person's My files. The object holds the names and details, and the bytes go in R2 through the Worker, so a large file never holds up anyone else using the drive. Each object keeps the truth for its bytes and file count, and writes the totals to D1 after each change. Team folder cards and the sidebar read D1 only, so opening Home wakes no object except for Recent, which asks each drive the person can open that holds files. The totals are absolute values, so writing them twice changes nothing. A failed write leaves a flag, and the object's alarm tries again.
+- **Previews are limited to PNG, JPEG, WebP, and GIF, up to 5 MB.** `storage.` shares the session cookie's domain, so an HTML or SVG file shown inline would be a script running with the signed-in person's session, whatever type the upload claimed. The preview route refuses every other type, and sends `nosniff` and a `sandbox` policy, so a page calling itself a PNG can't run either. Everything else downloads, and shows a type icon.
+- **A taken name.** A new folder with a taken name is refused in plain words. An upload keeps both, as `Report (2).pdf`, because a person dropping files shouldn't be stopped or lose either copy.
+- **Removing a person deletes no files.** Their My files stays and still counts towards the amount used, but nobody can open it, or a team folder only they were on, until a way to hand those over is built. The removal dialog says so.
+
+Uploads split a file into the same 10 MB parts as [Mail import](#mail-import), up to 100 GB.
+
+- If the connection drops, the upload retries with a growing delay and the tray says it is waiting. Parts already stored are never sent again.
+- After a reload, choosing the same file in the same folder carries on where it stopped. A match needs the folder, name, size, and person, plus a hash of the start and end of the file, so a different file that happens to have the same name and size can't be joined to the first one's parts.
+- Closing the tray stops the upload. What was stored stays, so choosing the file again carries on.
+- An upload with no new part for 3 days is removed, ahead of R2's own 7-day clean-up.
+- A finished file takes its upload's id, so finishing twice finds the file and changes nothing. If a crash came after R2 joined the parts, the retry checks the stored file's size.
+
+A deployment set up before Storage existed has no `storage.` address, because the wizard runs only once. Add it as a custom domain on the Worker in Cloudflare.
 
 ## Design
 
@@ -377,8 +405,8 @@ These limits come from the Cloudflare docs and shape the product:
 ## Technical direction
 
 - One Worker serves every app and routes by hostname, because the Deploy button does not deploy several Workers from one repository together.
-- Each mailbox is one SQLite-backed Durable Object. Attachments go in R2. D1 holds the organisation directory: domains, users, addresses, and mailbox access.
-- The rule that every mailbox query checks the signed-in user's access lives in one place, because several people can share a mailbox.
+- Each mailbox and each drive is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, and drive access.
+- The rule that every mailbox or drive query checks the signed-in user's access lives in one place, because several people can share one.
 
 ### Repository layout
 
@@ -397,9 +425,9 @@ The Deploy button treats a subdirectory as [the root of the new repository](http
 
 One Worker routes every app by hostname, and agents run in parallel worktrees. Each checkout needs its own stable app hostnames, without port numbers. [portless](https://github.com/vercel-labs/portless) provides them.
 
-The first `bun run dev` asks for `sudo` to bind port 443 and trust a local certificate. It starts the proxy with wildcard routing, because `auth` and `mail` share one Vite server.
+The first `bun run dev` asks for `sudo` to bind port 443 and trust a local certificate. It starts the proxy with wildcard routing, because every app shares one Vite server.
 
-A proxy that is already running without wildcard routing returns a portless 404 for both apps. Run `bunx portless proxy stop`, then start again.
+A proxy that is already running without wildcard routing returns a portless 404 for every app. Run `bunx portless proxy stop`, then start again.
 
 `bunx vite dev` skips portless and serves the same hostnames on port 5173.
 
