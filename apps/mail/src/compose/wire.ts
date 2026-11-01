@@ -122,6 +122,13 @@ export const parseSaveInput = (raw: unknown) => {
   };
 };
 
+export const parseSaveKeptInput = (raw: unknown) => {
+  const save = parseSaveInput(raw);
+  const copyId = requireOutgoingId(record(raw).copyId);
+  if (copyId === save.id) throw badRequest();
+  return { ...save, copyId };
+};
+
 export const parseRemoveAttachmentInput = (raw: unknown) => {
   const input = record(raw);
   const { attachmentId } = input;

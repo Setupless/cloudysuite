@@ -240,7 +240,7 @@ function MailboxShell({
         />
       }
     >
-      <ComposeProvider key={mailboxId} mailboxId={mailboxId}>
+      <ComposeProvider key={mailboxId} mailboxId={mailboxId} userId={user.id}>
         {children}
       </ComposeProvider>
     </SuiteShell>

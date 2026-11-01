@@ -6,12 +6,13 @@ import { readSettings } from "../../../../src/settings";
 import { openMailboxAs } from "../access";
 import type { MailboxId, MessageDetail, MessageId } from "../types";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
-import type { Editor, OutgoingId, SaveResult } from "./types";
+import type { Editor, KeptSaveResult, OutgoingId, SaveResult } from "./types";
 import {
   parseDiscardInput,
   parseOutgoingInput,
   parseRemoveAttachmentInput,
   parseSaveInput,
+  parseSaveKeptInput,
   parseStartInput,
   parseSuggestInput,
 } from "./wire";
@@ -129,6 +130,20 @@ export const saveDraft = createServerFn({ method: "POST" })
     const { mailbox, editor } = await open(data.mailboxId);
     return mailbox.outgoing.save({
       id: data.id,
+      baseRevision: data.baseRevision,
+      content: data.content,
+      editor,
+      ownDomain: await ownDomain(),
+    });
+  });
+
+export const saveKeptDraft = createServerFn({ method: "POST" })
+  .validator(parseSaveKeptInput)
+  .handler(async ({ data }): Promise<KeptSaveResult> => {
+    const { mailbox, editor } = await open(data.mailboxId);
+    return mailbox.outgoing.saveKept({
+      id: data.id,
+      copyId: data.copyId,
       baseRevision: data.baseRevision,
       content: data.content,
       editor,

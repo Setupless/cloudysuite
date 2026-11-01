@@ -8,6 +8,7 @@ import {
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
+import { editorContent } from "./device-html";
 
 type FormatCommand =
   "bold" | "italic" | "insertUnorderedList" | "insertOrderedList";
@@ -76,7 +77,7 @@ export function RichText({
   autoFocus,
 }: {
   editor: RefObject<HTMLDivElement | null>;
-  // The server's cleaned copy, reduced to the tags the toolbar can make.
+  // From the server or from this device. Either way it's cleaned on the way in.
   initialHtml: string;
   onInput: () => void;
   autoFocus?: boolean;
@@ -88,7 +89,10 @@ export function RichText({
 
   useLayoutEffect(() => {
     if (!editor.current) return;
-    editor.current.innerHTML = initialHtml;
+    editor.current.replaceChildren(editorContent(initialHtml));
+    setEmpty(
+      !editor.current.textContent && !editor.current.querySelector("li"),
+    );
     if (autoFocus) {
       editor.current.focus();
       getSelection()?.selectAllChildren(editor.current);

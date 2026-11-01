@@ -13,6 +13,7 @@ import type {
   OutgoingDetail,
   OutgoingId,
   OutgoingSummary,
+  KeptSaveResult,
   SaveResult,
 } from "./compose/types";
 import { runDueImportWork } from "./import/job";
@@ -339,6 +340,19 @@ export class Mailbox extends DurableObject<Env> {
     r2Prefix: string;
   }): SaveResult {
     return this.#outgoing.save(input);
+  }
+
+  saveKeptOutgoing(input: {
+    id: OutgoingId;
+    copyId: OutgoingId;
+    baseRevision: number;
+    content: DraftContent;
+    plainText: string;
+    editor: Editor;
+    r2Prefix: string;
+    copyR2Prefix: string;
+  }): KeptSaveResult {
+    return this.#outgoing.saveKept(input);
   }
 
   async scheduleOutgoing(input: {

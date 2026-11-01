@@ -1,5 +1,6 @@
 import {
   type Address,
+  type MailboxId,
   MAX_MESSAGE_BYTES,
   type ThreadId,
   type MessageId,
@@ -126,11 +127,66 @@ export type OutgoingDetail = OutgoingSummary & {
   quote: { bytes: number; designed: boolean } | null;
 };
 
+// What the editor needs to pick up a message. The server's draft has it, and so does a
+// message kept on this device because it couldn't be saved.
+export type DraftForEditor = Pick<
+  OutgoingDetail,
+  "content" | "revision" | "mode" | "parent" | "attachments" | "quote"
+>;
+
+// `revision` is the server's revision these words were written on. Going back, they
+// replace the server's draft only if it is still at that revision.
+export type KeptDraft = DraftForEditor & {
+  id: OutgoingId;
+  mailboxId: MailboxId;
+  keptAt: number;
+  // The server's copy can be gone by the time this is reopened, or out of reach.
+  quoteHtml: string | null;
+};
+
+// What the server's draft still has, so a device can tell what no longer came along.
+export type DraftHolds = {
+  attachmentIds: number[];
+  quote: boolean;
+  threaded: boolean;
+};
+
+export type LeftOut = { files: string[]; quote: boolean; reply: boolean };
+
+// Who changed a draft while someone's words were stuck on a device. `by` is the
+// colleague's name, or null when it was the same person somewhere else.
+export type DraftChange = { by: string | null };
+
+// Stays on the device until the person has seen it. A toast could go unread.
+export type KeptNote = {
+  id: OutgoingId;
+  mailboxId: MailboxId;
+  subject: string;
+  leftOut: LeftOut;
+  changed: DraftChange | null;
+};
+
 export type Editor = { id: string; name: string };
 
 export type SaveResult =
-  | { status: "saved"; revision: number; overwrote: string | null }
+  | {
+      status: "saved";
+      revision: number;
+      overwrote: string | null;
+      holds: DraftHolds;
+    }
   | { status: "locked"; state: OutgoingState };
+
+// `copied` means the words have a draft of their own, because the one they were written
+// on moved on or was sent. `copyIsDraft` is false once that new draft has itself gone.
+export type KeptSaveResult =
+  | { status: "saved"; revision: number; holds: DraftHolds }
+  | {
+      status: "copied";
+      copyId: OutgoingId;
+      copyIsDraft: boolean;
+      changed: DraftChange | null;
+    };
 
 export const UNDO_WINDOW_MS = 10_000;
 

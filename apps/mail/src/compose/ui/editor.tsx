@@ -19,13 +19,16 @@ import {
 import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
 import { useOffline } from "../../pwa/connectivity";
+import { forgetKeptDraft, keepDraft, keepNote } from "../../pwa/device-store";
 import {
+  DRAFT_KEPT_AFTER_FAILURE,
   isOffline,
   OFFLINE_ACTION_REFUSED,
+  OFFLINE_DRAFT_KEPT,
   OFFLINE_DRAFT_NOT_SAVED,
   OFFLINE_SEND_REFUSED,
 } from "../../pwa/saved-mail";
-import { call, callAction } from "../../queries";
+import { call, callAction, MailFailure } from "../../queries";
 import type { Address, MailboxId } from "../../types";
 import { EmailFrame } from "../../ui/email-frame";
 import { formatSize } from "../../ui/format";
@@ -39,13 +42,15 @@ import {
   sendDraft,
   startDraft,
 } from "../functions";
+import { isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
   type DraftContent,
+  type DraftForEditor,
   fitsSendLimit,
   MAX_ATTACHMENTS,
   type OutgoingId,
   type OutgoingAttachment,
-  type OutgoingDetail,
+  type SaveResult,
   TOO_LARGE_TEXT,
   TOO_MANY_ATTACHMENTS_TEXT,
 } from "../types";
@@ -56,17 +61,23 @@ import {
   UploadRefused,
   uploadAttachment,
 } from "./queries";
+import { deviceQuoteHtml } from "./device-html";
+import { keptDraftsQuery } from "./kept-drafts";
 import { RecipientField } from "./recipient-field";
 import { RichText } from "./rich-text";
 
 const AUTOSAVE_MS = 1_200;
+// Offline there's no request to spare, and a closed tab must not lose the last words.
+const OFFLINE_KEEP_MS = 150;
 // Leaves the browser's few connections free for autosave and the mailbox.
 const PARALLEL_UPLOADS = 3;
 const LOCKED_NOTICE =
-  "This message has already gone, or someone else has sent it. Your changes here weren't saved.";
+  "This message has already gone, or someone else has sent it, so your changes can't join it. They're kept on this device.";
+const LOCKED_KEPT_TOAST =
+  "This message has already gone, so your changes will go to Drafts as a new draft.";
 
 type Loaded = {
-  draft: OutgoingDetail | null;
+  draft: DraftForEditor | null;
   quoteHtml: string | null;
   notice: string | null;
 };
@@ -203,7 +214,13 @@ function EditorForm({
   loaded: Loaded;
   addresses: SenderFacts["addresses"];
 }) {
-  const { mailboxId, close: closeSession, openDraft } = useCompose();
+  const {
+    mailboxId,
+    userId,
+    openDraft,
+    close: closeSession,
+    reopen,
+  } = useCompose();
   const queryClient = useQueryClient();
   const toast = useToast();
   const content = loaded.draft?.content;
@@ -226,6 +243,8 @@ function EditorForm({
   const [notice, setNotice] = useState<string | null>(loaded.notice);
   const [problem, setProblem] = useState<string | null>(null);
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
+  const [leftOutNotice, setLeftOutNotice] = useState<string | null>(null);
+  const [notThreaded, setNotThreaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [locked, setLocked] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -236,10 +255,25 @@ function EditorForm({
   const lastHtml = useRef(content?.html ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
   const revision = useRef(loaded.draft?.revision ?? 0);
-  const dirty = useRef(false);
+  // Words from this device have never reached the server, so they still need saving.
+  const dirty = useRef(session.kind === "kept");
+  // Whether the latest words are on this device, and which copy there is this editor's
+  // to forget. A later copy may be another tab's.
+  const keptHere = useRef(session.kind === "kept");
+  const keptVersion = useRef(session.kind === "kept" ? session.kept.keptAt : 0);
+  const keptWords = useRef("");
   const lastSaveError = useRef("");
+  const noAccess = useRef(false);
   const lockedNow = useRef(false);
-  const everSaved = useRef(loaded.draft !== null && session.kind === "open");
+  // What the server may stop holding, leaving a fact on this screen out of date.
+  const quoteHeld = useRef(loaded.draft?.quote ?? null);
+  const parentHeld = useRef(loaded.draft?.parent ?? null);
+  const leftOutFound = useRef(0);
+  const mounted = useRef(true);
+  const everSaved = useRef(
+    loaded.draft !== null &&
+      (session.kind === "open" || session.kind === "kept"),
+  );
   const saving = useRef<Promise<void>>(Promise.resolve());
   // Moving to another list or conversation takes the editor away without a word.
   const leftUnasked = useRef(true);
@@ -269,12 +303,107 @@ function EditorForm({
     includeQuote,
   });
 
+  const attachmentsNow = useRef(attachments);
+  attachmentsNow.current = attachments;
+  const refreshKept = () =>
+    void queryClient.invalidateQueries({
+      queryKey: keptDraftsQuery(userId).queryKey,
+    });
+  const composeMode = () =>
+    session.kind === "start" ? session.mode : (loaded.draft?.mode ?? "new");
+  const keepHere = async (content: DraftContent) => {
+    // A new version of the same words could outrun a move to Drafts already under way,
+    // and come back as a second draft.
+    const words = JSON.stringify(content);
+    if (keptHere.current && words === keptWords.current) return;
+    const keptAt = Math.max(Date.now(), keptVersion.current + 1);
+    try {
+      keptHere.current = await keepDraft(userId, {
+        id: session.id,
+        mailboxId,
+        keptAt,
+        content,
+        revision: revision.current,
+        mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
+        parent: parentHeld.current,
+        quote: quoteHeld.current,
+        quoteHtml: quoteHeld.current ? loaded.quoteHtml : null,
+        attachments: attachmentsNow.current,
+      });
+      if (keptHere.current) {
+        keptVersion.current = keptAt;
+        keptWords.current = words;
+      }
+    } catch {
+      keptHere.current = false;
+    }
+    refreshKept();
+  };
+  const forgetHere = async () => {
+    keptHere.current = false;
+    if (keptVersion.current === 0) return;
+    await forgetKeptDraft(userId, session.id, keptVersion.current).catch(
+      () => {},
+    );
+    keptVersion.current = 0;
+    refreshKept();
+  };
+  // The server's draft no longer has everything this screen shows. If the screen has
+  // gone, the note waits on this device so the person still finds out.
+  const noteLeftOut = async (
+    had: OutgoingAttachment[],
+    content: DraftContent,
+    holds: Extract<SaveResult, { status: "saved" }>["holds"],
+  ) => {
+    const leftOut = leftOutOf(
+      {
+        attachments: had,
+        quote: quoteHeld.current,
+        parent: parentHeld.current,
+        mode: composeMode(),
+        includeQuote: content.includeQuote,
+      },
+      holds,
+    );
+    const lostConversation = !holds.threaded && parentHeld.current !== null;
+    if (!holds.quote) quoteHeld.current = null;
+    if (!holds.threaded) parentHeld.current = null;
+    if (mounted.current && lostConversation) setNotThreaded(true);
+    if (!isLeftOut(leftOut)) return;
+    leftOutFound.current += 1;
+    if (mounted.current) {
+      const gone = had.filter((file) => !holds.attachmentIds.includes(file.id));
+      setAttachments((current) =>
+        current.filter((file) => !gone.some((one) => one.id === file.id)),
+      );
+      if (leftOut.quote) setIncludeQuote(false);
+      setLeftOutNotice(leftOutText(leftOut));
+      return;
+    }
+    await keepNote(userId, {
+      id: session.id,
+      mailboxId,
+      subject: content.subject,
+      leftOut,
+      changed: null,
+    }).catch(() => {});
+    refreshKept();
+  };
+
   const flush = useCallback((): Promise<void> => {
     clearTimeout(timer.current);
     if (!dirty.current) return saving.current;
     dirty.current = false;
     const content = read.current();
     saving.current = saving.current.then(async () => {
+      // No later save can land. The words wait here for the person to choose.
+      if (lockedNow.current) {
+        dirty.current = true;
+        await keepHere(content);
+        return;
+      }
+      // Files uploaded while this is on its way aren't in what the server answers with.
+      const had = attachmentsNow.current;
       try {
         const result = await callAction(() =>
           saveDraft({
@@ -287,12 +416,15 @@ function EditorForm({
           }),
         );
         setSaveProblem(null);
+        noAccess.current = false;
         if (result.status === "locked") {
           lockedNow.current = true;
+          dirty.current = true;
           setLocked(true);
-          setNotice(LOCKED_NOTICE);
+          await keepHere(content);
           return;
         }
+        await forgetHere();
         revision.current = result.revision;
         everSaved.current = true;
         setSaved(true);
@@ -301,9 +433,17 @@ function EditorForm({
             `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
           );
         }
+        await noteLeftOut(had, content, result.holds);
       } catch (error) {
         dirty.current = true;
         lastSaveError.current = (error as Error).message;
+        await keepHere(content);
+        if (error instanceof MailFailure && error.status === 403) {
+          noAccess.current = true;
+          setSaveProblem(
+            `${lastSaveError.current} What you wrote is kept on this device.`,
+          );
+        }
       }
     });
     return saving.current;
@@ -314,7 +454,10 @@ function EditorForm({
     dirty.current = true;
     setSaved(false);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => void flush(), AUTOSAVE_MS);
+    timer.current = setTimeout(
+      () => void flush(),
+      isOffline() || lockedNow.current ? OFFLINE_KEEP_MS : AUTOSAVE_MS,
+    );
   }, [flush]);
 
   // What couldn't be saved offline goes as soon as it can. This is only ever the draft
@@ -349,13 +492,39 @@ function EditorForm({
   const untouchedNow = useRef(isUntouchedReply);
   untouchedNow.current = isUntouchedReply;
 
+  const keptToast = () => {
+    if (noAccess.current) {
+      return {
+        message: `${lastSaveError.current} What you wrote is kept on this device.`,
+      };
+    }
+    return {
+      message: isOffline()
+        ? OFFLINE_DRAFT_KEPT
+        : lockedNow.current
+          ? LOCKED_KEPT_TOAST
+          : DRAFT_KEPT_AFTER_FAILURE,
+      action: { label: "Open", run: () => void reopen(session.id) },
+    };
+  };
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") void flush();
     };
+    const onPageHide = () => void flush();
     document.addEventListener("visibilitychange", onHide);
+    addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
+      removeEventListener("pagehide", onPageHide);
       clearTimeout(timer.current);
       if (leftUnasked.current && untouchedNow.current()) {
         void discardUntouched(
@@ -369,15 +538,19 @@ function EditorForm({
       void flush().then(() => {
         if (!leftUnasked.current) return;
         if (dirty.current) {
-          toast({
-            tone: "danger",
-            message:
-              "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
-          });
+          toast(
+            keptHere.current
+              ? keptToast()
+              : {
+                  tone: "danger",
+                  message:
+                    "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
+                },
+          );
         } else if (hadSomething && !lockedNow.current) {
           toast({
             message: "Saved to Drafts.",
-            action: { label: "Open", run: () => openDraft(session.id) },
+            action: { label: "Open", run: () => void reopen(session.id) },
           });
         }
       });
@@ -393,7 +566,16 @@ function EditorForm({
     const hadSomething =
       dirty.current || everSaved.current || attachments.length > 0;
     const lockedBefore = lockedNow.current;
+    const leftOutBefore = leftOutFound.current;
     await flush();
+    // Something the person needs to read has only just appeared.
+    if (lockedNow.current && !lockedBefore) return;
+    if (leftOutFound.current !== leftOutBefore) return;
+    if (dirty.current && keptHere.current) {
+      close();
+      toast(keptToast());
+      return;
+    }
     if (dirty.current) {
       setSaveProblem(
         isOffline()
@@ -402,8 +584,6 @@ function EditorForm({
       );
       return;
     }
-    // The notice saying the changes weren't saved has only just appeared.
-    if (lockedNow.current && !lockedBefore) return;
     close();
     if (hadSomething && session.kind !== "open" && !lockedNow.current)
       toast({ message: "Saved to Drafts." });
@@ -417,10 +597,48 @@ function EditorForm({
       await callAction(() =>
         discardOutgoing({ data: { mailboxId, id: session.id } }),
       );
+      await forgetHere();
       close();
       toast({ message: "Draft discarded." });
     } catch (error) {
+      dirty.current = true;
       setProblem((error as Error).message);
+    }
+  };
+
+  const saveAsNewDraft = async () => {
+    await flush();
+    const content = read.current();
+    try {
+      const id = await keptCopyId(session.id, keptVersion.current);
+      await callAction(() =>
+        saveDraft({
+          data: { mailboxId, id, baseRevision: 0, content },
+        }),
+      );
+      const leftOut = leftOutOf(
+        {
+          attachments: attachmentsNow.current,
+          quote: quoteHeld.current,
+          parent: parentHeld.current,
+          mode: composeMode(),
+          includeQuote: content.includeQuote,
+        },
+        { attachmentIds: [], quote: false, threaded: false },
+      );
+      await forgetHere();
+      dirty.current = false;
+      leftUnasked.current = false;
+      refreshList();
+      openDraft(
+        id,
+        isLeftOut(leftOut) ? { warning: leftOutText(leftOut) } : {},
+      );
+      toast({ message: "Saved as a new draft." });
+    } catch (error) {
+      setSaveProblem(
+        `We couldn't save a new draft, so your words are still here and on this device. ${(error as Error).message}`,
+      );
     }
   };
 
@@ -438,6 +656,19 @@ function EditorForm({
     setSending(true);
     // Moving away mid-send must not count this as a reply nobody wrote.
     everSaved.current = true;
+    // What was on screen may have gone from the server's draft, and sending without it
+    // would be silent. A message with only words has nothing to lose this way.
+    const couldLoseSomething =
+      attachments.length > 0 || parentHeld.current || quoteHeld.current;
+    if (couldLoseSomething) {
+      const leftOutBefore = leftOutFound.current;
+      dirty.current = true;
+      await flush();
+      if (dirty.current || leftOutFound.current !== leftOutBefore) {
+        setSending(false);
+        return;
+      }
+    }
     clearTimeout(timer.current);
     dirty.current = false;
     await saving.current;
@@ -452,6 +683,7 @@ function EditorForm({
           },
         }),
       );
+      await forgetHere();
       close();
       refreshList();
     } catch (error) {
@@ -477,7 +709,7 @@ function EditorForm({
     }
     const fits = fitsSendLimit({
       bodyBytes: body.current?.innerHTML.length ?? 0,
-      quoteBytes: includeQuote ? (loaded.draft?.quote?.bytes ?? 0) : 0,
+      quoteBytes: includeQuote ? (quoteHeld.current?.bytes ?? 0) : 0,
       attachmentSizes: [
         ...attachments.map((file) => file.size),
         ...files.map((file) => file.size),
@@ -552,8 +784,9 @@ function EditorForm({
 
   const isPanel = session.host === "panel";
   const replying = session.kind === "start" || loaded.draft?.parent != null;
-  const title =
-    session.kind === "start"
+  const title = notThreaded
+    ? "New message"
+    : session.kind === "start"
       ? { reply: "Reply", replyAll: "Reply all", forward: "Forward" }[
           session.mode
         ]
@@ -610,7 +843,11 @@ function EditorForm({
           {title}
         </h2>
         <span role="status" className="flex-none text-xs text-secondary">
-          {saved ? "Saved" : offline && dirty.current ? "Not saved yet" : ""}
+          {saved
+            ? "Saved"
+            : (offline || locked) && dirty.current
+              ? "Kept on this device"
+              : ""}
         </span>
       </header>
 
@@ -619,10 +856,24 @@ function EditorForm({
           <Notice tone="danger">{session.warning}</Notice>
         )}
         {notice && <Notice tone="info">{notice}</Notice>}
+        {leftOutNotice && <Notice tone="danger">{leftOutNotice}</Notice>}
+        {locked && (
+          <Notice tone="danger">
+            {LOCKED_NOTICE}{" "}
+            <button
+              type="button"
+              onClick={() => void saveAsNewDraft()}
+              className="cursor-pointer font-medium underline outline-accent focus-visible:outline-2"
+            >
+              Save as a new draft
+            </button>
+          </Notice>
+        )}
         {offline && (
           <Notice tone="info">
-            You're offline. You can keep writing here, but this message can't be
-            saved or sent until you reconnect.
+            You're offline. You can keep writing. This message stays on this
+            device, goes to Drafts when you reconnect, and can't be sent until
+            then.
           </Notice>
         )}
 
@@ -715,13 +966,18 @@ function EditorForm({
           uploading={uploading}
           onRemove={(attachment) => void removeAttachment(attachment)}
         />
-        {includeQuote && loaded.quoteHtml && (
+        {includeQuote && loaded.quoteHtml && quoteHeld.current && (
           <QuotedOriginal
             html={loaded.quoteHtml}
-            designed={loaded.draft?.quote?.designed ?? false}
+            designed={quoteHeld.current.designed}
             startOpen={loaded.draft?.mode === "forward"}
             onRemove={() => setIncludeQuote(false)}
           />
+        )}
+        {includeQuote && !loaded.quoteHtml && quoteHeld.current && (
+          <p className="border-t border-line py-2 text-xs text-secondary">
+            The original message will go with this, but we can't show it here.
+          </p>
         )}
       </div>
 
@@ -799,14 +1055,25 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
   const { mailboxId } = useCompose();
   // A form with no From address could only be refused, so it waits for the choices.
   const sender = useQuery(composeContextQuery(mailboxId));
-  const [loaded, setLoaded] = useState<Loaded | null>(
-    session.kind === "new" ? EMPTY : null,
-  );
+  const [loaded, setLoaded] = useState<Loaded | null>(() => {
+    if (session.kind === "new") return EMPTY;
+    if (session.kind === "kept") {
+      return {
+        ...EMPTY,
+        draft: session.kept,
+        quoteHtml:
+          session.kept.quoteHtml === null
+            ? null
+            : deviceQuoteHtml(session.kept.quoteHtml),
+      };
+    }
+    return null;
+  });
   const [failed, setFailed] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (session.kind === "new") return;
+    if (session.kind === "new" || session.kind === "kept") return;
     let ignore = false;
     const load =
       session.kind === "start"
@@ -839,7 +1106,13 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     // The session's id says everything that matters about it.
   }, [mailboxId, session.id, attempt]);
 
-  if (failed || sender.isError) {
+  // Words kept on this device must open with no connection, so they bring their own From.
+  const addresses =
+    sender.data?.addresses ??
+    (session.kind === "kept" && session.kept.content.from
+      ? [{ address: session.kept.content.from, kind: "primary" as const }]
+      : null);
+  if (failed || (sender.isError && !addresses)) {
     return (
       <FailureNotice
         message={failed ?? sender.error?.message ?? ""}
@@ -851,7 +1124,7 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
       />
     );
   }
-  if (!loaded || !sender.data) {
+  if (!loaded || !addresses) {
     return (
       <div aria-hidden className="flex animate-pulse flex-col gap-3 px-6 py-5">
         <div className="h-4 w-1/3 rounded bg-field" />
@@ -865,7 +1138,7 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
       key={session.id}
       session={session}
       loaded={loaded}
-      addresses={sender.data.addresses}
+      addresses={addresses}
     />
   );
 }

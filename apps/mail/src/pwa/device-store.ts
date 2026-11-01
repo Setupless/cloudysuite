@@ -1,5 +1,6 @@
 import type { UserId } from "@cloudysuite/access";
 import { DEVICE_SESSION_PATH } from "../../../../src/routing";
+import type { KeptDraft, KeptNote, OutgoingId } from "../compose/types";
 import type { MailboxEntry } from "../functions";
 import type {
   MailboxId,
@@ -28,6 +29,10 @@ const BODIES = "bodies";
 const OWNER_KEY = "owner";
 const MAILBOXES_KEY = "mailboxes";
 const ledgerKey = (mailboxId: MailboxId) => `ledger/${mailboxId}`;
+const KEPT_PREFIX = "kept/";
+const keptKey = (id: OutgoingId) => `${KEPT_PREFIX}${id}`;
+const NOTE_PREFIX = "keptNote/";
+const noteKey = (id: OutgoingId) => `${NOTE_PREFIX}${id}`;
 
 // Every person's mail on this device is in this one database and nowhere else: the
 // service worker's caches hold only the public build and an anonymous page. So clearing
@@ -132,6 +137,75 @@ async function readAsOwner<Value>(
     ? (value as Value | undefined)
     : undefined;
 }
+
+export const keepDraft = (userId: UserId, draft: KeptDraft) =>
+  writeAsOwner(userId, [], (transaction) => {
+    transaction.objectStore(META).put(draft, keptKey(draft.id));
+  });
+
+async function readAllAsOwner(
+  userId: UserId,
+  prefix: string,
+): Promise<unknown[]> {
+  const database = await open();
+  const transaction = database.transaction(META);
+  const store = transaction.objectStore(META);
+  const [owner, rows] = await Promise.all([
+    requested(store.get(OWNER_KEY)),
+    requested(store.getAll(IDBKeyRange.bound(prefix, `${prefix}\uffff`))),
+  ]);
+  return (owner as DeviceOwner | undefined)?.user.id === userId ? rows : [];
+}
+
+// Unchecked rows: `parseKeptDraft` and `parseKeptNote` decide what they are.
+export const readKeptRows = (userId: UserId) =>
+  readAllAsOwner(userId, KEPT_PREFIX);
+
+export const readKeptNoteRows = (userId: UserId) =>
+  readAllAsOwner(userId, NOTE_PREFIX);
+
+async function forgetVersion(
+  store: IDBObjectStore,
+  id: OutgoingId,
+  keptAt: number,
+) {
+  const held = (await requested(store.get(keptKey(id)))) as
+    KeptDraft | undefined;
+  if (held?.keptAt === keptAt) store.delete(keptKey(id));
+}
+
+// A copy written since `keptAt`, by another tab or a later keystroke, stays.
+export const forgetKeptDraft = (
+  userId: UserId,
+  id: OutgoingId,
+  keptAt: number,
+) =>
+  writeAsOwner(userId, [], (transaction) =>
+    forgetVersion(transaction.objectStore(META), id, keptAt),
+  );
+
+// One transaction, so the words can't go without the note about what they lost.
+export const settleKeptDraft = (
+  userId: UserId,
+  id: OutgoingId,
+  keptAt: number,
+  note: KeptNote | null,
+) =>
+  writeAsOwner(userId, [], async (transaction) => {
+    const store = transaction.objectStore(META);
+    if (note) store.put(note, noteKey(note.id));
+    await forgetVersion(store, id, keptAt);
+  });
+
+export const keepNote = (userId: UserId, note: KeptNote) =>
+  writeAsOwner(userId, [], (transaction) => {
+    transaction.objectStore(META).put(note, noteKey(note.id));
+  });
+
+export const forgetKeptNote = (userId: UserId, id: OutgoingId) =>
+  writeAsOwner(userId, [], (transaction) => {
+    transaction.objectStore(META).delete(noteKey(id));
+  });
 
 export const readSavedMailboxes = (userId: UserId) =>
   readAsOwner<MailboxEntry[]>(userId, META, MAILBOXES_KEY);

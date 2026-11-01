@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** not released yet. Auth and Mail are built, and Storage has team folders, My files, uploading, downloading, rename, move, and Trash. This README describes the intended product and says where something is not built yet.
+**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders, My files, uploading, downloading, rename, move, and Trash. The first release isn't finished until a real deployment has proved them, including sending and receiving real mail. Calendar has not started. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -179,7 +179,7 @@ How sending behaves, and why:
 - **A send is never repeated by guesswork.** A clean refusal says what to do. Only a rate limit retries by itself. If a crash or a lost connection leaves it unclear whether a message went out, the person is told to check with the recipient. A duplicate is worse than asking.
 - **A message that can't settle right away never floats over the mail.** A failure, or a wait to retry, sits in a band above the mail, one at a time, with a count of the rest. Only the seconds just after pressing Send float, because they're gone within moments.
 - **A queued message is checked again before each attempt.** Minutes can pass between pressing Send and the message going out, including rate-limit retries. If its From address has left the mailbox, the person who pressed Send has lost access or been banned, or Mail was turned off, it doesn't go, and it stays in Drafts with a plain reason. If the directory can't answer, the job waits and tries again, then fails the same way. It never sends without an answer.
-- **Drafts are not messages.** They autosave to their own table, so saving can't fill the mailbox and search or Trash never finds half-written mail. In a shared mailbox, the last save wins and that person is told. Moving to another list or conversation closes the editor and keeps the draft, and a short notice offers the way back.
+- **Drafts are not messages.** They autosave to their own table, so saving can't fill the mailbox and search or Trash never finds half-written mail. In a shared mailbox, the last save from an open editor wins and that person is told. Moving to another list or conversation closes the editor and keeps the draft, and a short notice offers the way back. A person's words are never lost to a bad connection: whatever can't be saved stays on the device until it can be.
 - **Quoted mail stays in the sandboxed reading frame.** A stranger's markup never joins the editor, so a reply can leave the original out but can't edit inside it.
 - **A message to your own address appears twice, threaded together: once in Sent and once in the Inbox.** A header on inbound mail is never a reason to drop it, because anyone can copy one. Only byte-identical redelivery counts as a duplicate.
 - **Attachments can add up to about 18 MB.** The 25 MiB limit counts the encoded message, and files grow by about a third in email.
@@ -222,7 +222,13 @@ Turning Mail off clears nothing, so turning it back on restores the same device.
 
 **An open tab refreshes every 30 seconds, with no websockets.** That covers the list, the sidebar's counts, and the open conversation, which is three requests every 30 seconds, plus one a minute for drafts and sends in progress: 7 requests a minute for each visible tab, and about 3,400 in an 8-hour day. A list scrolled past its first page costs one more request a page. Opening a folder or a conversation asks the server straight away, so what it shows is fresh even if the timer hasn't fired. The same refresh is how a tab finds out that its session has ended: its next request gets a 401, the device clears, and the browser goes to Sign in.
 
-**Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A draft already open stays on screen and saves when the connection returns, but it is never sent then. A message already handed to CloudySuite still goes, and Undo comes back with the connection. Drafts are not saved on the device.
+**Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A message already handed to CloudySuite still goes, and Undo comes back with the connection.
+
+**Words that can't be saved stay on the device.** A draft already open keeps working offline. What can't reach the server is kept in the same IndexedDB database as saved mail, along with the quote the person was replying to, so someone can move elsewhere or close the tab, and a band in that mailbox offers it back. When the connection returns, it goes to Drafts and the device's copy goes, but it is never sent then. The device forgets a copy only after the server has accepted that copy, so a newer one from another tab stays. Each copy remembers the server revision it was written on. If the draft has changed since, by anyone, the server keeps that draft and saves the words as a new draft beside it, in one transaction, and the person is told, so both sets of words survive. The new draft's id comes from the copy, so a retry can't make two. Only these unsaved words are kept, not drafts in general, and signing out clears them along with everything else, even if they never reached the server.
+
+**A device's copy is treated as hostile.** Anything on the origin can write to IndexedDB. A kept body enters the live editor only through a browser-side allow list of what the formatting bar can make, and a kept quote is stripped and goes in the same sandboxed frame as mail. A row of the wrong shape is ignored.
+
+**Nothing is dropped without saying so.** If the message was sent or discarded elsewhere, the words still become a draft. The files, the quote, and the link to the conversation belong to the original, so they can't come along, and the page names what was left out and what to do next. That notice stays on the device until it is opened or dismissed, because a toast can go unread. If someone loses access to a mailbox, their words are not written to it: a card says so, on every Mail screen, and lets them copy the text or remove it.
 
 [Privacy](#privacy) says what saved mail means for a lost device.
 
@@ -404,7 +410,7 @@ Import `src/styles/app.css` in the root route with `import "../styles/app.css"`.
 
 CloudySuite relies on Cloudflare's encryption at rest. Cloudflare and the organisation's admins are inside the trust boundary, and CloudySuite is not end-to-end encrypted. In exchange, server-side search and rules work without extra steps.
 
-**Saved mail on a device is not encrypted by CloudySuite.** So people can read offline, Mail keeps up to 50 MB of recent mail in the browser. Anyone who can get into that device and read the browser's files can read it.
+**Saved mail on a device is not encrypted by CloudySuite.** So people can read offline, Mail keeps up to 50 MB of recent mail in the browser, along with any message someone wrote that couldn't be saved yet. Anyone who can get into that device and read the browser's files can read them.
 
 **A device kept offline can show its saved mail for up to 59 days,** even after the person signed out on another device or an admin removed their access. It can't find out until it next connects, and then it clears itself. After 59 days with no connection, it stops showing saved mail.
 
@@ -440,7 +446,7 @@ The repository is a Bun workspace monorepo that builds into the one Worker:
 | `apps/<app>`      | The UI and server code of one app, such as `apps/mail`       |
 | `packages/<name>` | Code that two or more apps share                             |
 
-The Deploy button treats a subdirectory as [the root of the new repository](https://developers.cloudflare.com/workers/platform/deploy-buttons/), and the app inside must be fully isolated. A Worker in `apps/worker` would lose its workspace siblings, so the Worker stays at the root and the button points at the root. The first scaffold must prove this layout with a real Deploy button run.
+The Deploy button treats a subdirectory as [the root of the new repository](https://developers.cloudflare.com/workers/platform/deploy-buttons/), and the app inside must be fully isolated. A Worker in `apps/worker` would lose its workspace siblings, so the Worker stays at the root and the button points at the root. A real Deploy button run accepted this layout.
 
 ### Local development
 
@@ -479,7 +485,8 @@ The `check` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `
 
 We build around the TanStack libraries, so that the product is fast for end users and pleasant for developers. We accept release candidates because we expect them to be stable before our first release. Better Auth is the exception, as [Auth](#auth) explains.
 
-- TanStack Start, Query, Form, Hotkeys, and DB
+- TanStack Start, Query, and Hotkeys. TanStack DB and Form are not used: mail reads through Query, and no form needed more than React state.
+- A small hand-written IndexedDB store for offline mail, because [its check of who owns the device shares a transaction with each write](#the-installable-app).
 - Tailwind CSS v4
 - Drizzle RC
 - Better Auth, on its latest safe stable release

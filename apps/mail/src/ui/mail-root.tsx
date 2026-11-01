@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { type ReactNode, useEffect, useState } from "react";
+import { KeptWithoutAccess } from "../compose/ui/kept-without-access";
 import { isPageHidden } from "../pwa/connectivity";
 import { clearDevice, startDevice } from "../pwa/device";
 import { MailFailure, retryUnlessRefused } from "../queries";
@@ -56,7 +57,10 @@ export function MailRoot({
   useEffect(() => startDevice(user, client), [user, client]);
   return (
     <QueryClientProvider client={client}>
-      <ToastProvider>{children}</ToastProvider>
+      <ToastProvider>
+        {children}
+        <KeptWithoutAccess userId={user.id} />
+      </ToastProvider>
     </QueryClientProvider>
   );
 }
