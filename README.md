@@ -66,8 +66,33 @@ Each wizard step checks the current state in Cloudflare, applies the change thro
 
 The Deploy button copies the repository, so a deployment has no link back to this one. Security patches, such as Better Auth fixes, reach a deployment only when its admin applies them.
 
-- The admin screen compares the running version with the latest GitHub release and links to the written update steps.
+- The admin screen compares the running version with the latest GitHub release and links to these steps.
 - The admin applies the update by hand. CloudySuite never changes itself.
+
+The Deploy button puts the copy in your GitHub or GitLab account and connects it to Cloudflare, so a push to the copy's `main` branch deploys it and applies any database migrations. Updating means merging a release into that copy. You need Git on your computer.
+
+1. Read the release notes, and note the release's tag, such as `v1.2.3`.
+2. Merge the release into your copy:
+
+   ```sh
+   git clone <your copy's URL> cloudysuite
+   cd cloudysuite
+   git remote add upstream https://github.com/Setupless/cloudysuite.git
+   git fetch upstream --tags
+   git merge --allow-unrelated-histories v1.2.3
+   ```
+
+3. If Git reports a conflict in `wrangler.jsonc`, keep your copy's `database_id` and `bucket_name` values and take everything else from the release. Then run `git add wrangler.jsonc` and `git commit`.
+4. Run `git push`. Cloudflare builds and deploys your copy, which takes a few minutes.
+5. Open the admin's **Organisation** page and check that the version at the bottom is the new one.
+
+To publish a release, set `RUNNING_VERSION` in `apps/auth/src/admin/updates.ts` and tag that commit with the same version.
+
+### Email domains
+
+The app domain and email domains are separate ideas. The app domain, stored as the primary row in `domains`, is where the apps run. An email domain is one that addresses can use. They are often the same domain. When the app domain is a subdomain of another stored domain, such as `suite.example.com` under `example.com`, only the parent is an email domain, so nobody gets an address at the app domain.
+
+An admin adds another email domain by following a guide in their Cloudflare account, because CloudySuite does not store a token. **Check again** looks up the domain's public DNS records over HTTPS, and the domain is saved only once the records for receiving and sending exist. DNS cannot show the catch-all rule that sends mail to the Worker, so the guide says so and asks the admin to send a test message afterwards.
 
 ### Simplicity goal
 
@@ -84,6 +109,8 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - A password with a TOTP authenticator app is the fallback.
 - Admins can reset a member's sign-in and require 2FA for the organisation.
 - Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
+- Resetting a sign-in removes the member's passkeys, authenticator app, password, and sessions, then gives the admin a one-time link to hand over. CloudySuite never emails it, because the member's only address may be a mailbox they cannot open.
+- A person's sign-in address is their new mailbox address when the invite creates one, and otherwise the address the invite went to.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
 
