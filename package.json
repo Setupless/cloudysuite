@@ -9,12 +9,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "vite dev",
+    "dev": "portless proxy start --wildcard && portless run vite dev",
     "build": "vite build",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:seed:local": "wrangler d1 execute DB --local --command \"INSERT OR REPLACE INTO domains (name, is_primary) VALUES ('localhost', 1)\"",
+    "db:seed:local": "bun scripts/seed-local.mjs",
     "check": "bun fmt --check && oxlint && bun scripts/check-theme.mjs && bun test && vite build && wrangler types && tsc --noEmit"
   },
   "dependencies": {
@@ -37,6 +37,7 @@
     "@vitejs/plugin-react": "6.1.2",
     "drizzle-kit": "1.0.0-rc.5",
     "oxlint": "1.90.0",
+    "portless": "0.15.12",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.5",
