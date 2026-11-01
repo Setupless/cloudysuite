@@ -1,7 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
+import { runDueImportWork } from "./import/job";
+import { ImportStore, type NewImportJob } from "./import/store";
+import type { ImportFailure } from "./import/types";
 import { applyMigrations } from "./migrations";
 import type { SqlDriver } from "./sql";
-import { MailboxStore, sweepDeletions } from "./store";
+import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
   AttachmentId,
   AttachmentRef,
@@ -19,10 +22,9 @@ import type {
   ThreadQuery,
 } from "./types";
 
-const SWEEP_RETRY_MS = 5 * 60 * 1000;
-
 export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
+  readonly #imports: ImportStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -32,6 +34,7 @@ export class Mailbox extends DurableObject<Env> {
     };
     applyMigrations(db);
     this.#store = new MailboxStore(db);
+    this.#imports = new ImportStore(db, this.#store);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -40,13 +43,13 @@ export class Mailbox extends DurableObject<Env> {
 
   async commit(message: NewMessage): Promise<CommitResult> {
     const result = this.#store.commit(message);
-    if (result.status === "duplicate") await this.#sweepLater();
+    if (result.status === "duplicate") await this.#scheduleNextWakeUp();
     return result;
   }
 
   async abandonUpload(prefix: string): Promise<void> {
     this.#store.queueDeletion(prefix);
-    await this.#sweepLater();
+    await this.#scheduleNextWakeUp();
   }
 
   listThreads(query: ThreadQuery): ThreadPage {
@@ -82,35 +85,125 @@ export class Mailbox extends DurableObject<Env> {
 
   async deleteForever(selection: MessageSelection): Promise<number> {
     const deleted = this.#store.deleteForever(selection);
-    await this.#sweepLater();
+    await this.#scheduleNextWakeUp();
     await this.#sweep();
+    await this.#scheduleNextWakeUp();
     return deleted;
   }
 
-  // Call before any other await, so the alarm commits together with the queued
-  // rows and a crash still finishes the job. The delay also outlasts any write
-  // still in flight from an abandoned upload.
-  #sweepLater(): Promise<void> {
-    return this.ctx.storage.setAlarm(Date.now() + SWEEP_RETRY_MS);
+  hasActiveImport(): boolean {
+    return this.#imports.hasActiveJob();
   }
 
-  // One alarm serves every background job in a mailbox. A later job must add its
-  // work here and keep the earliest wake-up, not replace the alarm.
+  async createImportJob(job: NewImportJob) {
+    const created = this.#imports.create(job);
+    await this.#scheduleNextWakeUp();
+    return created;
+  }
+
+  // A job's alarm is lost if the runtime gives up retrying it, so someone watching
+  // the job is enough to start it again.
+  async importJobs(limit: number) {
+    if (
+      this.#imports.nextRunAt() !== null &&
+      (await this.ctx.storage.getAlarm()) === null
+    ) {
+      await this.#scheduleNextWakeUp();
+    }
+    return this.#imports.jobs(limit);
+  }
+
+  importJob(jobId: string) {
+    return this.#imports.job(jobId);
+  }
+
+  importUnreadable(jobId: string) {
+    return this.#imports.unreadable(jobId);
+  }
+
+  importPartPlan(jobId: string, partNumber: number) {
+    return this.#imports.partPlan(jobId, partNumber);
+  }
+
+  async recordImportPart(jobId: string, partNumber: number, etag: string) {
+    this.#imports.recordPart(jobId, partNumber, etag);
+    await this.#scheduleNextWakeUp();
+  }
+
+  importParts(jobId: string) {
+    return this.#imports.parts(jobId);
+  }
+
+  importUploadTarget(jobId: string) {
+    return this.#imports.uploadTarget(jobId);
+  }
+
+  async markImportUploaded(jobId: string) {
+    this.#imports.markUploaded(jobId);
+    await this.#scheduleNextWakeUp();
+  }
+
+  async failImportUpload(jobId: string, failure: ImportFailure) {
+    this.#imports.failUpload(jobId, failure);
+    await this.#scheduleNextWakeUp();
+  }
+
+  async cancelImportJob(jobId: string) {
+    this.#imports.cancel(jobId);
+    await this.#scheduleNextWakeUp();
+  }
+
+  // Every background job keeps its own due time in its own table, and this one
+  // alarm is always the earliest of them. So a job that reschedules itself can
+  // neither push another job back nor be pushed back by it. Call this before any
+  // other await, so the alarm commits together with the rows that need it.
+  #scheduleNextWakeUp(): Promise<void> {
+    const due = [
+      this.#store.nextDeletionAt(),
+      this.#imports.nextRunAt(),
+    ].filter((time) => time !== null);
+    return due.length > 0
+      ? this.ctx.storage.setAlarm(Math.min(...due))
+      : this.ctx.storage.deleteAlarm();
+  }
+
+  // Each job catches its own failure, so one that keeps failing still leaves the
+  // others to run. A later job adds itself here and in #scheduleNextWakeUp.
   override async alarm(): Promise<void> {
     await this.#sweep();
+    await this.#runImports();
+    await this.#scheduleNextWakeUp();
   }
 
   async #sweep(): Promise<void> {
-    let pending = true;
+    const now = Date.now();
     try {
-      pending = await sweepDeletions(this.#store, this.env.BUCKET);
+      await sweepDeletions(this.#store, this.env.BUCKET, now);
     } catch (error) {
       console.error(
         "Could not finish removing deleted mail from storage.",
         error,
       );
+      this.#store.postponeDeletions(now, now + DELETION_SETTLE_MS);
     }
-    if (pending) await this.ctx.storage.setAlarm(Date.now() + SWEEP_RETRY_MS);
-    else await this.ctx.storage.deleteAlarm();
+  }
+
+  // A throw here leaves the batch's attempt saved, so the next run counts it as a
+  // crash, which is how a message that always breaks the commit gets skipped.
+  async #runImports(): Promise<void> {
+    try {
+      await runDueImportWork(
+        this.#imports,
+        this.#store,
+        this.env.BUCKET,
+        async () => {
+          await this.#scheduleNextWakeUp();
+          await this.ctx.storage.sync();
+        },
+        Date.now(),
+      );
+    } catch (error) {
+      console.error("An import batch stopped. It will try again.", error);
+    }
   }
 }

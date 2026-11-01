@@ -37,6 +37,8 @@ test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
     "./client",
+    "./import",
+    "./import-api",
     "./ingest",
     "./mailbox",
   ]);

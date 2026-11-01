@@ -16,6 +16,7 @@ import {
   type BodyKind,
   type IngestResult,
   MAX_MESSAGE_BYTES,
+  type MessageRef,
   type NewAttachment,
   type NewBody,
   type NewMessage,
@@ -88,6 +89,58 @@ async function storeObjects(
   return { bodies, attachments };
 }
 
+function describeMessage(
+  input: Pick<IngestInput, "source"> & {
+    envelope?: { from: string; to: string };
+    fallbackDate?: number | null;
+  },
+  raw: ArrayBuffer,
+  rawHash: string,
+  prefix: string,
+  parsed: ParsedMessage,
+  objects: Pick<NewMessage, "bodies" | "attachments">,
+): NewMessage {
+  const now = Date.now();
+  const text = readableText(parsed);
+  return {
+    rawHash,
+    rawSize: raw.byteLength,
+    r2Prefix: prefix,
+    source: input.source,
+    envelopeFrom: input.envelope?.from ?? null,
+    envelopeTo: input.envelope?.to ?? null,
+    parseStatus: parsed.status,
+    rfcMessageId: parsed.rfcMessageId,
+    references: parsed.references,
+    subject: parsed.subject,
+    from: parsed.from,
+    replyTo: parsed.replyTo,
+    to: parsed.to,
+    cc: parsed.cc,
+    snippet: snippetOf(text),
+    sentAt: parsed.sentAt,
+    // An imported message keeps its original date, and a forged future date must
+    // not pin it to the top of a list.
+    receivedAt:
+      input.source === "import"
+        ? Math.min(parsed.sentAt ?? input.fallbackDate ?? now, now)
+        : now,
+    // Only Cloudflare's own verdict at delivery counts. The same header on an
+    // imported or sent message says nothing we can trust.
+    authResults:
+      input.source === "inbound"
+        ? parseAuthenticationResults(parsed.firstAuthenticationResults)
+        : null,
+    searchBody: truncateUtf8(text, SEARCH_BODY_LIMIT_BYTES),
+    ...objects,
+  };
+}
+
+async function hashOf(raw: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", raw);
+  return new Uint8Array(digest).toHex();
+}
+
 // The only way a message enters a mailbox. Safe to repeat at every point: each
 // attempt writes under its own prefix, and the row that makes the message visible
 // goes in last, in one transaction, so it never points at a missing object. An
@@ -101,8 +154,7 @@ export async function ingest(
   const { mailboxId, raw } = input;
   if (raw.byteLength > MAX_MESSAGE_BYTES) return { status: "tooLarge" };
 
-  const digest = await crypto.subtle.digest("SHA-256", raw);
-  const rawHash = new Uint8Array(digest).toHex();
+  const rawHash = await hashOf(raw);
   const stub = mailboxStub(env, mailboxId);
 
   const existing = await stub.findByHash(rawHash);
@@ -118,39 +170,47 @@ export async function ingest(
     throw error;
   }
 
-  const now = Date.now();
-  const text = readableText(parsed);
-  const message: NewMessage = {
-    rawHash,
-    rawSize: raw.byteLength,
-    r2Prefix: prefix,
-    source: input.source,
-    envelopeFrom: input.source === "inbound" ? input.envelope.from : null,
-    envelopeTo: input.source === "inbound" ? input.envelope.to : null,
-    parseStatus: parsed.status,
-    rfcMessageId: parsed.rfcMessageId,
-    references: parsed.references,
-    subject: parsed.subject,
-    from: parsed.from,
-    replyTo: parsed.replyTo,
-    to: parsed.to,
-    cc: parsed.cc,
-    snippet: snippetOf(text),
-    sentAt: parsed.sentAt,
-    // An imported message keeps its original date, and a forged future date must
-    // not pin it to the top of a list.
-    receivedAt:
-      input.source === "import" ? Math.min(parsed.sentAt ?? now, now) : now,
-    // Only Cloudflare's own verdict at delivery counts. The same header on an
-    // imported or sent message says nothing we can trust.
-    authResults:
-      input.source === "inbound"
-        ? parseAuthenticationResults(parsed.firstAuthenticationResults)
-        : null,
-    searchBody: truncateUtf8(text, SEARCH_BODY_LIMIT_BYTES),
-    ...objects,
-  };
+  const message = describeMessage(input, raw, rawHash, prefix, parsed, objects);
   return (await stub.commit(message)) as IngestResult;
+}
+
+export type PreparedImport =
+  | { status: "tooLarge" }
+  | { status: "duplicate" }
+  | { status: "ready"; message: NewMessage; r2Writes: number };
+
+// `ingest` for the import job, which runs inside the Durable Object and has to save
+// a whole batch and its offset in one transaction. This does everything `ingest`
+// does before the commit, and the job's transaction commits through the same
+// MailboxStore.commit. The caller owns the prefix, so it can clean up a dead batch.
+export async function prepareImported(
+  bucket: R2Bucket,
+  known: { findByHash(rawHash: string): MessageRef | null },
+  input: { raw: ArrayBuffer; prefix: string; fallbackDate: number | null },
+): Promise<PreparedImport> {
+  const { raw, prefix, fallbackDate } = input;
+  if (raw.byteLength > MAX_MESSAGE_BYTES) return { status: "tooLarge" };
+
+  const rawHash = await hashOf(raw);
+  if (known.findByHash(rawHash)) return { status: "duplicate" };
+
+  const parsed = await parseMessage(raw);
+  const objects = await storeObjects(bucket, prefix, raw, parsed);
+  return {
+    status: "ready",
+    message: describeMessage(
+      { source: "import", fallbackDate },
+      raw,
+      rawHash,
+      prefix,
+      parsed,
+      objects,
+    ),
+    r2Writes:
+      1 +
+      objects.attachments.length +
+      objects.bodies.filter((body) => "r2Key" in body).length,
+  };
 }
 
 // What the Worker's email() handler runs. It does not check whether Mail is turned

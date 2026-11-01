@@ -125,6 +125,52 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
       DELETE FROM message_search WHERE rowid = old.id;
     END`,
   ],
+  [
+    // When a queued prefix may go. Objects still being written get a delay, and
+    // the alarm can now fire early for other work, so the delay has to be stored.
+    `ALTER TABLE r2_deletions ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0`,
+    `CREATE TABLE import_jobs (
+      id TEXT PRIMARY KEY,
+      mailbox_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('uploading', 'queued', 'running', 'done', 'failed', 'cancelled')),
+      file_name TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      fingerprint TEXT NOT NULL,
+      r2_key TEXT NOT NULL,
+      -- Not null while R2 holds an unfinished upload that someone must complete or abort.
+      upload_id TEXT,
+      byte_offset INTEGER NOT NULL DEFAULT 0,
+      skipping TEXT,
+      stored_count INTEGER NOT NULL DEFAULT 0,
+      duplicate_count INTEGER NOT NULL DEFAULT 0,
+      unreadable_count INTEGER NOT NULL DEFAULT 0,
+      -- Set before a batch writes to R2 and cleared by the transaction that saves it,
+      -- so finding it set means the last batch died, and names the objects it left.
+      attempt TEXT,
+      crashes INTEGER NOT NULL DEFAULT 0,
+      failures INTEGER NOT NULL DEFAULT 0,
+      next_run_at INTEGER,
+      failure TEXT,
+      created_at INTEGER NOT NULL,
+      finished_at INTEGER
+    )`,
+    `CREATE INDEX import_jobs_due ON import_jobs(next_run_at) WHERE next_run_at IS NOT NULL`,
+    // The R2 binding cannot list a multipart upload's parts, so they are kept here.
+    `CREATE TABLE import_parts (
+      job_id TEXT NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
+      part_number INTEGER NOT NULL,
+      etag TEXT NOT NULL,
+      PRIMARY KEY (job_id, part_number)
+    ) WITHOUT ROWID`,
+    `CREATE TABLE import_unreadable (
+      job_id TEXT NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
+      byte_offset INTEGER NOT NULL,
+      size INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      hint TEXT NOT NULL,
+      PRIMARY KEY (job_id, byte_offset)
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 export function applyMigrations(

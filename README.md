@@ -184,6 +184,14 @@ A user can upload an `.mbox` file, such as a Google Takeout export, into a mailb
 4. Each batch saves its messages and the new offset in one SQLite transaction, so a crash resumes from the last saved batch.
 5. A hash of each raw message prevents duplicates if a file is imported twice. The import screen lists any message it cannot read.
 
+Some details of how this works:
+
+- The reader treats a file as mboxrd: a line of `>From `, with any number of `>`, loses one `>`. That is exact for mboxrd, and for mboxo it restores every escaped line, at the cost of one `>` on a body line that really began `>From `. Nothing in a file says which format it is.
+- A line separates messages only if it starts with `From `, ends in a date, and is followed by a header, so a body line such as `From the desk of` stays in its message.
+- A message over the 25 MiB limit is skipped by reading past it, never holding it whole, and listed. So is a final message that the file cuts off, because an export can be downloaded again but a stored half-message looks whole.
+- A mailbox runs one import at a time. An upload with no new part for 3 days is removed, ahead of R2's own 7-day clean-up, which would otherwise leave the job pointing at nothing.
+- Gmail labels in `X-Gmail-Labels` are not imported yet, and the screen says so.
+
 New import sources add only a reader that yields raw messages. IMAP is the likely next source, because Workers can open outbound TLS connections. Calendar needs `.ics` import when it ships. Storage needs no importer, because upload and WebDAV already move files in.
 
 ### Optional Jev integration

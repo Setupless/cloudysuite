@@ -89,7 +89,7 @@ test("deliveries that overlap store one message and keep one set of objects", as
   expect(bucket.keys()).toHaveLength(3);
   expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
 
-  await object.alarm();
+  await instanceOf(MAILBOX_A).fireAlarm();
   const [winner] = db
     .exec<{ r2_prefix: string }>("SELECT r2_prefix FROM messages")
     .toArray();
@@ -159,7 +159,7 @@ test("a failed write leaves no objects behind once swept, and a retry stores the
     bucket.failPutsMatching = null;
     const retry = await ingest(env, inbound(withAttachment));
     expect(retry.status).toBe("stored");
-    await object.alarm();
+    await instanceOf(MAILBOX_A).fireAlarm();
     expect(bucket.keys()).toHaveLength(2);
     expect(db.exec("SELECT id FROM attachments").toArray()).toHaveLength(1);
     expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);
