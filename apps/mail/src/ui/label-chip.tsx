@@ -87,7 +87,7 @@ export function LabelIcon({ colour }: { colour: LabelColour }) {
       size={18}
       stroke={1.75}
       aria-hidden
-      className={LABEL_COLOUR_DISPLAY[colour].text}
+      className={`flex-none ${LABEL_COLOUR_DISPLAY[colour].text}`}
     />
   );
 }

@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { applyMigrations } from "../migrations";
 import type { SqlDriver } from "../sql";
+import { RuleStore } from "../rules/store";
 import { MailboxStore } from "../store";
 import { createSqlDriver } from "../test-support";
 import type { LabelId, NewMessage } from "../types";
@@ -15,7 +16,7 @@ beforeEach(() => {
   ({ db } = createSqlDriver());
   applyMigrations(db);
   store = new MailboxStore(db);
-  labels = new LabelStore(db);
+  labels = new LabelStore(db, new RuleStore(db));
 });
 
 function deliver(overrides: Partial<NewMessage> = {}) {

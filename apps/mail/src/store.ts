@@ -1,4 +1,4 @@
-import { placementFor } from "./placement";
+import { type Placement, placementFor } from "./placement";
 import type { SqlDriver, SqlRow } from "./sql";
 import {
   normalizeSubject,
@@ -255,6 +255,12 @@ export class MailboxStore {
       const placement = placementFor(message, this.#db);
       const threadId = this.#assignThread(message);
       const messageId = this.#insertMessage(message, threadId, placement);
+      this.#db.exec(
+        `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+         SELECT ?, id FROM labels WHERE id IN (SELECT value FROM json_each(?))`,
+        messageId,
+        JSON.stringify(placement.labelIds),
+      );
       // A reply stays in the conversation's labels, or a labelled conversation
       // would go quiet in its own label view.
       this.#db.exec(
@@ -375,7 +381,7 @@ export class MailboxStore {
   #insertMessage(
     message: NewMessage,
     threadId: ThreadId,
-    placement: { folder: Folder; read: boolean },
+    placement: Placement,
   ): MessageId {
     const { normalized, isReply } = normalizeSubject(message.subject);
     const [row] = this.#db
@@ -385,8 +391,8 @@ export class MailboxStore {
            parse_status, rfc_message_id, refs, thread_id, from_name, from_address,
            reply_to, to_addresses, cc_addresses, participants, subject,
            normalized_subject, is_orphan_reply, snippet, sent_at, received_at,
-           thread_date, is_read, folder, has_attachments, auth_results
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           thread_date, is_read, is_starred, folder, has_attachments, auth_results
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
         message.rawHash,
         message.rawSize,
@@ -412,6 +418,7 @@ export class MailboxStore {
         message.receivedAt,
         message.sentAt ?? message.receivedAt,
         placement.read ? 1 : 0,
+        placement.starred ? 1 : 0,
         placement.folder,
         message.attachments.some((attachment) => !attachment.inline) ? 1 : 0,
         message.authResults ? JSON.stringify(message.authResults) : null,

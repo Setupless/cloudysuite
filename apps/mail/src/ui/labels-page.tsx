@@ -1,10 +1,10 @@
 import { Button, Modal, Notice, Section, TextField } from "@cloudysuite/ui";
 import { IconPlus, IconTag, IconTrash } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import { deleteLabel, updateLabel } from "../functions";
 import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "../labels/store";
-import { asMailFailure, call, mailKeys } from "../queries";
+import { asMailFailure, call, mailKeys, rulesQuery } from "../queries";
 import {
   LABEL_COLOURS,
   type LabelColour,
@@ -53,10 +53,12 @@ function ColourChoice({
 
 function ConfirmDelete({
   label,
+  ruleCount,
   onCancel,
   onConfirm,
 }: {
   label: LabelSummary;
+  ruleCount: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -64,6 +66,8 @@ function ConfirmDelete({
     <Modal title={`Delete the label "${label.name}"?`} onClose={onCancel}>
       <p className="text-sm text-secondary">
         The mail stays where it is and only loses this label.
+        {ruleCount > 0 &&
+          ` ${ruleCount === 1 ? "1 rule adds" : `${ruleCount} rules add`} this label and will stop adding it.`}
       </p>
       <div className="flex justify-end gap-2">
         <Button variant="quiet" autoFocus onClick={onCancel}>
@@ -88,7 +92,17 @@ function LabelRow({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(label.name);
-  const [confirming, setConfirming] = useState(false);
+  // Shows at once, and goes back if the save fails.
+  const [colour, setColour] = useState(label.colour);
+  // A colleague can rename it while this page is open, and blurring the box must
+  // not write the old name back.
+  useEffect(() => {
+    setName(label.name);
+    setColour(label.colour);
+  }, [label.name, label.colour]);
+  const [confirming, setConfirming] = useState<{ ruleCount: number } | null>(
+    null,
+  );
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
@@ -138,18 +152,36 @@ function LabelRow({
       />
       <ColourChoice
         legend={`Colour of the label ${label.name}`}
-        value={label.colour}
-        onChange={(colour) =>
-          void attempt(() =>
-            updateLabel({ data: { mailboxId, labelId: label.id, colour } }),
-          )
-        }
+        value={colour}
+        onChange={async (next) => {
+          setColour(next);
+          const saved = await attempt(() =>
+            updateLabel({
+              data: { mailboxId, labelId: label.id, colour: next },
+            }),
+          );
+          if (!saved) setColour(label.colour);
+        }}
       />
       <button
         type="button"
         aria-label={`Delete the label ${label.name}`}
         title="Delete label"
-        onClick={() => setConfirming(true)}
+        onClick={async () => {
+          onProblem(null);
+          try {
+            const { rules } = await queryClient.fetchQuery(
+              rulesQuery(mailboxId),
+            );
+            setConfirming({
+              ruleCount: rules.filter(
+                (rule) => rule.actions.labelId === label.id,
+              ).length,
+            });
+          } catch (thrown) {
+            onProblem((await asMailFailure(thrown)).message);
+          }
+        }}
         className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2"
       >
         <IconTrash size={18} stroke={1.75} aria-hidden />
@@ -157,9 +189,10 @@ function LabelRow({
       {confirming && (
         <ConfirmDelete
           label={label}
-          onCancel={() => setConfirming(false)}
+          ruleCount={confirming.ruleCount}
+          onCancel={() => setConfirming(null)}
           onConfirm={() => {
-            setConfirming(false);
+            setConfirming(null);
             void attempt(() =>
               deleteLabel({ data: { mailboxId, labelId: label.id } }),
             );

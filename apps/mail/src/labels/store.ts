@@ -1,3 +1,4 @@
+import type { RuleStore } from "../rules/store";
 import type { SqlDriver } from "../sql";
 import { type LabelColour, type LabelId, parseColour } from "../types";
 
@@ -29,9 +30,11 @@ const GONE = {
 
 export class LabelStore {
   readonly #db: SqlDriver;
+  readonly #rules: RuleStore;
 
-  constructor(db: SqlDriver) {
+  constructor(db: SqlDriver, rules: RuleStore) {
     this.#db = db;
+    this.#rules = rules;
   }
 
   #named(name: string, except: LabelId | null): boolean {
@@ -117,6 +120,7 @@ export class LabelStore {
       this.#db.exec("DELETE FROM thread_views WHERE view = ?", `label:${id}`);
       this.#db.exec("DELETE FROM message_labels WHERE label_id = ?", id);
       this.#db.exec("DELETE FROM labels WHERE id = ?", id);
+      this.#rules.forgetLabel(id);
     });
   }
 }

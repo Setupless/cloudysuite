@@ -6,6 +6,7 @@ import {
   IconArchive,
   IconFile,
   IconFileImport,
+  IconFilter,
   IconInbox,
   IconMailbox,
   IconSend,
@@ -128,13 +129,24 @@ function MailNavigation({
           <Link
             to="/mail/$mailboxId/labels"
             params={{ mailboxId }}
-            className={`${NAV_ITEM} text-secondary`}
+            className={NAV_ITEM}
             activeProps={{ className: NAV_ITEM_ACTIVE }}
           >
             <IconTags size={18} stroke={1.75} aria-hidden />
             <span className="min-w-0 truncate">Edit labels</span>
           </Link>
         </>
+      )}
+      {current && (
+        <Link
+          to="/mail/$mailboxId/rules"
+          params={{ mailboxId }}
+          className={NAV_ITEM}
+          activeProps={{ className: NAV_ITEM_ACTIVE }}
+        >
+          <IconFilter size={18} stroke={1.75} aria-hidden />
+          <span className="min-w-0 truncate">Rules</span>
+        </Link>
       )}
       {current?.role === "manager" && (
         <Link

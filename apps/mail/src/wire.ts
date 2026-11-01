@@ -34,7 +34,7 @@ export function refusal(status: number, message: string): Response {
   });
 }
 
-const record = (raw: unknown): Record<string, unknown> => {
+export const record = (raw: unknown): Record<string, unknown> => {
   if (typeof raw !== "object" || raw === null) throw badRequest();
   return raw as Record<string, unknown>;
 };
@@ -45,7 +45,7 @@ export function requireMailboxId(raw: unknown): MailboxId {
   return id;
 }
 
-const positiveId = <Id>(raw: unknown): Id => {
+export const positiveId = <Id>(raw: unknown): Id => {
   if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 1) {
     throw badRequest();
   }

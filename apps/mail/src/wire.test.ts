@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
+import { parseNewRuleInput, parseReorderInput } from "./rules/wire";
+import { MAX_SEARCH_LENGTH, parseSearch } from "./search/query";
 import {
   parseFlagsInput,
   parseListInput,
   parseMailboxInput,
   parseMoveInput,
+  parseNewLabelInput,
+  parseSearchInput,
   parseSelectionInput,
 } from "./wire";
 
@@ -98,4 +102,90 @@ test("flag and move requests say what to change", async () => {
       parseMoveInput({ mailboxId, selection, folder: "nowhere" }),
     ),
   ).toBe(400);
+});
+
+test("search text past the limit is cut, and still reads as too long", () => {
+  const { text } = parseSearchInput({
+    mailboxId,
+    text: "x".repeat(102_400),
+    offsetMinutes: 0,
+  });
+  expect(text).toHaveLength(MAX_SEARCH_LENGTH + 1);
+  expect(parseSearch(text, 0)).toMatchObject({ ok: false });
+});
+
+test("a search needs text and a real time zone offset", () => {
+  const refused = (input: object) =>
+    expect(() => parseSearchInput({ mailboxId, ...input })).toThrow();
+  refused({ text: 42, offsetMinutes: 0 });
+  refused({ text: "a", offsetMinutes: 100_000 });
+  refused({ text: "a", offsetMinutes: "0" });
+  refused({ text: "a", offsetMinutes: 0, cursor: "x".repeat(65) });
+});
+
+test("a label name is checked here, and a bad colour is refused", async () => {
+  const input = { mailboxId, name: "  Work  ", colour: "accent" };
+  expect(parseNewLabelInput(input).name).toBe("Work");
+  expect(() =>
+    parseNewLabelInput({ ...input, colour: "not-a-role" }),
+  ).toThrow();
+  expect(() => parseNewLabelInput({ ...input, colour: "red-500" })).toThrow();
+  try {
+    parseNewLabelInput({ ...input, name: "x".repeat(65) });
+    throw new Error("should refuse");
+  } catch (thrown) {
+    const response = thrown as Response;
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { message: string }).message).toContain(
+      "name of up to",
+    );
+  }
+});
+
+test("a move can name one folder or several, and only real ones", () => {
+  const base = { mailboxId, folder: "trash" };
+  const selection = (inFolder: unknown) => ({
+    ...base,
+    selection: { threadIds: [1], inFolder },
+  });
+  expect(parseMoveInput(selection(["inbox", "sent"])).selection).toMatchObject({
+    inFolder: ["inbox", "sent"],
+  });
+  expect(parseMoveInput(selection("inbox")).selection).toMatchObject({
+    inFolder: "inbox",
+  });
+  expect(() => parseMoveInput(selection([]))).toThrow();
+  expect(() => parseMoveInput(selection(["nowhere"]))).toThrow();
+  expect(() => parseMoveInput(selection(Array(7).fill("inbox")))).toThrow();
+});
+
+test("a bad rule is refused with what to fix", async () => {
+  try {
+    parseNewRuleInput({
+      mailboxId,
+      rule: {
+        name: "",
+        enabled: true,
+        match: "all",
+        conditions: [],
+        actions: {},
+      },
+    });
+    throw new Error("should refuse");
+  } catch (thrown) {
+    const response = thrown as Response;
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { message: string }).message).toBe(
+      "Give the rule a name.",
+    );
+  }
+});
+
+test("a reorder can't be larger than the rule limit", () => {
+  expect(() =>
+    parseReorderInput({ mailboxId, ruleIds: Array(101).fill(1) }),
+  ).toThrow();
+  expect(parseReorderInput({ mailboxId, ruleIds: [2, 1] }).ruleIds).toEqual([
+    2, 1,
+  ] as never);
 });

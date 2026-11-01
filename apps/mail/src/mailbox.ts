@@ -4,6 +4,8 @@ import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
 import { LabelStore, type LabelWrite } from "./labels/store";
 import { applyMigrations } from "./migrations";
+import { RuleStore } from "./rules/store";
+import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
 import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import type { SqlDriver } from "./sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
@@ -32,6 +34,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #imports: ImportStore;
   readonly #search: SearchStore;
   readonly #labels: LabelStore;
+  readonly #rules: RuleStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -43,7 +46,8 @@ export class Mailbox extends DurableObject<Env> {
     this.#store = new MailboxStore(db);
     this.#imports = new ImportStore(db, this.#store);
     this.#search = new SearchStore(db, this.#store);
-    this.#labels = new LabelStore(db);
+    this.#rules = new RuleStore(db);
+    this.#labels = new LabelStore(db, this.#rules);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -106,6 +110,26 @@ export class Mailbox extends DurableObject<Env> {
 
   deleteLabel(id: LabelId): void {
     this.#labels.delete(id);
+  }
+
+  listRules(): Rule[] {
+    return this.#rules.list();
+  }
+
+  createRule(draft: RuleDraft): RuleWrite {
+    return this.#rules.create(draft);
+  }
+
+  updateRule(id: RuleId, draft: RuleDraft): RuleWrite {
+    return this.#rules.update(id, draft);
+  }
+
+  deleteRule(id: RuleId): void {
+    this.#rules.delete(id);
+  }
+
+  reorderRules(ids: RuleId[]): boolean {
+    return this.#rules.reorder(ids);
   }
 
   threadOfMessage(messageId: MessageId): ThreadId | null {
