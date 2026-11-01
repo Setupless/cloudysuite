@@ -1,7 +1,16 @@
-import { IconArrowLeft } from "@tabler/icons-react";
+import { Button } from "@cloudysuite/ui";
+import {
+  IconArrowBackUp,
+  IconArrowForwardUp,
+  IconArrowLeft,
+  IconCornerUpLeftDouble,
+} from "@tabler/icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useCompose } from "../compose/ui/compose-context";
+import { ComposeEditor } from "../compose/ui/editor";
+import { outgoingQuery } from "../compose/ui/queries";
 import {
   FOLDER_DISPLAY,
   listingSearchParams,
@@ -65,6 +74,67 @@ function ThreadGone() {
       >
         Back to {place}
       </Link>
+    </div>
+  );
+}
+
+function ReplyArea({
+  threadId,
+  latest,
+}: {
+  threadId: ThreadId;
+  latest: MessageId;
+}) {
+  const compose = useCompose();
+  const { data: outgoing = [] } = useQuery(outgoingQuery(compose.mailboxId));
+  const session = compose.session;
+  if (
+    session &&
+    session.host === "inline" &&
+    "threadId" in session &&
+    session.threadId === threadId
+  ) {
+    return (
+      <div className="py-3">
+        <ComposeEditor key={session.id} session={session} />
+      </div>
+    );
+  }
+  // Newest first, so this is the one someone was working on last.
+  const draft = outgoing.find(
+    (job) => job.state === "draft" && job.threadId === threadId,
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-2 py-3">
+      {draft && (
+        <Button
+          variant="quiet"
+          onClick={() => compose.openDraft(draft.id, { threadId })}
+        >
+          Continue the draft by {draft.updatedByName}
+        </Button>
+      )}
+      <Button
+        variant="quiet"
+        icon={IconArrowBackUp}
+        onClick={() => compose.startFrom("reply", latest, threadId)}
+      >
+        Reply
+      </Button>
+      <Button
+        variant="quiet"
+        icon={IconCornerUpLeftDouble}
+        onClick={() => compose.startFrom("replyAll", latest, threadId)}
+      >
+        Reply all
+      </Button>
+      <Button
+        variant="quiet"
+        icon={IconArrowForwardUp}
+        onClick={() => compose.startFrom("forward", latest, threadId)}
+      >
+        Forward
+      </Button>
     </div>
   );
 }
@@ -222,6 +292,7 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
           />
         );
       })}
+      {lastMessage && <ReplyArea threadId={threadId} latest={lastMessage} />}
     </div>
   );
 }

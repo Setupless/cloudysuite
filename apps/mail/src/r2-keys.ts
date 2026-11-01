@@ -31,3 +31,22 @@ export const importAttemptPrefix = (mailboxId: MailboxId, attempt: string) =>
 
 export const importMessagePrefix = (attemptPrefix: string, index: number) =>
   `${attemptPrefix}${index}/`;
+
+// Everything a message holds before it is sent. Its files go through the deletion
+// queue with this prefix once it is sent or discarded.
+export const outgoingPrefix = (mailboxId: MailboxId, outgoingId: string) =>
+  `mailboxes/${mailboxId}/outgoing/${outgoingId}/`;
+
+export const quoteHtmlKey = (prefix: string) => `${prefix}quote.html`;
+export const quoteTextKey = (prefix: string) => `${prefix}quote.txt`;
+
+export const attachmentUploadKey = (prefix: string, uploadId: string) =>
+  `${prefix}attachments/${uploadId}`;
+
+export const forwardedAttachmentKey = (prefix: string, position: number) =>
+  `${prefix}forwarded/${position}`;
+
+// Fixed per send job, so storing the copy again after a crash overwrites its own
+// objects. It sits beside the draft's prefix, not inside it, because that one is deleted.
+export const sentCopyPrefix = (outgoingPrefixValue: string) =>
+  `${outgoingPrefixValue.slice(0, -1).replace("/outgoing/", "/messages/sent-")}/`;

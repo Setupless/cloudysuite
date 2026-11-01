@@ -171,6 +171,17 @@ Search, labels, and rules work like this:
 - A rule can't forward mail, because that would make a mailbox an open relay. A rule can't delete permanently, because a bad rule must never lose mail. Its strongest action moves mail to Trash.
 - Rules run before spam scoring, and the spam verdict has the last word on the folder. A rule reads a `From` line that anyone can forge, so it must not be a way past the spam filter. A mailbox's allow list is the deliberate way to trust a sender.
 
+How sending behaves, and why:
+
+- **Undo.** Send waits 10 seconds on the server, so closing the tab can't lose the message, and Undo still works after a reload. Undo returns it to a draft.
+- **A send is never repeated by guesswork.** A clean refusal says what to do. Only a rate limit retries by itself. If a crash or a lost connection leaves it unclear whether a message went out, the person is told to check with the recipient. A duplicate is worse than asking.
+- **A message that can't settle right away never floats over the mail.** A failure, or a wait to retry, sits in a band above the mail, one at a time, with a count of the rest. Only the seconds just after pressing Send float, because they're gone within moments.
+- **A queued message is checked again before each attempt.** Minutes can pass between pressing Send and the message going out, including rate-limit retries. If its From address has left the mailbox, the person who pressed Send has lost access or been banned, or Mail was turned off, it doesn't go, and it stays in Drafts with a plain reason. If the directory can't answer, the job waits and tries again, then fails the same way. It never sends without an answer.
+- **Drafts are not messages.** They autosave to their own table, so saving can't fill the mailbox and search or Trash never finds half-written mail. In a shared mailbox, the last save wins and that person is told. Moving to another list or conversation closes the editor and keeps the draft, and a short notice offers the way back.
+- **Quoted mail stays in the sandboxed reading frame.** A stranger's markup never joins the editor, so a reply can leave the original out but can't edit inside it.
+- **A message to your own address appears twice, threaded together: once in Sent and once in the Inbox.** A header on inbound mail is never a reason to drop it, because anyone can copy one. Only byte-identical redelivery counts as a duplicate.
+- **Attachments can add up to about 18 MB.** The 25 MiB limit counts the encoded message, and files grow by about a third in email.
+
 Scheduled send and snooze are not in the first release. Native mail apps such as Apple Mail and Outlook are not supported, because they need IMAP and SMTP servers that run outside Workers.
 
 ### Spam filtering
@@ -242,6 +253,7 @@ These limits come from the Cloudflare docs and shape the product:
 - Sending to arbitrary recipients requires the Workers Paid plan. It includes 3,000 outbound emails per month, then costs $0.35 per 1,000.
 - New accounts start with a low daily sending quota that Cloudflare raises over time.
 - Messages have a 25 MiB limit, inbound and outbound, including attachments.
+- Cloudflare generates each outgoing `Message-ID`, and its docs don't say whether the `messageId` that `send()` returns is the same value. Threading works either way: see [`threading-headers.ts`](apps/mail/src/compose/threading-headers.ts).
 - A message can have at most 50 recipients across to, cc, and bcc.
 - A SQLite-backed Durable Object can store up to 10 GB, and a single row can hold up to 2 MB, so large message bodies go in R2.
 

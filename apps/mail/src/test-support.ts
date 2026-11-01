@@ -31,6 +31,27 @@ export function createSqlDriver(): { db: SqlDriver; sqlite: Database } {
   return { db, sqlite };
 }
 
+type SentEmail = EmailMessageBuilder & { messageId: string };
+
+// Records what the Worker asked to send. A queued throw plays the next answer.
+export class FakeEmail {
+  sent: SentEmail[] = [];
+  nextThrows: unknown[] = [];
+  // Runs inside send(), after the job has recorded its intent.
+  beforeAnswer: (() => Promise<void>) | null = null;
+  nextMessageId: string | null = null;
+
+  async send(builder: EmailMessageBuilder): Promise<{ messageId: string }> {
+    await this.beforeAnswer?.();
+    const thrown = this.nextThrows.shift();
+    if (thrown) throw thrown;
+    const messageId =
+      this.nextMessageId ?? `<${crypto.randomUUID()}@sending.example>`;
+    this.sent.push({ ...builder, messageId });
+    return { messageId };
+  }
+}
+
 export class FakeBucket {
   objects = new Map<string, Uint8Array>();
   failPutsMatching: RegExp | null = null;
@@ -154,10 +175,12 @@ type Instance = {
 // It does not prove the Workers runtime, so run that behaviour there as well.
 export function createTestEnv(database?: D1Database) {
   const bucket = new FakeBucket();
+  const email = new FakeEmail();
   const instances = new Map<string, Instance>();
   const env = {
     DB: database,
     BUCKET: bucket,
+    EMAIL: email,
     MAILBOX: {
       idFromName: (name: string) => name,
       get: (name: string) => instanceOf(name).object,
@@ -208,6 +231,7 @@ export function createTestEnv(database?: D1Database) {
   return {
     env,
     bucket,
+    email,
     instanceOf,
     restart(name: string) {
       const instance = instanceOf(name);

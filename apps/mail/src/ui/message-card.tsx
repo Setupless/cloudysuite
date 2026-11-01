@@ -248,6 +248,7 @@ function MessageDetails({
     ["Reply to", peopleLine(message.replyTo)],
     ["To", peopleLine(message.to)],
     ["Cc", peopleLine(message.cc)],
+    ["Bcc", peopleLine(message.bcc)],
     ["Delivered to", message.envelopeTo ?? ""],
     ["Date", formatFullDate(message.sentAt ?? message.receivedAt)],
     ["Subject", message.subject ?? ""],

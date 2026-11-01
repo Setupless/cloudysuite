@@ -117,6 +117,7 @@ function describeMessage(
     replyTo: parsed.replyTo,
     to: parsed.to,
     cc: parsed.cc,
+    bcc: input.source === "sent" ? parsed.bcc : [],
     snippet: snippetOf(text),
     sentAt: parsed.sentAt,
     // An imported message keeps its original date, and a forged future date must
@@ -211,6 +212,30 @@ export async function prepareImported(
       objects.attachments.length +
       objects.bodies.filter((body) => "r2Key" in body).length,
   };
+}
+
+// `ingest` for the send job, which runs inside the Durable Object and has to end the job
+// in the same transaction that stores the copy. The caller owns the prefix, which is
+// fixed per job, so repeating this after a crash overwrites its own objects.
+export async function prepareSent(
+  bucket: R2Bucket,
+  input: { raw: ArrayBuffer; prefix: string },
+): Promise<NewMessage> {
+  const { raw, prefix } = input;
+  if (raw.byteLength > MAX_MESSAGE_BYTES) {
+    throw new Error("A sent copy is over the limit the send check allows.");
+  }
+  const rawHash = await hashOf(raw);
+  const parsed = await parseMessage(raw);
+  const objects = await storeObjects(bucket, prefix, raw, parsed);
+  return describeMessage(
+    { source: "sent" },
+    raw,
+    rawHash,
+    prefix,
+    parsed,
+    objects,
+  );
 }
 
 // What the Worker's email() handler runs. It does not check whether Mail is turned

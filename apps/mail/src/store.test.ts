@@ -29,6 +29,7 @@ function message(overrides: Partial<NewMessage> = {}): NewMessage {
     rawSize: 10,
     r2Prefix: `mailboxes/m/messages/${rawHash}/`,
     source: "inbound",
+    bcc: [],
     envelopeFrom: "alice@example.org",
     envelopeTo: "bob@example.com",
     parseStatus: "parsed",

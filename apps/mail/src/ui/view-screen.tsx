@@ -1,5 +1,5 @@
 import { Button, Modal } from "@cloudysuite/ui";
-import { IconKeyboard } from "@tabler/icons-react";
+import { IconKeyboard, IconPencil } from "@tabler/icons-react";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import {
   type DehydratedState,
@@ -17,6 +17,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { useCompose } from "../compose/ui/compose-context";
+import { DraftRows } from "../compose/ui/draft-rows";
+import { ComposeEditor } from "../compose/ui/editor";
 import {
   FOLDER_DISPLAY,
   listingSearchParams,
@@ -64,6 +67,12 @@ const SHORTCUTS: [string, string][] = [
   ["u", "Mark as read or unread"],
   ["l", "Add or remove labels"],
   ["/", "Search"],
+  ["c", "Write a new message"],
+  ["r", "Reply"],
+  ["a", "Reply all"],
+  ["f", "Forward"],
+  ["Ctrl or ⌘ + Enter", "Send the message you're writing"],
+  ["Esc", "Close the message you're writing and keep it as a draft"],
   ["?", "Show these shortcuts"],
 ];
 
@@ -251,8 +260,43 @@ function MailView({
     return detail ? labelsOnThread(detail) : [];
   };
 
+  const compose = useCompose();
+  const panelSession =
+    compose.session?.host === "panel" ? compose.session : null;
+
+  // An editor belongs to the panel or the conversation it opened in, so it makes way
+  // when that changes. A draft keeps what was typed, because its editor saves as it
+  // closes.
+  const latestCompose = useRef({
+    close: compose.close,
+    session: compose.session,
+  });
+  latestCompose.current = { close: compose.close, session: compose.session };
+  useEffect(() => {
+    const { close, session } = latestCompose.current;
+    if (!session) return;
+    const outOfPlace =
+      session.host === "panel"
+        ? openThreadId !== null
+        : "threadId" in session && session.threadId !== openThreadId;
+    if (outOfPlace) close();
+  }, [openThreadId]);
+
+  const answerOpenThread = (mode: "reply" | "replyAll" | "forward") => {
+    if (openThreadId === null) return;
+    const latest = queryClient
+      .getQueryData<ThreadDetail | null>(
+        mailKeys.thread(mailboxId, openThreadId),
+      )
+      ?.messages.at(-1);
+    if (latest) compose.startFrom(mode, latest.id, openThreadId);
+  };
+
   const hotkeysOn =
-    !helpOpen && confirmingDelete === null && labelling === null;
+    !helpOpen &&
+    confirmingDelete === null &&
+    labelling === null &&
+    compose.session === null;
   const hotkeys = { enabled: hotkeysOn };
   useHotkey("J", () => step(1), hotkeys);
   useHotkey("K", () => step(-1), hotkeys);
@@ -301,6 +345,17 @@ function MailView({
     },
     hotkeys,
   );
+  useHotkey(
+    "C",
+    () => {
+      if (openThreadId !== null) closeThread();
+      compose.startNew();
+    },
+    hotkeys,
+  );
+  useHotkey("R", () => answerOpenThread("reply"), hotkeys);
+  useHotkey("A", () => answerOpenThread("replyAll"), hotkeys);
+  useHotkey("F", () => answerOpenThread("forward"), hotkeys);
 
   const context = {
     mailboxId,
@@ -314,7 +369,9 @@ function MailView({
   };
 
   let listBody: ReactNode;
-  if (list.isPending) {
+  if (folder === "drafts") {
+    listBody = <DraftRows />;
+  } else if (list.isPending) {
     listBody = <SkeletonLines rows={9} />;
   } else if (list.isError) {
     listBody = (
@@ -356,10 +413,10 @@ function MailView({
 
   return (
     <MailViewContext.Provider value={context}>
-      <div className="flex h-[calc(100dvh-3.25rem)] min-w-0">
+      <div className="flex h-full min-w-0">
         <section
           aria-label={title}
-          className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null ? "flex" : "max-lg:hidden"}`}
+          className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null && !panelSession ? "flex" : "max-lg:hidden"}`}
         >
           <SearchBox
             key={searching ? view.search : ""}
@@ -376,6 +433,18 @@ function MailView({
                 {unread} unread
               </span>
             )}
+            <span className="self-center">
+              <Button
+                variant="action"
+                icon={IconPencil}
+                onClick={() => {
+                  if (openThreadId !== null) closeThread();
+                  compose.startNew();
+                }}
+              >
+                Write
+              </Button>
+            </span>
             <span className="self-center max-lg:hidden">
               <IconButton
                 icon={IconKeyboard}
@@ -388,10 +457,14 @@ function MailView({
         </section>
         <section
           key={openThreadId ?? "none"}
-          aria-label="Conversation"
-          className={`min-w-0 flex-1 overflow-y-auto bg-panel ${openThreadId === null ? "max-lg:hidden" : ""}`}
+          aria-label={panelSession ? "New message" : "Conversation"}
+          className={`min-w-0 flex-1 overflow-y-auto bg-panel ${openThreadId === null && !panelSession ? "max-lg:hidden" : ""}`}
         >
-          {children}
+          {panelSession ? (
+            <ComposeEditor key={panelSession.id} session={panelSession} />
+          ) : (
+            children
+          )}
         </section>
       </div>
       {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
@@ -431,6 +504,18 @@ export function MailViewScreen({
   children: ReactNode;
 }) {
   const view = useMemo(() => parseListing(viewRaw, q), [viewRaw, q]);
+  const compose = useCompose();
+  const latestCompose = useRef(compose);
+  latestCompose.current = compose;
+  // Another list rebuilds the whole screen, and a new editor can't pick up what the
+  // old one was holding. Its words are in Drafts, and its toast offers the way back.
+  useEffect(
+    () => () => {
+      const { session, close } = latestCompose.current;
+      if (session) close();
+    },
+    [viewRaw, q],
+  );
   if (!view) {
     return (
       <FailureNotice message="We couldn't find that folder. Choose one from the menu." />

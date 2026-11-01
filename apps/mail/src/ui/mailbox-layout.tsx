@@ -23,6 +23,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { ComposeProvider } from "../compose/ui/compose-context";
 import type { MailboxEntry } from "../functions";
 import { FOLDER_DISPLAY, FOLDER_ORDER, viewParam } from "../model";
 import { mailboxesQuery, REFRESH_MS } from "../queries";
@@ -214,7 +215,9 @@ function MailboxShell({
         />
       }
     >
-      {children}
+      <ComposeProvider key={mailboxId} mailboxId={mailboxId}>
+        {children}
+      </ComposeProvider>
     </SuiteShell>
   );
 }
