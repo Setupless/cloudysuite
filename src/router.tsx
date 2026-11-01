@@ -1,9 +1,9 @@
 import { createRouter } from "@tanstack/react-router";
-import { isAppId } from "./routing";
+import { isAppId, isGatePath } from "./routing";
 import { routeTree } from "./routeTree.gen";
 
 function appPrefix(url: URL): string | null {
-  if (url.pathname === "/off" || url.pathname === "/setup") return null;
+  if (isGatePath(url.pathname)) return null;
   const label = url.hostname.split(".")[0]?.toLowerCase() ?? "";
   return isAppId(label) ? `/${label}` : null;
 }

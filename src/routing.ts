@@ -49,12 +49,19 @@ export function resolveHost(hostname: string, settings: Settings): HostRoute {
   return { kind: "app", app: label };
 }
 
-const GATE_PAGES = ["/setup", "/off"];
+// The wizard's page and its API. Everything else waits until setup finishes.
+export function isSetupPath(pathname: string): boolean {
+  return pathname === "/setup" || pathname.startsWith("/setup/");
+}
+
+export function isGatePath(pathname: string): boolean {
+  return pathname === "/off" || isSetupPath(pathname);
+}
 
 export function gate(route: HostRoute, pathname: string): Gate {
   switch (route.kind) {
     case "setup":
-      return pathname === "/setup"
+      return isSetupPath(pathname)
         ? { action: "pass" }
         : { action: "redirect", to: "/setup" };
     case "off":
@@ -62,7 +69,7 @@ export function gate(route: HostRoute, pathname: string): Gate {
         ? { action: "pass" }
         : { action: "redirect", to: "/off" };
     case "app":
-      return GATE_PAGES.includes(pathname)
+      return isGatePath(pathname)
         ? { action: "redirect", to: "/" }
         : { action: "pass" };
     case "unknown":
