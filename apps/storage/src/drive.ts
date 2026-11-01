@@ -29,12 +29,7 @@ import type {
   TrashResult,
   UploadView,
 } from "./types";
-import {
-  claimDriveSpace,
-  claimMoveSpace,
-  type NextUsage,
-  writeDriveUsage,
-} from "./usage";
+import { claimDriveSpace, claimMoveSpace, writeDriveUsage } from "./usage";
 
 const SWEEP_LIMIT = 50;
 const SWEEP_RETRY_MS = 60 * 60 * 1000;
@@ -143,7 +138,8 @@ export class Drive extends DurableObject<Env> {
         if (this.#store.uploadFolderIsLocked(id)) {
           return { status: "folderBusy" };
         }
-        if (!(await claimDriveSpace(this.env.DB, driveId, this.#next(size)))) {
+        const total = this.#usedBytes() + size;
+        if (!(await claimDriveSpace(this.env.DB, driveId, total))) {
           this.#store.closeRefusedUpload(id, Date.now());
           await this.#scheduleNextWakeUp();
           return { status: "overLimit" };
@@ -157,10 +153,8 @@ export class Drive extends DurableObject<Env> {
     return result;
   }
 
-  #next(addedBytes: number): NextUsage {
-    return this.#store.moveInDoubt()
-      ? { added: addedBytes }
-      : { total: (this.#store.usage()?.usedBytes ?? 0) + addedBytes };
+  #usedBytes(): number {
+    return this.#store.usage()?.usedBytes ?? 0;
   }
 
   async rename(input: {
@@ -263,8 +257,9 @@ export class Drive extends DurableObject<Env> {
     }
   }
 
-  // Claiming in the same turn as adding the rows means nothing can be written to D1 in
-  // between. A refusal after the claim is put right by each drive's next exact total.
+  // Nothing else can write this drive's figure between the claim and adding the rows. If
+  // the rows never go in, the flag's exact total takes the claim back, and a repeat claims
+  // from the local total again, so it can't count the bytes twice.
   async receiveMove(move: MoveDelivery): Promise<ReceiveResult> {
     const driveId = move.toDriveId;
     const bytes = movedBytes(move.rows);
@@ -278,8 +273,8 @@ export class Drive extends DurableObject<Env> {
         await this.#scheduleNextWakeUp();
         const claimed = await claimMoveSpace(
           this.env.DB,
-          { fromDriveId: move.fromDriveId, toDriveId: driveId, bytes },
-          this.#next(bytes),
+          driveId,
+          this.#usedBytes() + bytes,
         );
         if (!claimed) return { status: "overLimit", bytes };
       }
@@ -351,10 +346,6 @@ export class Drive extends DurableObject<Env> {
     return this.#oneAtATime(async () => {
       const usage = this.#store.usage();
       if (!usage) return;
-      if (this.#store.moveInDoubt()) {
-        this.#store.postponeUsageWrite(Date.now() + USAGE_RETRY_MS);
-        return;
-      }
       try {
         await writeDriveUsage(this.env.DB, usage);
         this.#store.markUsageWritten(usage);

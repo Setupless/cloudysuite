@@ -570,58 +570,253 @@ test("the organisation's limit doesn't refuse a move, however full it is", async
   expect(usage(MY_FILES)).toEqual({ bytes: 5, files: 1 });
 });
 
-test("the organisation's total counts moved bytes once at every step", async () => {
+test("during a move D1 counts the bytes on both sides, then each side's exact total", async () => {
   const file = await upload("Report.pdf", null, 5);
   await upload("Stays.pdf", null, 2);
   expect(orgTotal()).toBe(7);
 
   const mend = receiverCommitsThenLosesAnswer();
   await kit.drive.move(file.id, kit.driveB, null);
+  expect(usage(DRIVE_A).bytes).toBe(7);
   expect(usage(DRIVE_B).bytes).toBe(5);
-  expect(usage(DRIVE_A).bytes).toBe(2);
-  expect(orgTotal()).toBe(7);
 
-  // The sender's own wake-up mustn't put its old figure back while it can't know.
+  // The sender still holds its rows, so its own exact total counts them, rightly.
   later(2 * 60_000);
-  await kit.instance(DRIVE_A).object.alarm();
-  expect(orgTotal()).toBe(7);
+  await upload("Another.pdf", null, 1);
+  expect(usage(DRIVE_A).bytes).toBe(8);
+  await kit.drive.trash(
+    (await kit.drive.list(null, null))?.items.find(
+      (item) => item.name === "Another.pdf",
+    )?.id as ItemId,
+  );
+  await kit.drive.emptyTrash();
+  expect(usage(DRIVE_A).bytes).toBe(7);
 
   mend();
   const confirm = confirmNeverArrives();
   later(2 * 60_000);
   await kit.instance(DRIVE_A).object.alarm();
+  expect(usage(DRIVE_A)).toEqual({ bytes: 2, files: 1 });
   expect(orgTotal()).toBe(7);
+
   confirm();
   later(2 * 60_000);
   await kit.instance(DRIVE_A).object.alarm();
-  expect(orgTotal()).toBe(7);
   expect(usage(DRIVE_A)).toEqual({ bytes: 2, files: 1 });
   expect(usage(DRIVE_B)).toEqual({ bytes: 5, files: 1 });
+  expect(orgTotal()).toBe(7);
 });
 
-test("an upload to the sender during a move isn't refused because of the move", async () => {
+test("an upload near a full organisation limit is refused during a move, and works after it", async () => {
   const file = await upload("Report.pdf", null, 5);
   setOrgLimit(6);
   const mend = receiverCommitsThenLosesAnswer();
   await kit.drive.move(file.id, kit.driveB, null);
-  expect(orgTotal()).toBe(5);
+  expect(orgTotal()).toBe(10);
 
-  await upload("Small.pdf", null, 1);
-  expect(orgTotal()).toBe(6);
   const refused = await kit.drive.uploads.start({
     parentId: null,
-    name: "Too.pdf",
+    name: "Small.pdf",
     size: 1,
     mimeType: "image/png",
-    fingerprint: "too",
+    fingerprint: "small-refused",
   });
   expect(refused.ok).toBe(false);
 
   mend();
   await kit.fireAlarm();
+  expect(orgTotal()).toBe(5);
+  await upload("Small.pdf", null, 1);
   expect(orgTotal()).toBe(6);
   expect(usage(DRIVE_A)).toEqual({ bytes: 1, files: 1 });
   expect(usage(DRIVE_B)).toEqual({ bytes: 5, files: 1 });
+});
+
+// The object dies between its claim in D1 and adding the rows.
+function receiverDiesAfterClaim(driveId: DriveId = DRIVE_B) {
+  const instance = kit.instance(driveId);
+  const real = instance.db.exec;
+  instance.db.exec = (query, ...bindings) => {
+    if (query.includes("INSERT INTO items")) throw new Error("killed");
+    return real(query, ...bindings);
+  };
+  kit.restart(driveId);
+  return () => {
+    instance.db.exec = real;
+    kit.restart(driveId);
+  };
+}
+
+test("a crash after the receiver's claim can't let an upload past a full organisation", async () => {
+  await upload("Stays.pdf", null, 4);
+  const moving = await upload("Move.pdf", null, 6);
+  const racing = await startUpload("Racing.pdf", null, 6, kit.drive);
+  setOrgLimit(10);
+
+  const mend = receiverDiesAfterClaim();
+  expect((await kit.drive.move(moving.id, kit.driveB, null)).status).toBe(
+    "pending",
+  );
+  expect(usage(DRIVE_A).bytes).toBe(10);
+  expect(usage(DRIVE_B).bytes).toBe(6);
+
+  // The receiver's alarm takes back its claim, and the sender's figure never moved.
+  await kit.fireAlarm(DRIVE_B);
+  expect(usage(DRIVE_A).bytes).toBe(10);
+  expect(usage(DRIVE_B).bytes).toBe(0);
+  expect(orgTotal()).toBe(10);
+
+  const refused = await kit.drive.uploads.complete(racing);
+  expect(refused.ok).toBe(false);
+  const started = await kit.drive.uploads.start({
+    parentId: null,
+    name: "Slip.pdf",
+    size: 6,
+    mimeType: "image/png",
+    fingerprint: "slip",
+  });
+  expect(started.ok).toBe(false);
+
+  // The first wake-up clears the refused upload, and the second retries the move.
+  mend();
+  await kit.fireAlarm(DRIVE_A);
+  await kit.fireAlarm(DRIVE_A);
+  expect(await names()).toEqual(["Stays.pdf"]);
+  expect(await names(kit.driveB)).toEqual(["Move.pdf"]);
+  expect(usage(DRIVE_A)).toEqual({ bytes: 4, files: 1 });
+  expect(usage(DRIVE_B)).toEqual({ bytes: 6, files: 1 });
+  expect(orgTotal()).toBe(10);
+});
+
+test("a receiver claiming again after a crash counts the bytes once", async () => {
+  const mine = await withMyFiles(6);
+  const file = await upload("Report.pdf", null, 6);
+  const mend = receiverDiesAfterClaim(MY_FILES);
+  await kit.drive.move(file.id, mine, null);
+  expect(usage(MY_FILES).bytes).toBe(6);
+
+  // Its alarm hasn't run, so D1 still holds the first claim, which exactly fills the limit.
+  mend();
+  await kit.fireAlarm();
+  expect(await names(mine)).toEqual(["Report.pdf"]);
+  expect(usage(MY_FILES)).toEqual({ bytes: 6, files: 1 });
+  expect(usage(DRIVE_A)).toEqual({ bytes: 0, files: 0 });
+});
+
+test("a move out of My files frees its room once the move ends", async () => {
+  const mine = await withMyFiles(5);
+  const file = await upload("Report.pdf", null, 5, mine);
+  const mend = receiverCommitsThenLosesAnswer();
+  await mine.move(file.id, kit.driveB, null);
+  const during = await mine.uploads.start({
+    parentId: null,
+    name: "New.pdf",
+    size: 5,
+    mimeType: "image/png",
+    fingerprint: "during",
+  });
+  expect(during.ok).toBe(false);
+
+  mend();
+  await kit.fireAlarm(MY_FILES);
+  expect(usage(MY_FILES)).toEqual({ bytes: 0, files: 0 });
+  await upload("New.pdf", null, 5, mine);
+  expect(usage(MY_FILES)).toEqual({ bytes: 5, files: 1 });
+});
+
+test("a failed write of the sender's total after a move is retried by its alarm", async () => {
+  const file = await upload("Report.pdf", null, 5);
+  const mend = receiverCommitsThenLosesAnswer();
+  await kit.drive.move(file.id, kit.driveB, null);
+  mend();
+
+  kit.d1Failures.usageWrites = true;
+  later(2 * 60_000);
+  await kit.instance(DRIVE_A).object.alarm();
+  expect(await names()).toEqual([]);
+  expect(usage(DRIVE_A).bytes).toBe(5);
+
+  kit.d1Failures.usageWrites = false;
+  await kit.fireAlarm();
+  expect(usage(DRIVE_A)).toEqual({ bytes: 0, files: 0 });
+  expect(orgTotal()).toBe(5);
+});
+
+test("a delivery stalled past the give-up can leave D1 high, never low, until the next exact total", async () => {
+  await upload("Stays.pdf", null, 4);
+  const moving = await upload("Move.pdf", null, 6);
+  setOrgLimit(10);
+
+  // The delivery is stuck just before its claim, and its caller has stopped listening.
+  const receiver = kit.instance(DRIVE_B).object;
+  const { storage } = (
+    receiver as unknown as {
+      ctx: { storage: { setAlarm: (at: number) => Promise<void> } };
+    }
+  ).ctx;
+  const realSetAlarm = storage.setAlarm;
+  let release = () => {};
+  const reachedClaim = new Promise<void>((reached) => {
+    storage.setAlarm = async (at) => {
+      storage.setAlarm = realSetAlarm;
+      await realSetAlarm(at);
+      reached();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    };
+  });
+  const realReceive = receiver.receiveMove.bind(receiver);
+  const deliveries: ReturnType<typeof realReceive>[] = [];
+  receiver.receiveMove = async (move) => {
+    if (deliveries.length === 0) deliveries.push(realReceive(move));
+    throw new Error("connection lost");
+  };
+  await kit.drive.move(moving.id, kit.driveB, null);
+  await reachedClaim;
+
+  later(HOUR + 1000);
+  await kit.instance(DRIVE_A).object.alarm();
+  expect(usage(DRIVE_A).bytes).toBe(10);
+  const { id: moveId } = kit
+    .instance(DRIVE_A)
+    .sqlite.query("SELECT id FROM moves_out")
+    .get() as { id: string };
+
+  // The tell arrives first, and the receiver's exact write after the claim fails.
+  const told = receiver.abandonMoveIn(moveId, DRIVE_B);
+  const db = kit.env.DB;
+  kit.env.DB = new Proxy(db, {
+    get(target, property) {
+      if (property !== "prepare") return Reflect.get(target, property);
+      return (query: string) => {
+        const prepared = target.prepare(query);
+        kit.d1Failures.usageWrites = true;
+        return prepared;
+      };
+    },
+  });
+  release();
+  expect(await deliveries[0]).toEqual({ status: "noDestination" });
+  await told;
+  kit.env.DB = db;
+
+  expect(await names(kit.driveB)).toEqual([]);
+  expect(usage(DRIVE_B).bytes).toBe(6);
+  expect(usage(DRIVE_A).bytes).toBe(10);
+  kit.d1Failures.usageWrites = false;
+
+  await kit.fireAlarm(DRIVE_B);
+  expect(usage(DRIVE_B)).toEqual({ bytes: 0, files: 0 });
+  expect(usage(DRIVE_A)).toEqual({ bytes: 10, files: 2 });
+  expect(orgTotal()).toBe(10);
+  expect((await kit.drive.rename(moving.id, named("Kept.pdf"))).status).toBe(
+    "renamed",
+  );
+
+  await kit.fireAlarm(DRIVE_A);
+  expect(kit.instance(DRIVE_A).alarm).toBeNull();
+  expect(usage(DRIVE_A)).toEqual({ bytes: 10, files: 2 });
 });
 
 test("a repeat of a delivery claims the space only once", async () => {

@@ -789,15 +789,6 @@ export class DriveStore {
     };
   }
 
-  // While a delivery has no answer, D1 may or may not have handed its bytes over to the
-  // other drive, so this drive can't say what its total there should be.
-  moveInDoubt(): boolean {
-    return (
-      this.#rows("SELECT 1 AS found FROM moves_out WHERE phase = 'sending'")
-        .length > 0
-    );
-  }
-
   #incomingPhase(moveId: string): IncomingPhase | null {
     return (
       this.#rows<{ phase: IncomingPhase }>(
