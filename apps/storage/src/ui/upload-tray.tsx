@@ -57,9 +57,11 @@ function BatchCard({ batch }: { batch: UploadBatch }) {
       )}
       {!finished && (
         <p className="mt-1.5 text-xs text-secondary">
-          {batch.waiting
-            ? "Waiting for your connection. The upload will carry on by itself, so keep this page open."
-            : `${timeLeftText(batch, Date.now())} You can keep working. If your connection drops, the upload picks up where it stopped.`}
+          {batch.waiting === "folderMoving"
+            ? "That folder is being moved. The upload will carry on by itself, so keep this page open."
+            : batch.waiting === "connection"
+              ? "Waiting for your connection. The upload will carry on by itself, so keep this page open."
+              : `${timeLeftText(batch, Date.now())} You can keep working. If your connection drops, the upload picks up where it stopped.`}
         </p>
       )}
       {refused.length > 0 && (

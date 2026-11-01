@@ -25,18 +25,39 @@ export async function writeDriveUsage(
 export async function claimDriveSpace(
   database: D1Database,
   driveId: DriveId,
-  usedBytes: number,
+  total: number,
 ): Promise<boolean> {
   const orgLimit = sql`(SELECT ${orgSettings.storageLimitBytes} FROM ${orgSettings})`;
   const others = sql`(SELECT coalesce(sum(others.used_bytes), 0) FROM drives AS others WHERE others.id != ${driveId})`;
   const claimed = await drizzle(database)
     .update(drives)
-    .set({ usedBytes })
+    .set({ usedBytes: total })
     .where(
       and(
         eq(drives.id, driveId),
-        sql`(${drives.limitBytes} IS NULL OR ${usedBytes} <= ${drives.limitBytes})`,
-        sql`(${orgLimit} IS NULL OR ${others} + ${usedBytes} <= ${orgLimit})`,
+        sql`(${drives.limitBytes} IS NULL OR ${total} <= ${drives.limitBytes})`,
+        sql`(${orgLimit} IS NULL OR ${others} + ${total} <= ${orgLimit})`,
+      ),
+    )
+    .returning({ id: drives.id });
+  return claimed.length > 0;
+}
+
+// Moving doesn't grow the organisation, so only the receiver's own limit can refuse. The
+// sender still counts these bytes until it has removed its rows, so D1 may count them on
+// both sides for a while, and is never behind.
+export async function claimMoveSpace(
+  database: D1Database,
+  driveId: DriveId,
+  total: number,
+): Promise<boolean> {
+  const claimed = await drizzle(database)
+    .update(drives)
+    .set({ usedBytes: total })
+    .where(
+      and(
+        eq(drives.id, driveId),
+        sql`(${drives.limitBytes} IS NULL OR ${total} <= ${drives.limitBytes})`,
       ),
     )
     .returning({ id: drives.id });

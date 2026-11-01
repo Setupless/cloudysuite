@@ -1,7 +1,12 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
 import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
-import { IconHome, IconPlus, IconUserCircle } from "@tabler/icons-react";
+import {
+  IconHome,
+  IconPlus,
+  IconTrash,
+  IconUserCircle,
+} from "@tabler/icons-react";
 import {
   type DehydratedState,
   HydrationBoundary,
@@ -87,6 +92,13 @@ function Navigation({
           New team folder
         </span>
       </button>
+      <Link
+        to="/storage/trash"
+        className={`${itemClass(pathname.endsWith("/trash"))} mt-2`}
+      >
+        <IconTrash size={18} stroke={1.75} aria-hidden />
+        Trash
+      </Link>
     </>
   );
 }

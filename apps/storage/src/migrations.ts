@@ -61,4 +61,57 @@ export const MIGRATIONS: Migrations = [
       sync_due_at INTEGER
     )`,
   ],
+  [
+    // Everything deleted together shares trash_id, the id of the item the person chose,
+    // which is the only row with the other three. That row's parent_id goes null, so a
+    // purged folder can't be held back by a file deleted from it earlier, and trashed_from
+    // has no foreign key for the same reason. purge_at 0 means delete forever now.
+    `ALTER TABLE items ADD COLUMN trash_id TEXT`,
+    `ALTER TABLE items ADD COLUMN trashed_at INTEGER`,
+    `ALTER TABLE items ADD COLUMN trashed_from TEXT`,
+    `ALTER TABLE items ADD COLUMN purge_at INTEGER`,
+    // Set while a move to another drive runs. The rows can't change until it ends.
+    `ALTER TABLE items ADD COLUMN move_id TEXT`,
+    `DROP INDEX items_one_path`,
+    `CREATE UNIQUE INDEX items_one_path ON items(coalesce(parent_id, ''), name_key) WHERE trash_id IS NULL`,
+    `DROP INDEX items_listing`,
+    `CREATE INDEX items_listing ON items(coalesce(parent_id, ''), kind, name_key) WHERE trash_id IS NULL`,
+    `DROP INDEX items_recent_files`,
+    `CREATE INDEX items_recent_files ON items(changed_at) WHERE kind = 'file' AND trash_id IS NULL`,
+    `CREATE INDEX items_trash_unit ON items(trash_id) WHERE trash_id IS NOT NULL`,
+    `CREATE INDEX items_purge ON items(purge_at) WHERE purge_at IS NOT NULL`,
+    `CREATE INDEX items_moving ON items(move_id) WHERE move_id IS NOT NULL`,
+    // Deleting a row makes SQLite look for rows that point at it, which is a full scan
+    // without these.
+    `CREATE INDEX items_parent ON items(parent_id)`,
+    `CREATE INDEX uploads_parent ON uploads(parent_id)`,
+    // A row leaves in the same transaction as the item is removed from the drive, so a
+    // crash can't leave an object nothing refers to.
+    `CREATE TABLE r2_deletions (
+      r2_key TEXT PRIMARY KEY,
+      not_before INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    // Two objects can't share a transaction. The sender keeps this until the receiver has
+    // answered, and retries from the alarm if it never heard.
+    `CREATE TABLE moves_out (
+      id TEXT PRIMARY KEY,
+      top_id TEXT NOT NULL,
+      to_drive_id TEXT NOT NULL,
+      to_parent_id TEXT,
+      try_at INTEGER NOT NULL
+    )`,
+    // The receiver's record, so a repeat after a crash adds nothing.
+    `CREATE TABLE moves_in (id TEXT PRIMARY KEY) WITHOUT ROWID`,
+  ],
+  [
+    // The phases are explained in moves.ts. A row in moves_in stays for a while after it
+    // settles, so a late copy of a delivery can't add the rows a second time.
+    `ALTER TABLE moves_out ADD COLUMN phase TEXT NOT NULL DEFAULT 'sending' CHECK (phase IN ('sending', 'confirming', 'abandoning'))`,
+    `ALTER TABLE moves_out ADD COLUMN from_drive_id TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE moves_out ADD COLUMN give_up_at INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE moves_in ADD COLUMN phase TEXT NOT NULL DEFAULT 'locked' CHECK (phase IN ('locked', 'unlocked', 'abandoned'))`,
+    `ALTER TABLE moves_in ADD COLUMN settled_at INTEGER`,
+    // Lets someone still sending hear why the upload stopped, until the sweep removes it.
+    `ALTER TABLE uploads ADD COLUMN folder_gone INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];

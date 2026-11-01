@@ -8,7 +8,7 @@ import {
   readUpTo,
 } from "@cloudysuite/transfer";
 import { readSettings } from "../../../src/settings";
-import { NO_ACCESS_MESSAGE, openDriveFor } from "./access";
+import { NO_ACCESS_MESSAGE, openDriveToEditFor } from "./access";
 import { parseItemId } from "./types";
 
 const json = (body: unknown, status = 200) =>
@@ -35,7 +35,7 @@ async function respond(request: Request, path: string): Promise<Response> {
   const [rawDriveId, resource, rawUploadId, action, rawPart] = path.split("/");
   const driveId = parseDriveId(rawDriveId ?? "");
   if (!driveId) return refusal(403, NO_ACCESS_MESSAGE);
-  const { uploads } = await openDriveFor(request, driveId);
+  const { uploads } = await openDriveToEditFor(request, driveId);
 
   const notFound = refusal(404, "There is nothing at this address.");
   if (resource !== "uploads") return notFound;

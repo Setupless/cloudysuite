@@ -24,6 +24,8 @@ export type QueuedFile = {
   message: string | null;
 };
 
+export type WaitReason = "connection" | "folderMoving";
+
 // One line of the tray: a set of files going to one place. `sessionBytes` and
 // `sendingSince` leave out what an earlier visit stored, so the time left is honest.
 export type UploadBatch = {
@@ -32,7 +34,7 @@ export type UploadBatch = {
   name: string;
   destination: Destination;
   files: QueuedFile[];
-  waiting: boolean;
+  waiting: WaitReason | null;
   sessionBytes: number;
   sendingSince: number | null;
 };
@@ -43,7 +45,7 @@ export type SendFile = (input: {
   file: File;
   signal: AbortSignal;
   onSentBytes: (bytes: number) => void;
-  onWaiting: () => void;
+  onWaiting: (reason: WaitReason) => void;
 }) => Promise<void>;
 
 export type QueueEffects = {
@@ -112,7 +114,7 @@ export class UploadQueue {
               name: destinationName(destination),
               destination,
               files: queued,
-              waiting: false,
+              waiting: null,
               sessionBytes: 0,
               sendingSince: null,
             },
@@ -199,7 +201,7 @@ export class UploadQueue {
           lastSent = bytes;
           this.#update(batchId, (current) => ({
             ...current,
-            waiting: false,
+            waiting: null,
             sessionBytes: current.sessionBytes + fresh,
             sendingSince: current.sendingSince ?? Date.now(),
             files: current.files.map((file) =>
@@ -207,15 +209,15 @@ export class UploadQueue {
             ),
           }));
         },
-        onWaiting: () => {
-          this.#update(batchId, (current) => ({ ...current, waiting: true }));
+        onWaiting: (reason) => {
+          this.#update(batchId, (current) => ({ ...current, waiting: reason }));
         },
       });
       this.#updateFile(
         batchId,
         queued.id,
         { state: "sent", sentBytes: queued.file.size },
-        { waiting: false },
+        { waiting: null },
       );
       this.#effects.onFileSent();
     } catch (error) {
@@ -230,7 +232,7 @@ export class UploadQueue {
               ? error.message
               : "We couldn't send this file. Try again.",
         },
-        { waiting: false },
+        { waiting: null },
       );
     }
   }

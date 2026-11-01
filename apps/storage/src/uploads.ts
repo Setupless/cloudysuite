@@ -11,8 +11,14 @@ import {
 import type { Drive } from "./drive";
 import { hasLimit, limitRefusal, NO_ROOM_NOW, readStorageRoom } from "./limits";
 import { parseItemName } from "./names";
-import type { CommitResult, CompletionPlan, PartPlan } from "./store";
+import type {
+  CommitResult,
+  CompletionPlan,
+  NewUploadResult,
+  PartPlan,
+} from "./store";
 import {
+  FOLDER_BUSY,
   type FileItem,
   type ItemId,
   NO_SUCH_FOLDER,
@@ -28,6 +34,14 @@ const UPLOAD_ENDED = refuse(
   409,
   "This upload stopped for too long, so it was removed. Choose the file again to start over.",
 );
+
+const FOLDER_ENDED = refuse(
+  409,
+  "The folder this was going into was deleted or moved somewhere else, so this upload stopped. Choose the file again to send it to another folder.",
+);
+
+// A 5xx, because the tray keeps trying those, and the answer changes once the move ends.
+const FOLDER_LOCKED = refuse(503, FOLDER_BUSY);
 
 // What a browser claims is kept only to choose an icon and a download type. Download
 // headers and the preview route decide for themselves what is safe to serve.
@@ -111,7 +125,13 @@ export function createDriveUploads(
         mimeType: cleanMimeType(mimeType),
         r2Key,
         r2UploadId: multipart.uploadId,
-      })) as { status: "created" | "lost"; upload: UploadView };
+      })) as NewUploadResult;
+      if (created.status === "folderGone") {
+        await multipart.abort().catch((error: unknown) => {
+          console.error("Could not stop an unused upload.", error);
+        });
+        return refuse(404, NO_SUCH_FOLDER);
+      }
       if (created.status === "lost") await multipart.abort();
       return { ok: true, value: created.upload };
     },
@@ -121,6 +141,8 @@ export function createDriveUploads(
       switch (plan.status) {
         case "unknown":
           return UPLOAD_ENDED;
+        case "folderGone":
+          return FOLDER_ENDED;
         case "badPartNumber":
           return refuse(400, "This file doesn't have a part with that number.");
         // Another tab got here first. Nothing needs storing twice.
@@ -165,6 +187,7 @@ export function createDriveUploads(
     async complete(id) {
       const plan = (await stub.completionPlan(id)) as CompletionPlan;
       if (plan.status === "unknown") return UPLOAD_ENDED;
+      if (plan.status === "folderGone") return FOLDER_ENDED;
       if (plan.status === "finished") return { ok: true, value: plan.item };
 
       const multipart = bucket.resumeMultipartUpload(
@@ -206,6 +229,10 @@ export function createDriveUploads(
           return { ok: true, value: committed.item };
         case "unknown":
           return UPLOAD_ENDED;
+        case "folderGone":
+          return FOLDER_ENDED;
+        case "folderBusy":
+          return FOLDER_LOCKED;
         case "overLimit":
           return refuse(
             413,

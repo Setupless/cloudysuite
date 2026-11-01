@@ -2,7 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import type { DriveId, UserId } from "@cloudysuite/access";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import { isUploadGone } from "@cloudysuite/transfer";
+import { moveReceiver } from "./client";
 import { MIGRATIONS } from "./migrations";
+import { type MoveDelivery, movedBytes, type ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
 import {
   type CommitResult,
@@ -10,6 +12,7 @@ import {
   DriveStore,
   type FoundUpload,
   type NewUpload,
+  type NewUploadResult,
   type PartPlan,
   USAGE_RETRY_MS,
 } from "./store";
@@ -18,19 +21,35 @@ import type {
   FileItem,
   FolderListing,
   ItemId,
+  MoveResult,
   NewFolderResult,
+  RenameResult,
+  RestoreResult,
+  TrashEntry,
+  TrashResult,
   UploadView,
 } from "./types";
-import { claimDriveSpace, writeDriveUsage } from "./usage";
+import { claimDriveSpace, claimMoveSpace, writeDriveUsage } from "./usage";
 
 const SWEEP_LIMIT = 50;
 const SWEEP_RETRY_MS = 60 * 60 * 1000;
+const PURGE_BATCH = 100;
+// Enough for an ordinary folder to be gone by the time the person's request returns.
+// Anything bigger carries on from the alarm.
+const PURGE_BATCHES_NOW = 5;
+const MOVE_RETRY_MS = 60_000;
+// After this, a drive that still hasn't answered no longer holds the sender's rows locked.
+const MOVE_GIVE_UP_MS = 60 * 60 * 1000;
+const MOVES_PER_WAKE_UP = 5;
 
 export class Drive extends DurableObject<Env> {
   readonly #store: DriveStore;
   // One write to D1 at a time and each reads the truth when it starts, so a slow early
   // write can't land after a later one and leave D1 behind, or wipe out a claim.
   #d1Writes: Promise<unknown> = Promise.resolve();
+  // Stops the alarm sending a move the person's request is still waiting on, so one
+  // can't be refused and cancelled while the other is accepted.
+  readonly #sendingMoves = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -80,7 +99,7 @@ export class Drive extends DurableObject<Env> {
     return upload;
   }
 
-  async createUpload(upload: NewUpload) {
+  async createUpload(upload: NewUpload): Promise<NewUploadResult> {
     const created = this.#store.createUpload(upload, Date.now());
     await this.#scheduleNextWakeUp();
     return created;
@@ -116,8 +135,11 @@ export class Drive extends DurableObject<Env> {
       if (size !== null) {
         this.#store.flagUsageWrite(driveId, Date.now());
         await this.#scheduleNextWakeUp();
-        const used = this.#store.usage()?.usedBytes ?? 0;
-        if (!(await claimDriveSpace(this.env.DB, driveId, used + size))) {
+        if (this.#store.uploadFolderIsLocked(id)) {
+          return { status: "folderBusy" };
+        }
+        const total = this.#usedBytes() + size;
+        if (!(await claimDriveSpace(this.env.DB, driveId, total))) {
           this.#store.closeRefusedUpload(id, Date.now());
           await this.#scheduleNextWakeUp();
           return { status: "overLimit" };
@@ -125,8 +147,187 @@ export class Drive extends DurableObject<Env> {
       }
       return this.#store.commitUpload(id, driveId, Date.now());
     });
-    if (result.status === "committed") await this.#afterChange();
+    if (result.status === "committed" || result.status === "folderBusy") {
+      await this.#afterChange();
+    }
     return result;
+  }
+
+  #usedBytes(): number {
+    return this.#store.usage()?.usedBytes ?? 0;
+  }
+
+  async rename(input: {
+    driveId: DriveId;
+    id: ItemId;
+    name: Extract<ParsedName, { ok: true }>;
+  }): Promise<RenameResult> {
+    const result = this.#store.rename({ ...input, now: Date.now() });
+    if (result.status === "renamed") await this.#afterChange();
+    return result;
+  }
+
+  async moveWithin(input: {
+    driveId: DriveId;
+    id: ItemId;
+    toParentId: ItemId | null;
+  }): Promise<MoveResult> {
+    const result = this.#store.moveWithin({ ...input, now: Date.now() });
+    if (result.status === "moved") await this.#afterChange();
+    return result;
+  }
+
+  async moveToDrive(input: {
+    driveId: DriveId;
+    id: ItemId;
+    toDriveId: DriveId;
+    toParentId: ItemId | null;
+  }): Promise<MoveResult> {
+    const moveId = crypto.randomUUID();
+    const now = Date.now();
+    const begun = this.#store.beginMoveOut({
+      moveId,
+      id: input.id,
+      fromDriveId: input.driveId,
+      toDriveId: input.toDriveId,
+      toParentId: input.toParentId,
+      tryAt: now + MOVE_RETRY_MS,
+      giveUpAt: now + MOVE_GIVE_UP_MS,
+    });
+    if (begun.status !== "begun") return begun;
+    await this.#scheduleNextWakeUp();
+    return this.#runMove(moveId);
+  }
+
+  // One step of a move, whichever phase it has reached. See moves.ts.
+  async #runMove(moveId: string): Promise<MoveResult> {
+    const move = this.#store.outgoingMove(moveId);
+    if (!move) return { status: "pending" };
+    if (this.#sendingMoves.has(moveId)) {
+      this.#store.postponeMove(moveId, Date.now() + MOVE_RETRY_MS);
+      return { status: "pending" };
+    }
+    this.#sendingMoves.add(moveId);
+    const receiver = moveReceiver(this.env, move.toDriveId);
+    try {
+      switch (move.phase) {
+        case "sending": {
+          const answer = await receiver.receive(move);
+          if (answer.status !== "received") {
+            this.#store.cancelMoveOut(moveId);
+            await this.#afterChange();
+            return answer;
+          }
+          this.#store.handOverMove({
+            moveId,
+            driveId: move.fromDriveId,
+            now: Date.now(),
+            tryAt: Date.now() + MOVE_RETRY_MS,
+          });
+          await this.#afterChange();
+          await receiver.confirm(moveId);
+          break;
+        }
+        case "confirming":
+          await receiver.confirm(moveId);
+          break;
+        case "abandoning":
+          await receiver.abandon(moveId);
+          break;
+      }
+      this.#store.endMoveOut(moveId);
+      await this.#scheduleNextWakeUp();
+      return { status: "moved" };
+    } catch (error) {
+      console.error("Could not finish a move. Trying again.", error);
+      const now = Date.now();
+      if (move.phase === "sending" && now >= move.giveUpAt) {
+        this.#store.giveUpMoveOut(moveId, now);
+        await this.#afterChange();
+      } else {
+        this.#store.postponeMove(moveId, now + MOVE_RETRY_MS);
+        await this.#scheduleNextWakeUp();
+      }
+      // The rows have already left if only the last step failed, and the alarm finishes it.
+      return this.#store.outgoingMove(moveId)?.phase === "confirming"
+        ? { status: "moved" }
+        : { status: "pending" };
+    } finally {
+      this.#sendingMoves.delete(moveId);
+    }
+  }
+
+  // Nothing else can write this drive's figure between the claim and adding the rows. If
+  // the rows never go in, the flag's exact total takes the claim back, and a repeat claims
+  // from the local total again, so it can't count the bytes twice.
+  async receiveMove(move: MoveDelivery): Promise<ReceiveResult> {
+    const driveId = move.toDriveId;
+    const bytes = movedBytes(move.rows);
+    let changed = false;
+    const result = await this.#oneAtATime(async (): Promise<ReceiveResult> => {
+      const answer = this.#store.receiveAnswer(move);
+      if (answer) return answer;
+      changed = true;
+      if (bytes > 0) {
+        this.#store.flagUsageWrite(driveId, Date.now());
+        await this.#scheduleNextWakeUp();
+        const claimed = await claimMoveSpace(
+          this.env.DB,
+          driveId,
+          this.#usedBytes() + bytes,
+        );
+        if (!claimed) return { status: "overLimit", bytes };
+      }
+      return this.#store.receiveMove(move, Date.now());
+    });
+    if (changed) await this.#afterChange();
+    return result;
+  }
+
+  confirmMoveIn(moveId: string): void {
+    this.#store.confirmMoveIn(moveId, Date.now());
+  }
+
+  async abandonMoveIn(moveId: string, driveId: DriveId): Promise<void> {
+    this.#store.abandonMoveIn(moveId, driveId, Date.now());
+    await this.#afterChange();
+  }
+
+  async trash(input: { driveId: DriveId; id: ItemId }): Promise<TrashResult> {
+    const result = this.#store.trash({ ...input, now: Date.now() });
+    if (result.status === "trashed") await this.#afterChange();
+    return result;
+  }
+
+  trashEntries(limit: number): TrashEntry[] {
+    return this.#store.trashEntries(Date.now(), limit);
+  }
+
+  async restore(input: {
+    driveId: DriveId;
+    id: ItemId;
+  }): Promise<RestoreResult> {
+    const result = this.#store.restore({ ...input, now: Date.now() });
+    if (result.status === "restored") await this.#afterChange();
+    return result;
+  }
+
+  async deleteForever(id: ItemId): Promise<void> {
+    this.#store.markForPurge(id);
+    await this.#purgeNow();
+  }
+
+  async emptyTrash(): Promise<void> {
+    this.#store.markAllForPurge(Date.now());
+    await this.#purgeNow();
+  }
+
+  async #purgeNow(): Promise<void> {
+    const now = Date.now();
+    for (let batch = 0; batch < PURGE_BATCHES_NOW; batch += 1) {
+      if (!this.#store.purgeBatch(now, PURGE_BATCH)) break;
+    }
+    await this.#afterChange();
   }
 
   async #afterChange(): Promise<void> {
@@ -161,17 +362,47 @@ export class Drive extends DurableObject<Env> {
     const due = [
       this.#store.usageWriteDueAt(),
       this.#store.nextUploadExpiryAt(),
+      this.#store.nextPurgeAt(),
+      this.#store.nextR2DeletionAt(),
+      this.#store.nextMoveAt(),
     ].filter((time) => time !== null);
     return due.length > 0
-      ? this.ctx.storage.setAlarm(Math.min(...due))
+      ? // The runtime refuses a time of 0, which "due now" in the queues is stored as.
+        this.ctx.storage.setAlarm(Math.max(Math.min(...due), 1))
       : this.ctx.storage.deleteAlarm();
   }
 
   override async alarm(): Promise<void> {
+    await this.#retryMoves();
+    const purged = this.#store.purgeBatch(Date.now(), PURGE_BATCH);
+    await this.#sweepR2Deletions();
     const dueAt = this.#store.usageWriteDueAt();
-    if (dueAt !== null && dueAt <= Date.now()) await this.#writeUsage();
+    if (purged || (dueAt !== null && dueAt <= Date.now())) {
+      await this.#writeUsage();
+    }
     await this.#sweepUploads();
     await this.#scheduleNextWakeUp();
+  }
+
+  async #retryMoves(): Promise<void> {
+    for (const moveId of this.#store.dueMoves(Date.now(), MOVES_PER_WAKE_UP)) {
+      await this.#runMove(moveId);
+    }
+  }
+
+  // A key leaves the queue only once R2 has said yes, and deleting a key R2 no longer
+  // has succeeds, so a crash in between just deletes it again.
+  async #sweepR2Deletions(): Promise<void> {
+    const now = Date.now();
+    const keys = this.#store.dueR2Deletions(now, SWEEP_LIMIT);
+    if (keys.length === 0) return;
+    try {
+      await this.env.BUCKET.delete(keys);
+      this.#store.finishR2Deletions(keys);
+    } catch (error) {
+      console.error("Could not remove deleted files. Trying later.", error);
+      this.#store.postponeR2Deletions(keys, now + SWEEP_RETRY_MS);
+    }
   }
 
   // A finished item has no upload row and a closed upload can't become one, so this

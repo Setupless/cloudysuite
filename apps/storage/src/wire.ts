@@ -83,6 +83,27 @@ export function parseNewFolderInput(raw: unknown) {
   };
 }
 
+export function parseItemInput(raw: unknown) {
+  const input = record(raw);
+  return {
+    driveId: requireDriveId(input.driveId),
+    itemId: requireItemId(input.itemId),
+  };
+}
+
+export function parseRenameInput(raw: unknown) {
+  return { ...parseItemInput(raw), name: requireName(record(raw).name) };
+}
+
+export function parseMoveInput(raw: unknown) {
+  const input = record(raw);
+  return {
+    ...parseItemInput(raw),
+    toDriveId: requireDriveId(input.toDriveId),
+    toParentId: optionalItemId(input.toParentId),
+  };
+}
+
 export const parseNewTeamFolderInput = (raw: unknown) => ({
   name: requireName(record(raw).name),
 });

@@ -5,24 +5,36 @@ import { getRequest } from "@tanstack/react-start/server";
 import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
-import { openDriveAs, requireStorageUser } from "./access";
+import { openDriveAs, openDriveToEdit, requireStorageUser } from "./access";
+import { moveRefusal, readStorageRoom } from "./limits";
 import { ensureMyDrive } from "./my-drive";
 import { parseItemName } from "./names";
 import {
+  type DriveItem,
   type DriveSummary,
   type FileItem,
   type FolderItem,
   type FolderListing,
+  FOLDER_BUSY,
+  INTO_ITSELF,
+  ITEM_BUSY,
   nameTakenMessage,
   NO_SUCH_FOLDER,
+  NO_SUCH_ITEM,
   type Person,
+  type RestoreResult,
+  TOO_MANY_TO_MOVE,
+  type TrashEntry,
 } from "./types";
 import {
   parseFileInput,
   parseFolderInput,
+  parseItemInput,
+  parseMoveInput,
   parseNewFolderInput,
   parseNewTeamFolderInput,
   parseRecentInput,
+  parseRenameInput,
   refusal,
 } from "./wire";
 
@@ -224,7 +236,7 @@ export const createFolder = createServerFn({ method: "POST" })
   .validator(parseNewFolderInput)
   .handler(async ({ data }): Promise<FolderItem> => {
     const me = await requireStorageUser(getRequest());
-    const drive = await openDriveAs(me.id, data.driveId);
+    const drive = await openDriveToEdit(me.id, data.driveId);
     const parsed = parseItemName(data.name);
     if (!parsed.ok) throw refusal(400, parsed.message);
     const result = await drive.createFolder(data.parentId, parsed);
@@ -235,6 +247,8 @@ export const createFolder = createServerFn({ method: "POST" })
         throw refusal(409, nameTakenMessage(parsed.name));
       case "noParent":
         throw refusal(404, NO_SUCH_FOLDER);
+      case "folderBusy":
+        throw refusal(409, FOLDER_BUSY);
     }
   });
 
@@ -275,3 +289,153 @@ export const getRecent = createServerFn({ method: "GET" })
       };
     },
   );
+
+export const renameItem = createServerFn({ method: "POST" })
+  .validator(parseRenameInput)
+  .handler(async ({ data }): Promise<DriveItem> => {
+    const me = await requireStorageUser(getRequest());
+    const drive = await openDriveToEdit(me.id, data.driveId);
+    const parsed = parseItemName(data.name);
+    if (!parsed.ok) throw refusal(400, parsed.message);
+    const result = await drive.rename(data.itemId, parsed);
+    switch (result.status) {
+      case "renamed":
+        return result.item;
+      case "nameTaken":
+        throw refusal(409, nameTakenMessage(parsed.name));
+      case "gone":
+        throw refusal(404, NO_SUCH_ITEM);
+      case "busy":
+        throw refusal(409, ITEM_BUSY);
+    }
+  });
+
+// "finishing" is a move that started and will complete by itself.
+export const moveItem = createServerFn({ method: "POST" })
+  .validator(parseMoveInput)
+  .handler(async ({ data }): Promise<"moved" | "finishing"> => {
+    const me = await requireStorageUser(getRequest());
+    const from = await openDriveToEdit(me.id, data.driveId);
+    const to = await openDriveToEdit(me.id, data.toDriveId);
+    const item = await from.item(data.itemId);
+    if (!item) throw refusal(404, NO_SUCH_ITEM);
+    const result = await from.move(data.itemId, to, data.toParentId);
+    switch (result.status) {
+      case "moved":
+        return "moved";
+      case "pending":
+        return "finishing";
+      case "nameTaken":
+        throw refusal(409, nameTakenMessage(item.name));
+      case "gone":
+        throw refusal(404, NO_SUCH_ITEM);
+      case "noDestination":
+        throw refusal(404, NO_SUCH_FOLDER);
+      case "intoItself":
+        throw refusal(409, INTO_ITSELF);
+      case "busy":
+        throw refusal(409, ITEM_BUSY);
+      case "folderBusy":
+        throw refusal(409, FOLDER_BUSY);
+      case "overLimit":
+        throw refusal(
+          413,
+          moveRefusal(
+            await readStorageRoom(env.DB, data.toDriveId),
+            result.bytes,
+          ),
+        );
+      case "tooMany":
+        throw refusal(409, TOO_MANY_TO_MOVE);
+    }
+  });
+
+export const trashItem = createServerFn({ method: "POST" })
+  .validator(parseItemInput)
+  .handler(async ({ data }): Promise<void> => {
+    const me = await requireStorageUser(getRequest());
+    const drive = await openDriveToEdit(me.id, data.driveId);
+    const result = await drive.trash(data.itemId);
+    if (result.status === "gone") throw refusal(404, NO_SUCH_ITEM);
+    if (result.status === "busy") throw refusal(409, ITEM_BUSY);
+  });
+
+async function drivesOf(me: UserId): Promise<DriveSummary[]> {
+  return drizzle(env.DB)
+    .select({
+      id: drives.id,
+      kind: drives.kind,
+      name: drives.name,
+      colour: drives.colour,
+    })
+    .from(driveAccess)
+    .innerJoin(drives, eq(drives.id, driveAccess.driveId))
+    .where(eq(driveAccess.userId, me));
+}
+
+export type TrashLine = { entry: TrashEntry; drive: DriveSummary };
+
+const TRASH_SHOWN = 200;
+
+// Trash is kept per drive and shown as one list, so this is the one page that wakes every
+// drive a person can open.
+export const getTrash = createServerFn({ method: "GET" }).handler(
+  async (): Promise<{ lines: TrashLine[]; more: boolean }> => {
+    const me = await requireStorageUser(getRequest());
+    const lists = await Promise.all(
+      (await drivesOf(me.id)).map(async (drive) => {
+        const client = await openDriveAs(me.id, drive.id);
+        const entries = await client.trashEntries(TRASH_SHOWN + 1);
+        return entries.map((entry) => ({ entry, drive }));
+      }),
+    );
+    const lines = lists
+      .flat()
+      .sort((a, b) => b.entry.trashedAt - a.entry.trashedAt);
+    return {
+      lines: lines.slice(0, TRASH_SHOWN),
+      more: lines.length > TRASH_SHOWN,
+    };
+  },
+);
+
+export const restoreItem = createServerFn({ method: "POST" })
+  .validator(parseItemInput)
+  .handler(
+    async ({
+      data,
+    }): Promise<Extract<RestoreResult, { status: "restored" }>> => {
+      const me = await requireStorageUser(getRequest());
+      const drive = await openDriveToEdit(me.id, data.driveId);
+      const result = await drive.restore(data.itemId);
+      if (result.status === "gone") throw refusal(404, NO_SUCH_ITEM);
+      if (result.status === "folderBusy") throw refusal(409, FOLDER_BUSY);
+      return result;
+    },
+  );
+
+export const deleteItemForever = createServerFn({ method: "POST" })
+  .validator(parseItemInput)
+  .handler(async ({ data }): Promise<void> => {
+    const me = await requireStorageUser(getRequest());
+    const drive = await openDriveToEdit(me.id, data.driveId);
+    await drive.deleteForever(data.itemId);
+  });
+
+export const emptyTrash = createServerFn({ method: "POST" }).handler(
+  async (): Promise<void> => {
+    const me = await requireStorageUser(getRequest());
+    const results = await Promise.allSettled(
+      (await drivesOf(me.id)).map(async ({ id }) => {
+        const drive = await openDriveToEdit(me.id, id);
+        await drive.emptyTrash();
+      }),
+    );
+    if (results.some((result) => result.status === "rejected")) {
+      throw refusal(
+        500,
+        "Some of Trash couldn't be emptied. Choose Empty Trash again to finish.",
+      );
+    }
+  },
+);

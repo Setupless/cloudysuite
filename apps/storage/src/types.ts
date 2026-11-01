@@ -48,7 +48,64 @@ export type Person = { id: UserId; name: string; email: string };
 export type NewFolderResult =
   | { status: "created"; item: FolderItem }
   | { status: "nameTaken" }
-  | { status: "noParent" };
+  | { status: "noParent" }
+  | { status: "folderBusy" };
+
+export const TRASH_DAYS = 30;
+export const TRASH_MS = TRASH_DAYS * 24 * 60 * 60 * 1000;
+
+// One line of Trash: what the person deleted, with its contents counted but not listed.
+export type TrashEntry = {
+  id: ItemId;
+  kind: "folder" | "file";
+  name: string;
+  mimeType: string | null;
+  // A folder's are everything inside it.
+  size: number;
+  contains: number;
+  trashedAt: number;
+  purgeAt: number;
+  // Null when it was at the drive's root.
+  fromFolder: { name: string | null } | null;
+};
+
+export type RenameResult =
+  | { status: "renamed"; item: DriveItem }
+  | { status: "nameTaken" }
+  | { status: "gone" }
+  | { status: "busy" };
+
+export type MoveResult =
+  | { status: "moved" }
+  // The other drive didn't answer. The alarm finishes the move.
+  | { status: "pending" }
+  | { status: "nameTaken" }
+  | { status: "gone" }
+  | { status: "noDestination" }
+  | { status: "intoItself" }
+  | { status: "busy" }
+  | { status: "folderBusy" }
+  | { status: "overLimit"; bytes: number }
+  | { status: "tooMany" };
+
+export type TrashResult =
+  { status: "trashed" } | { status: "gone" } | { status: "busy" };
+
+export type RestoreResult =
+  | { status: "restored"; item: DriveItem; folderGone: boolean }
+  | { status: "folderBusy" }
+  | { status: "gone" };
+
+// Two objects can't share a transaction, so what crosses in one must fit in one call.
+export const MAX_ITEMS_ACROSS_DRIVES = 2000;
+
+export const NO_SUCH_ITEM =
+  "We can't find that. It may have been moved or deleted.";
+export const ITEM_BUSY = "This is being moved. Try again in a minute.";
+export const FOLDER_BUSY = "That folder is being moved. Try again in a minute.";
+export const INTO_ITSELF =
+  "A folder can't go inside itself. Choose another folder.";
+export const TOO_MANY_TO_MOVE = `This folder holds more than ${MAX_ITEMS_ACROSS_DRIVES} items, which is too many to move to another team folder in one go. Move the folders inside it one at a time.`;
 
 export const nameTakenMessage = (name: string) =>
   `There's already something called "${name}" here. Choose another name.`;
