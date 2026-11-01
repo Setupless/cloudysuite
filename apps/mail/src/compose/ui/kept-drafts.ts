@@ -14,13 +14,7 @@ import {
   parseKeptDraft,
   parseKeptNote,
 } from "../kept";
-import type {
-  DraftChange,
-  KeptDraft,
-  KeptNote,
-  LeftOut,
-  OutgoingId,
-} from "../types";
+import type { KeptDraft, KeptNote, OutgoingId } from "../types";
 
 export const readKeptDrafts = async (userId: UserId): Promise<KeptDraft[]> =>
   (await readKeptRows(userId))
@@ -51,8 +45,7 @@ export const keptNotesQuery = (userId: UserId) =>
 export type MovedDraft = {
   draft: KeptDraft;
   savedAs: OutgoingId;
-  leftOut: LeftOut;
-  changed: DraftChange | null;
+  note: KeptNote | null;
 };
 
 // Each one that goes is forgotten only after the server has it. Whatever fails stays
@@ -82,10 +75,7 @@ export async function saveKeptDrafts(
             }),
           ),
       );
-      await settleKeptDraft(
-        userId,
-        draft.id,
-        draft.keptAt,
+      const note =
         isLeftOut(leftOut) || changed
           ? {
               id: savedAs,
@@ -94,9 +84,9 @@ export async function saveKeptDrafts(
               leftOut,
               changed,
             }
-          : null,
-      );
-      moved.push({ draft, savedAs, leftOut, changed });
+          : null;
+      await settleKeptDraft(userId, draft.id, draft.keptAt, note);
+      moved.push({ draft, savedAs, note });
     } catch {
       // Still on this device, and the band says so.
     }

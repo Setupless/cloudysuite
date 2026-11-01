@@ -18,7 +18,7 @@ import { runWhileVisible } from "../../pwa/while-visible";
 import type { MailboxId, MessageId, ThreadId } from "../../types";
 import { mailboxesQuery } from "../../queries";
 import { useToast } from "../../ui/toast";
-import { isLeftOut, keptNoteText, withoutAccess } from "../kept";
+import { keptNoteText, withoutAccess } from "../kept";
 import {
   keptDraftsQuery,
   keptNotesQuery,
@@ -270,21 +270,16 @@ export function ComposeProvider({
       const [first] = moved;
       const onlyHere =
         moved.length === 1 && first?.draft.mailboxId === mailboxId;
-      const firstNote = first && {
-        subject: first.draft.content.subject,
-        leftOut: first.leftOut,
-        changed: first.changed,
-      };
       toast({
         message:
           moved.length === 1
-            ? first!.changed
-              ? keptNoteText(firstNote!)
-              : isLeftOut(first!.leftOut)
+            ? first?.note?.changed
+              ? keptNoteText(first.note)
+              : first?.note
                 ? "What you were writing is now in Drafts, but part of it couldn't come along."
                 : "What you were writing is now in Drafts."
             : `${moved.length} messages you were writing are now in Drafts.${
-                moved.some(({ changed }) => changed)
+                moved.some(({ note }) => note?.changed)
                   ? " Someone changed at least one of them while you were offline, so those words are in a new draft beside it."
                   : ""
               }`,
@@ -295,9 +290,7 @@ export function ComposeProvider({
                 run: () =>
                   void reopen(
                     first.savedAs,
-                    first.changed || isLeftOut(first.leftOut)
-                      ? keptNoteText(firstNote!)
-                      : undefined,
+                    first.note ? keptNoteText(first.note) : undefined,
                   ),
               }
             : undefined,
