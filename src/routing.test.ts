@@ -45,18 +45,23 @@ const unknown: HostRoute = { kind: "unknown" };
 
 test.each([
   [setup, "/setup", { action: "pass" }],
+  [setup, "/setup/api", { action: "pass" }],
+  [setup, "/setupx", { action: "redirect", to: "/setup" }],
   [setup, "/", { action: "redirect", to: "/setup" }],
   [setup, "/off", { action: "redirect", to: "/setup" }],
   [off, "/off", { action: "pass" }],
   [off, "/", { action: "redirect", to: "/off" }],
   [off, "/inbox/1", { action: "redirect", to: "/off" }],
   [off, "/setup", { action: "redirect", to: "/off" }],
+  [off, "/setup/api", { action: "redirect", to: "/off" }],
   [app, "/", { action: "pass" }],
   [app, "/inbox/1", { action: "pass" }],
   [app, "/off", { action: "redirect", to: "/" }],
   [app, "/setup", { action: "redirect", to: "/" }],
+  [app, "/setup/api", { action: "redirect", to: "/" }],
   [unknown, "/", { action: "notFound" }],
   [unknown, "/setup", { action: "notFound" }],
+  [unknown, "/setup/api", { action: "notFound" }],
 ] as const)("gate %j at %s", (route, pathname, expected) => {
   expect(gate(route, pathname)).toEqual(expected);
 });

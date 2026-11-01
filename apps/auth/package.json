@@ -11,7 +11,9 @@
     "./handler": "./src/handler.ts",
     "./session": "./src/session.ts",
     "./shell": "./src/shell.tsx",
-    "./welcome": "./src/welcome/functions.ts"
+    "./welcome": "./src/welcome/functions.ts",
+    "./setup": "./src/setup/wizard.tsx",
+    "./setup/route": "./src/setup/route.ts"
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.14",

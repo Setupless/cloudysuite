@@ -55,12 +55,42 @@ You need a domain on Cloudflare DNS and the Workers Paid plan. The wizard links 
 1. Click the **Deploy to Cloudflare** button. It creates the Worker and its storage, and applies the database migrations.
 2. Open the Worker's URL to start the first-run wizard.
 3. Create an API token from the wizard's link, which pre-fills the token form, and paste the token into the wizard.
-4. Choose your domain. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, and attaches the `auth` and `mail` hostnames.
-5. Create the first admin account.
+4. Choose your domain and where your apps should live. The wizard checks the domain's DNS and explains its recommendation.
+5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth` and `mail` hostnames, and generates the sign-in secret.
+6. Create the first admin account, which also gets a personal mailbox. The wizard then sends you to `auth.<app domain>`.
 
-The wizard calls the Cloudflare API from the Worker. It does not store the token. Only someone who holds a token for the Worker's account can finish setup, so a stranger who finds a new deployment's URL cannot claim the admin account.
+The wizard calls the Cloudflare API from the Worker. It does not store the token: the token stays in the browser tab, and each call sends it again.
 
-Each wizard step checks the current state in Cloudflare, applies the change through the API, and checks again. If the API cannot complete a step, the wizard shows the exact action to take, a link to that Cloudflare dashboard page, and a link to the Cloudflare docs. The admin completes the action and clicks **Check again**, so the wizard never assumes that a manual step worked.
+Only someone who holds a token for the Worker's account can finish setup, so a stranger who finds a new deployment's URL cannot claim the admin account. Every call proves two things with the pasted token:
+
+- **The token's account owns this Worker.** The Worker reads its running version id from its `version_metadata` binding, and Cloudflare must confirm that version exists on a script in the token's account. Cloudflare generates that id, so nobody can recreate it in another account. The check reads the id on every call, so it still holds after setting a secret starts a new version. This is also how the Worker learns its own script name.
+- **The token can change this Worker.** Read access alone is not enough, so the wizard reads `.../script-settings` and sends the same values back in a `PATCH`, which changes nothing but needs Workers Scripts Edit. If Cloudflare returns no settings to send back, the proof fails and the wizard writes nothing.
+
+Until both proofs pass, the caller could be anyone, so errors from Cloudflare reach them only as a plain message. After that, the wizard shows Cloudflare's own words.
+
+Each wizard step checks the current state in Cloudflare, applies the change through the API, and checks again. If the API cannot complete a step, the wizard shows the exact action to take, a link to that Cloudflare dashboard page, and a link to the Cloudflare docs. The admin completes the action and clicks **Check again**, so the wizard never assumes that a manual step worked. The wizard never deletes a DNS record, so existing MX records and conflicting hostnames are always manual steps.
+
+The wizard never replaces mail routing that is in use without asking. If an enabled catch-all rule forwards mail, deletes it, or sends it to another Worker, the wizard says so in plain language and waits. The server replaces the rule only when the request repeats the description the person saw, so a rule that changed in the meantime is shown again. A disabled rule carries no mail, so the wizard replaces it without asking.
+
+The catch-all goes live before the first admin's address exists. Until setup finishes, the Worker rejects mail for every address at the domain, so a sender gets a bounce saying there is no mailbox there, and no message is lost silently.
+
+The primary domain is stored last, in one atomic batch with the admin's user, password, mailbox, address, and access. The database allows one primary domain, so when two people finish at once, exactly one wins and the other leaves nothing behind. Until then, the router keeps every hostname on `/setup` and nobody can sign in, so an interrupted setup can always resume. Afterwards the router sends `/setup` away on an app hostname and treats the `workers.dev` hostname as unknown, so nobody can run the wizard again.
+
+#### App domain and email domain
+
+These are separate, and either may be the zone apex:
+
+| Domain       | What it is                                                     | Stored as                                   |
+| ------------ | -------------------------------------------------------------- | ------------------------------------------- |
+| App domain   | Parent of `auth.` and `mail.`, and the session cookie's domain | The `domains` row with `is_primary = 1`     |
+| Email domain | What follows `@` in addresses                                  | A `domains` row, used by `addresses.domain` |
+
+The session cookie covers the app domain and every site under it, so whoever runs any site there could read a signed-in person's cookie. The wizard scans the zone's DNS and custom domains for that reason. A name counts as CloudySuite's own only when Cloudflare says it is a custom domain attached to this Worker, and anything else counts as another site, even `auth` or `mail`:
+
+- With no other hosted site, the app domain is the apex, such as `auth.example.com`.
+- With other sites, such as a third-party `www`, the wizard explains the risk and recommends a parent such as `suite.example.com`. Apps become `auth.suite.example.com`, and email stays `@example.com`.
+
+The email domain is always the zone apex, because Email Routing's catch-all rule works only there.
 
 ### Updates
 
@@ -227,6 +257,15 @@ The first `bun run dev` asks for `sudo` to bind port 443 and trust a local certi
 A proxy that is already running without wildcard routing returns a portless 404 for both apps. Run `bunx portless proxy stop`, then start again.
 
 `bunx vite dev` skips portless and serves the same hostnames on port 5173.
+
+To try the setup wizard without a Cloudflare account, use the fake API in `apps/auth/scripts/fake-cloudflare.ts`:
+
+1. Remove `.wrangler/state`, then write `CLOUDYSUITE_LOCAL_CLOUDFLARE_API=http://127.0.0.1:8799/client/v4` as the only line in `.dev.vars`.
+2. Run `bun apps/auth/scripts/fake-cloudflare.ts`, then `bun run build`, `bun run db:migrate:local`, and `bunx wrangler dev`.
+3. Open `http://localhost:8787` and paste `owner-token-owner-token-owner-token`. The script also has a stranger's token and a read-only token.
+4. When the wizard waits for its new secret, restart `wrangler dev`. A real Worker restarts by itself.
+
+The wizard ignores that variable unless it names a loopback address, so it cannot send a token elsewhere. It comes from the environment, so a request cannot set it.
 
 Sign-in needs a secret. Run `cp dev.vars.local.example .dev.vars` once in each checkout, then `bun run db:migrate:local`, `bun run db:seed:local`, and `bun run db:seed:user:local <email> <password>` to get an account. A deployment does not use this file: the setup wizard generates its secret.
 

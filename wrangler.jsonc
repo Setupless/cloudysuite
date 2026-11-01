@@ -19,4 +19,5 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
   "send_email": [{ "name": "EMAIL" }],
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
 }
