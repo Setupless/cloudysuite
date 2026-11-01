@@ -4,6 +4,7 @@ import { gate, resolveHost } from "./routing";
 import { readSettings } from "./settings";
 
 export { Mailbox } from "@cloudysuite/mail/mailbox";
+export { Drive } from "@cloudysuite/storage/drive";
 
 // Pages and server functions carry one person's mail, and the next person on a shared
 // computer shares the browser's HTTP cache and its back button.

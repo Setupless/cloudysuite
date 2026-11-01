@@ -54,9 +54,10 @@ const BUTTON_VARIANTS = {
   action: "bg-accent px-3.5 py-2 text-sm font-medium text-on-accent",
   secondary: "border border-line bg-panel px-4 py-2.5 font-medium text-text",
   quiet: "border border-line bg-panel px-3 py-1.5 text-sm text-text",
-  // The same height as quiet, for a toolbar that holds both.
-  quietAction:
-    "border border-accent bg-accent px-3 py-1.5 text-sm font-semibold text-on-accent",
+  // A page's toolbar: one height for both, with the smaller icon.
+  toolbar: "border border-line bg-panel px-[11px] py-1.5 text-[13px] text-text",
+  toolbarAction:
+    "border border-accent bg-accent px-[11px] py-1.5 text-[13px] font-semibold text-on-accent",
   danger: "border border-line bg-panel px-3 py-1.5 text-sm text-danger",
   link: "text-sm text-accent",
 };
@@ -76,7 +77,13 @@ export function Button({
 }) {
   return (
     <button type={type} className={buttonClass(variant)} {...props}>
-      {ButtonIcon && <ButtonIcon size={18} stroke={1.75} aria-hidden />}
+      {ButtonIcon && (
+        <ButtonIcon
+          size={variant.startsWith("toolbar") ? 16 : 18}
+          stroke={1.75}
+          aria-hidden
+        />
+      )}
       {children}
     </button>
   );

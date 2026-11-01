@@ -242,7 +242,7 @@ const ACTIONS: Record<
     label: "Remove",
     title: (name) => `Remove ${name}?`,
     body: (name) =>
-      `${name}'s account goes away, and they lose access to every mailbox. No mail is deleted: their mailbox stays, and you can give someone else access under Email addresses.`,
+      `${name}'s account goes away, and they lose access to every mailbox. No mail is deleted: their mailbox stays, and you can give someone else access under Email addresses. Their files aren't deleted either, but for now nobody else can open their My files, or a team folder only they are on.`,
     confirm: "Remove",
     danger: true,
     run: (userId) => removeMember({ data: { userId } }),

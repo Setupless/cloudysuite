@@ -49,6 +49,9 @@ export async function fingerprintOf(file: File): Promise<string> {
     .join("");
 }
 
+export const retryDelayMs = (tries: number) =>
+  Math.min(LONGEST_RETRY_MS, FIRST_RETRY_MS * 2 ** (tries - 1));
+
 export type PartsProgress = { partsDone: number; partCount: number };
 
 // Skips the parts the server already holds, which is the whole of resuming: this
@@ -103,10 +106,7 @@ export async function sendParts({
         }
         onRetrying?.();
         await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            Math.min(LONGEST_RETRY_MS, FIRST_RETRY_MS * 2 ** (tries - 1)),
-          ),
+          setTimeout(resolve, retryDelayMs(tries)),
         );
       }
     }

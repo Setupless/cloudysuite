@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import {
   driveAccess,
   type DriveId,
+  type DriveKind,
   type DriveRole,
   mailboxAccess,
   type MailboxId,
@@ -11,7 +12,7 @@ import {
   type UserId,
 } from "../../../src/db/schema";
 
-export type { DriveId, DriveRole, MailboxId, MailboxRole, UserId };
+export type { DriveId, DriveKind, DriveRole, MailboxId, MailboxRole, UserId };
 
 const ISSUE = Symbol();
 

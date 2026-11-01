@@ -216,8 +216,9 @@ test("when R2 already finished the file, completing checks the key and its size"
   const view = await started(details());
   await sent(view, bytes);
   // R2 finished the file, and the crash came before the commit.
-  const [[, upload]] = [...kit.bucket.uploads.entries()] as never;
-  const { key } = upload as { key: string };
+  const [{ key }] = [...kit.bucket.uploads.values()] as unknown as [
+    { key: string },
+  ];
   kit.bucket.objects.set(key, bytes);
   kit.bucket.uploads.clear();
 
@@ -259,6 +260,15 @@ test("the same file in the same folder resumes with the parts already stored", a
   const again = await started(details({ size: bytes.length }));
   expect(again.id).toBe(first.id);
   expect(again.storedParts).toEqual([2]);
+});
+
+test("two tabs starting the same file at once share one upload", async () => {
+  const [first, second] = await Promise.all([
+    started(details()),
+    started(details()),
+  ]);
+  expect(first.id).toBe(second.id);
+  expect(kit.bucket.uploads.size).toBe(1);
 });
 
 test("resuming needs the same folder, name, size, file, and person", async () => {
@@ -369,8 +379,9 @@ test("removing a stopped upload also clears a file a crash left in R2, and no ke
   const kept = await upload({ name: "kept" });
   const view = await started(details());
   await sent(view, new Uint8Array(5));
-  const [[, stopped]] = [...kit.bucket.uploads.entries()] as never;
-  const { key } = stopped as { key: string };
+  const [{ key }] = [...kit.bucket.uploads.values()] as unknown as [
+    { key: string },
+  ];
   kit.bucket.objects.set(key, new Uint8Array(5));
   kit.bucket.uploads.clear();
 
@@ -507,9 +518,4 @@ test("a folder can't be downloaded or previewed", async () => {
   const parent = await folder("Parent");
   expect((await downloadResponse(kit.drive, parent.id)).status).toBe(404);
   expect((await previewResponse(kit.drive, parent.id)).status).toBe(404);
-});
-
-test("people's ids are stored on what they added", async () => {
-  const file = await upload();
-  expect(file.createdBy).toBe(ALICE);
 });

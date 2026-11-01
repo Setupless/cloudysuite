@@ -222,7 +222,7 @@ test("a drive's grant cannot be built by hand, copied, or passed as a mailbox's"
 
   expect(forged).not.toBeInstanceOf(grant.constructor);
   expect(copied).not.toBeInstanceOf(grant.constructor);
-  expect(crossed).toBe(grant);
+  expect(crossed as unknown).toBe(grant);
   expect(() => {
     // @ts-expect-error A grant is read-only.
     grant.role = "manager";
