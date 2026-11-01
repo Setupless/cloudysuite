@@ -47,6 +47,10 @@ fake.addToken("read-only-token-read-only-token", OWNER, [
   "workers:read",
   "zone:read",
 ]);
+fake.addToken("no-workers-token-no-workers-token", OWNER, [
+  "zone:read",
+  "dns:write",
+]);
 fake.addAccount(STRANGER, "Stranger");
 fake.addWorker(STRANGER, "their-own-worker", [
   "22222222-2222-4222-8222-222222222222",

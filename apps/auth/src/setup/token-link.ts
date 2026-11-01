@@ -1,32 +1,49 @@
 export type TokenPermission = {
   label: string;
   level: "Read" | "Edit";
-  // Null means Cloudflare publishes no short key and no id is confirmed yet, so
-  // the form cannot fill it in and the wizard asks the person to add it by hand.
-  key: string | null;
+  // A short key from Cloudflare's token template docs, or a permission group id
+  // for the groups those docs don't name. The same link can mix the two.
+  key: string;
   type: "read" | "edit";
+  // The link can't set this. The person chooses it in Cloudflare's form.
+  scope: "account" | "zone";
 };
 
-// Short keys are from Cloudflare's token template docs. The docs do not list
-// the two email groups, which need a permission group id instead.
 export const TOKEN_PERMISSIONS: readonly TokenPermission[] = [
   {
     label: "Workers Scripts",
     level: "Edit",
     key: "workers_scripts",
     type: "edit",
+    scope: "account",
   },
-  { label: "Zone", level: "Read", key: "zone", type: "read" },
-  { label: "DNS", level: "Edit", key: "dns", type: "edit" },
-  { label: "Zone Settings", level: "Edit", key: "zone_settings", type: "edit" },
-  { label: "Email Routing Rules", level: "Edit", key: null, type: "edit" },
-  { label: "Email Sending", level: "Edit", key: null, type: "edit" },
+  {
+    label: "Email Sending",
+    level: "Edit",
+    key: "5df633d6b41c42bcaf5b4a62b9d14b64",
+    type: "edit",
+    scope: "account",
+  },
+  { label: "Zone", level: "Read", key: "zone", type: "read", scope: "zone" },
+  { label: "DNS", level: "Edit", key: "dns", type: "edit", scope: "zone" },
+  {
+    label: "Zone Settings",
+    level: "Edit",
+    key: "zone_settings",
+    type: "edit",
+    scope: "zone",
+  },
+  {
+    label: "Email Routing Rules",
+    level: "Edit",
+    key: "79b3ec0d10ce4148a8f8bdc0cc5f97f2",
+    type: "edit",
+    scope: "zone",
+  },
 ];
 
 export function tokenFormUrl(): string {
-  const filled = TOKEN_PERMISSIONS.flatMap(({ key, type }) =>
-    key ? [{ key, type }] : [],
-  );
+  const filled = TOKEN_PERMISSIONS.map(({ key, type }) => ({ key, type }));
   const keys = encodeURIComponent(JSON.stringify(filled));
   const name = encodeURIComponent("CloudySuite setup");
   return `https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=${keys}&name=${name}`;

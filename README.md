@@ -56,7 +56,7 @@ You need a domain on Cloudflare DNS and the Workers Paid plan. The wizard links 
 2. Open the Worker's URL to start the first-run wizard.
 3. Create an API token from the wizard's link, which pre-fills the token form, and paste the token into the wizard.
 4. Choose your domain and where your apps should live. The wizard checks the domain's DNS and explains its recommendation.
-5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth` and `mail` hostnames, and generates the sign-in secret.
+5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth` and `mail` hostnames, and generates the sign-in secret. Turning on Email Sending makes Cloudflare add DNS records to your domain itself: `cf-bounce` MX and SPF, a DKIM key, and `_dmarc` with `v=DMARC1; p=reject;`. That last record tells other mail systems to refuse mail that claims to be from your domain but cannot prove it, so check that any other service sending as your domain signs its mail. The wizard never changes a DMARC record you already have.
 6. Create the first admin account, which also gets a personal mailbox. The wizard then sends you to `auth.<app domain>`.
 
 The wizard calls the Cloudflare API from the Worker. It does not store the token: the token stays in the browser tab, and each call sends it again.
@@ -64,7 +64,7 @@ The wizard calls the Cloudflare API from the Worker. It does not store the token
 Only someone who holds a token for the Worker's account can finish setup, so a stranger who finds a new deployment's URL cannot claim the admin account. Every call proves two things with the pasted token:
 
 - **The token's account owns this Worker.** The Worker reads its running version id from its `version_metadata` binding, and Cloudflare must confirm that version exists on a script in the token's account. Cloudflare generates that id, so nobody can recreate it in another account. The check reads the id on every call, so it still holds after setting a secret starts a new version. This is also how the Worker learns its own script name.
-- **The token can change this Worker.** Read access alone is not enough, so the wizard reads `.../script-settings` and sends the same values back in a `PATCH`, which changes nothing but needs Workers Scripts Edit. If Cloudflare returns no settings to send back, the proof fails and the wizard writes nothing.
+- **The token can change this Worker.** Read access alone is not enough, so the wizard reads `.../script-settings` and sends the same values back in a `PATCH`, which changes nothing but needs Workers Scripts Edit. A run against real Cloudflare confirmed this: the settings were the same afterwards and no new version appeared. If Cloudflare returns no settings to send back, the proof fails and the wizard writes nothing.
 
 Until both proofs pass, the caller could be anyone, so errors from Cloudflare reach them only as a plain message. After that, the wizard shows Cloudflare's own words.
 
@@ -278,7 +278,7 @@ To try the setup wizard without a Cloudflare account, use the fake API in `apps/
 
 1. Remove `.wrangler/state`, then write `CLOUDYSUITE_LOCAL_CLOUDFLARE_API=http://127.0.0.1:8799/client/v4` as the only line in `.dev.vars`.
 2. Run `bun apps/auth/scripts/fake-cloudflare.ts`, then `bun run build`, `bun run db:migrate:local`, and `bunx wrangler dev`.
-3. Open `http://localhost:8787` and paste `owner-token-owner-token-owner-token`. The script also has a stranger's token and a read-only token.
+3. Open `http://localhost:8787` and paste `owner-token-owner-token-owner-token`. The script also has a stranger's token, a read-only token, and `no-workers-token-no-workers-token`, which can see no Workers.
 4. When the wizard waits for its new secret, restart `wrangler dev`. A real Worker restarts by itself.
 
 The wizard ignores that variable unless it names a loopback address, so it cannot send a token elsewhere. It comes from the environment, so a request cannot set it.
