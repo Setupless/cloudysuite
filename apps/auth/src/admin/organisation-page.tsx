@@ -1,3 +1,4 @@
+import { formatBytes } from "@cloudysuite/transfer";
 import { Button, Modal, Notice, Section, TextField } from "@cloudysuite/ui";
 import { IconRocket } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
@@ -8,11 +9,13 @@ import { AdminPage } from "./admin-page";
 import {
   changeAppEnabled,
   changeRequire2fa,
+  changeStorageLimit,
   getUpdateNotice,
   type OrganisationView,
   removeJevKey,
   saveJevKey,
 } from "./functions";
+import { StorageLimitForm } from "./storage-limit-form";
 import { UPDATE_STEPS_URL, type UpdateNotice } from "./updates";
 
 const APP_TEXT: Record<ToggleableApp, { name: string; off: string }> = {
@@ -312,6 +315,31 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
   );
 }
 
+function StorageSection({ storage }: { storage: OrganisationView["storage"] }) {
+  const router = useRouter();
+  const { usedBytes, limitBytes } = storage;
+  return (
+    <Section
+      title="Storage"
+      description="Cloudflare charges your organisation for what's stored, so a limit can keep the bill where you want it. People can keep uploading until they reach it."
+    >
+      <p className="text-sm">
+        {limitBytes === null
+          ? `${formatBytes(usedBytes)} used. There's no limit.`
+          : `${formatBytes(usedBytes)} used of the ${formatBytes(limitBytes)} limit.`}
+      </p>
+      <StorageLimitForm
+        label="Limit for the whole organisation, in GB"
+        limitBytes={limitBytes}
+        onChange={async (next) => {
+          await changeStorageLimit({ data: { limitBytes: next } });
+          await router.invalidate();
+        }}
+      />
+    </Section>
+  );
+}
+
 function UpdateBanner() {
   const [notice, setNotice] = useState<UpdateNotice>({ kind: "none" });
   useEffect(() => {
@@ -352,6 +380,7 @@ export function OrganisationPage({ view }: { view: OrganisationView }) {
           <AppToggle key={app.id} id={app.id} enabled={app.enabled} />
         ))}
       </Section>
+      <StorageSection storage={view.storage} />
       <JevSection jev={view.jev} />
       <p className="text-sm text-secondary">
         CloudySuite version {view.runningVersion}

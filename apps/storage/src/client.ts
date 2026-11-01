@@ -59,6 +59,6 @@ export function openDrive(env: Env, grant: DriveGrant): DriveClient {
       return found && object ? { file: found, body: object.body } : null;
     },
 
-    uploads: createDriveUploads(env.BUCKET, stub, grant),
+    uploads: createDriveUploads(env.DB, env.BUCKET, stub, grant),
   };
 }

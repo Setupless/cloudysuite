@@ -9,6 +9,7 @@ import {
   refuse,
 } from "@cloudysuite/transfer";
 import type { Drive } from "./drive";
+import { hasLimit, limitRefusal, NO_ROOM_NOW, readStorageRoom } from "./limits";
 import { parseItemName } from "./names";
 import type { CommitResult, CompletionPlan, PartPlan } from "./store";
 import {
@@ -51,6 +52,7 @@ export type DriveUploads = {
 // Runs in the Worker so that file bytes never pass through the Durable Object and hold
 // up everyone else using the drive. The object only keeps the records.
 export function createDriveUploads(
+  database: D1Database,
   bucket: R2Bucket,
   stub: DurableObjectStub<Drive>,
   grant: DriveGrant,
@@ -84,6 +86,11 @@ export function createDriveUploads(
       if (parent !== null && !(await stub.folderExists(parent))) {
         return refuse(404, NO_SUCH_FOLDER);
       }
+      const refused = limitRefusal(
+        await readStorageRoom(database, grant.driveId),
+        size,
+      );
+      if (refused) return refuse(413, refused);
 
       const found = {
         parentId: parent,
@@ -192,10 +199,22 @@ export function createDriveUploads(
       const committed = (await stub.commitUpload(
         id,
         grant.driveId,
+        hasLimit(await readStorageRoom(database, grant.driveId)),
       )) as CommitResult;
-      return committed.status === "committed"
-        ? { ok: true, value: committed.item }
-        : UPLOAD_ENDED;
+      switch (committed.status) {
+        case "committed":
+          return { ok: true, value: committed.item };
+        case "unknown":
+          return UPLOAD_ENDED;
+        case "overLimit":
+          return refuse(
+            413,
+            limitRefusal(
+              await readStorageRoom(database, grant.driveId),
+              plan.size,
+            ) ?? NO_ROOM_NOW,
+          );
+      }
     },
   };
 }

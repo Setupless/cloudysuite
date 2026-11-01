@@ -132,7 +132,9 @@ export type CompletionPlan =
     };
 
 export type CommitResult =
-  { status: "committed"; item: FileItem } | { status: "unknown" };
+  | { status: "committed"; item: FileItem }
+  | { status: "unknown" }
+  | { status: "overLimit" };
 
 export type StaleUpload = { id: string; r2Key: string; r2UploadId: string };
 
@@ -457,6 +459,20 @@ export class DriveStore {
     });
   }
 
+  // Null when there's nothing left to commit: it finished already, or it's gone.
+  uncommittedSize(id: ItemId): number | null {
+    return this.file(id) ? null : (this.#upload(id)?.size ?? null);
+  }
+
+  // Dated as already expired, so the sweep that removes stopped uploads takes it next.
+  closeRefusedUpload(id: ItemId, now: number): void {
+    this.#db.exec(
+      "UPDATE uploads SET closing = 1, touched_at = ? WHERE id = ?",
+      now - UPLOAD_EXPIRY_MS,
+      id,
+    );
+  }
+
   removeUpload(id: string): void {
     this.#db.exec("DELETE FROM upload_parts WHERE upload_id = ?", id);
     this.#db.exec("DELETE FROM uploads WHERE id = ?", id);
@@ -537,6 +553,19 @@ export class DriveStore {
       written.usedBytes,
       written.fileCount,
       written.changedAt,
+    );
+  }
+
+  // For a write to D1 that goes ahead of the change, so a crash in between still leaves
+  // the retry that puts D1 right.
+  flagUsageWrite(driveId: DriveId, now: number): void {
+    this.#db.exec(
+      `INSERT INTO drive_state (id, drive_id, used_bytes, file_count, changed_at, sync_due_at)
+       VALUES (1, ?, 0, 0, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET sync_due_at = excluded.sync_due_at`,
+      driveId,
+      now,
+      now + USAGE_RETRY_MS,
     );
   }
 

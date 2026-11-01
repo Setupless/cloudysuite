@@ -8,6 +8,7 @@ import type {
 import { MAILBOX_ROLES, ORG_ROLES } from "../../../../src/db/schema";
 import type { ToggleableApp } from "../../../../src/routing";
 import { isToggleableApp } from "./organisation";
+import { MAX_LIMIT_BYTES } from "./storage-limit-text";
 
 export function badInput(): Response {
   return new Response(
@@ -43,6 +44,21 @@ export function readJevAcknowledgement(input: unknown): true {
     );
   }
   return true;
+}
+
+export function readLimitBytes(input: unknown): number | null {
+  const value = (input as { limitBytes?: unknown } | null | undefined)
+    ?.limitBytes;
+  if (value === null) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_LIMIT_BYTES
+  ) {
+    throw badInput();
+  }
+  return value;
 }
 
 export const readUserId = (input: unknown): UserId =>

@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
+import { and, eq, sql } from "drizzle-orm";
+import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import {
   driveAccess,
+  drives,
   type DriveId,
   type DriveKind,
   type DriveRole,
@@ -131,3 +132,24 @@ export async function checkDriveAccess(
     grant: new DriveGrantRecord(ISSUE, userId, driveId, row.role),
   };
 }
+
+// Safe to repeat under the unique index, so two tabs can't make two. Put these first in
+// a batch, so whatever follows sees the drive.
+export const ensurePersonalDrive = (db: DrizzleD1Database, userId: UserId) =>
+  [
+    db
+      .insert(drives)
+      .values({
+        kind: "personal",
+        name: "My files",
+        colour: 1,
+        ownerId: userId,
+      })
+      .onConflictDoNothing(),
+    db.run(
+      sql`INSERT INTO drive_access (drive_id, user_id, role)
+          SELECT id, ${userId}, 'manager' FROM drives
+          WHERE owner_id = ${userId} AND kind = 'personal'
+          ON CONFLICT DO NOTHING`,
+    ),
+  ] as const;

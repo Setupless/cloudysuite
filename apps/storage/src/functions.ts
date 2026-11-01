@@ -1,10 +1,14 @@
 import { env } from "cloudflare:workers";
-import type { DriveId, UserId } from "@cloudysuite/access";
+import {
+  type DriveId,
+  ensurePersonalDrive,
+  type UserId,
+} from "@cloudysuite/access";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { driveAccess, drives, user } from "../../../src/db/schema";
+import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
 import { openDriveAs, requireStorageUser } from "./access";
 import { parseItemName } from "./names";
 import {
@@ -29,7 +33,6 @@ const TEAM_COLOURS = 6;
 // D1 allows 100 bound values in a statement.
 const PEOPLE_CHUNK = 90;
 const MEMBERS_SHOWN = 3;
-const MY_FILES = "My files";
 
 export type TeamFolderCard = DriveSummary & {
   fileCount: number;
@@ -41,6 +44,10 @@ export type Directory = {
   myDriveId: DriveId | null;
   teamFolders: TeamFolderCard[];
   usedBytes: number;
+  // Null means no limit, so the meter shows only the amount used.
+  limitBytes: number | null;
+  // Null until the person has a limit for My files.
+  myFiles: { usedBytes: number; limitBytes: number } | null;
 };
 
 export type People = Record<string, Person>;
@@ -65,7 +72,7 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
     const me = await requireStorageUser(getRequest());
     const db = drizzle(env.DB);
     const fellow = sql`${driveAccess.driveId} IN (SELECT drive_id FROM drive_access WHERE user_id = ${me.id})`;
-    const [mine, members, totals] = await db.batch([
+    const [mine, members, totals, settings] = await db.batch([
       db
         .select({
           id: drives.id,
@@ -74,6 +81,8 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
           colour: drives.colour,
           fileCount: drives.fileCount,
           changedAt: drives.changedAt,
+          usedBytes: drives.usedBytes,
+          limitBytes: drives.limitBytes,
         })
         .from(driveAccess)
         .innerJoin(drives, eq(drives.id, driveAccess.driveId))
@@ -91,13 +100,17 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
         .where(fellow)
         .orderBy(asc(driveAccess.createdAt)),
       db.select({ usedBytes: sum(drives.usedBytes) }).from(drives),
+      db
+        .select({ limitBytes: orgSettings.storageLimitBytes })
+        .from(orgSettings),
     ]);
 
+    const my = mine.find((row) => row.kind === "personal");
     return {
-      myDriveId: mine.find((row) => row.kind === "personal")?.id ?? null,
+      myDriveId: my?.id ?? null,
       teamFolders: mine
         .filter((row) => row.kind === "team")
-        .map((row) => ({
+        .map(({ usedBytes: _used, limitBytes: _limit, ...row }) => ({
           ...row,
           changedAt: row.changedAt.getTime(),
           members: members
@@ -106,27 +119,22 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
             .map(({ id, name, email }) => ({ id, name, email })),
         })),
       usedBytes: Number(totals[0]?.usedBytes ?? 0),
+      limitBytes: settings[0]?.limitBytes ?? null,
+      myFiles:
+        my && my.limitBytes !== null
+          ? { usedBytes: my.usedBytes, limitBytes: my.limitBytes }
+          : null,
     };
   },
 );
 
-// Idempotent under the unique index, so two tabs can't make two.
 export const ensureMyFiles = createServerFn({ method: "POST" }).handler(
   async (): Promise<DriveId> => {
     const me = await requireStorageUser(getRequest());
     const db = drizzle(env.DB);
     const owned = and(eq(drives.ownerId, me.id), eq(drives.kind, "personal"));
     const [, , found] = await db.batch([
-      db
-        .insert(drives)
-        .values({ kind: "personal", name: MY_FILES, colour: 1, ownerId: me.id })
-        .onConflictDoNothing(),
-      db.run(
-        sql`INSERT INTO drive_access (drive_id, user_id, role)
-            SELECT id, ${me.id}, 'manager' FROM drives
-            WHERE owner_id = ${me.id} AND kind = 'personal'
-            ON CONFLICT DO NOTHING`,
-      ),
+      ...ensurePersonalDrive(db, me.id),
       db.select({ id: drives.id }).from(drives).where(owned),
     ]);
     const id = found[0]?.id;

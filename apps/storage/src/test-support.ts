@@ -12,6 +12,7 @@ import { FakeBucket } from "@cloudysuite/transfer/fake-bucket";
 import { createTestDatabase } from "../../../src/db/test-database";
 
 mock.module("cloudflare:workers", () => ({
+  env: {},
   DurableObject: class {
     ctx: unknown;
     env: unknown;
@@ -126,10 +127,10 @@ export async function createStorageTest() {
     grantFor,
     open,
     drive: open(await grantFor(ALICE, DRIVE_A)),
-    instance: () => instanceOf(DRIVE_A),
+    instance: (driveId: DriveId = DRIVE_A) => instanceOf(driveId),
     // Moves the clock to the alarm's time, as the runtime would, and runs it.
-    async fireAlarm() {
-      const instance = instanceOf(DRIVE_A);
+    async fireAlarm(driveId: DriveId = DRIVE_A) {
+      const instance = instanceOf(driveId);
       const at = instance.alarm;
       if (at !== null) setSystemTime(new Date(at));
       try {

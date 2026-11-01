@@ -9,6 +9,7 @@ import { FakeBucket } from "@cloudysuite/transfer/fake-bucket";
 export { createSqlDriver, FakeBucket };
 
 mock.module("cloudflare:workers", () => ({
+  env: {},
   DurableObject: class {
     ctx: unknown;
     env: unknown;

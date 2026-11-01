@@ -18,12 +18,22 @@ import { type ReactNode, useState } from "react";
 import { createTeamFolder, type Directory } from "../functions";
 import { call, directoryQuery, storageKeys } from "../queries";
 import { formatBytes } from "./format";
+import { StorageMeter } from "./storage-meter";
 import { NameDialog } from "./page-parts";
 import { teamColour } from "./team-colour";
 import { UploadTray } from "./upload-tray";
 
 const itemClass = (active: boolean) =>
   `${NAV_ITEM} ${active ? NAV_ITEM_ACTIVE : ""}`;
+
+function useInMyFiles(directory: Directory | undefined) {
+  const { pathname } = useLocation();
+  const { driveId } = useParams({ strict: false });
+  return (
+    pathname.endsWith("/my-files") ||
+    (driveId !== undefined && driveId === directory?.myDriveId)
+  );
+}
 
 function Navigation({
   directory,
@@ -34,11 +44,8 @@ function Navigation({
 }) {
   const { pathname } = useLocation();
   const { driveId } = useParams({ strict: false });
-  const myDriveId = directory?.myDriveId ?? null;
   const isHome = ["", "/storage"].includes(pathname.replace(/\/$/, ""));
-  const isMyFiles =
-    pathname.endsWith("/my-files") ||
-    (driveId !== undefined && driveId === myDriveId);
+  const isMyFiles = useInMyFiles(directory);
   return (
     <>
       <Link
@@ -84,6 +91,33 @@ function Navigation({
   );
 }
 
+function SidebarMeters({ directory }: { directory: Directory }) {
+  const { usedBytes, limitBytes, myFiles } = directory;
+  const inMyFiles = useInMyFiles(directory);
+  return (
+    <div className="flex flex-col gap-2 p-2.5">
+      {inMyFiles && myFiles && (
+        <StorageMeter
+          usedBytes={myFiles.usedBytes}
+          limitBytes={myFiles.limitBytes}
+          text={`${formatBytes(myFiles.usedBytes)} of your ${formatBytes(myFiles.limitBytes)} used in My files`}
+        />
+      )}
+      {limitBytes === null ? (
+        <p className="text-xs text-secondary">
+          {formatBytes(usedBytes)} of your organisation's storage used
+        </p>
+      ) : (
+        <StorageMeter
+          usedBytes={usedBytes}
+          limitBytes={limitBytes}
+          text={`${formatBytes(usedBytes)} of your organisation's ${formatBytes(limitBytes)} used`}
+        />
+      )}
+    </div>
+  );
+}
+
 function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -100,14 +134,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
           onNewTeamFolder={() => setNaming(true)}
         />
       }
-      sidebarFooter={
-        directory && (
-          <p className="p-2.5 text-xs text-secondary">
-            {formatBytes(directory.usedBytes)} of your organisation's storage
-            used
-          </p>
-        )
-      }
+      sidebarFooter={directory && <SidebarMeters directory={directory} />}
     >
       {children}
       <UploadTray />
