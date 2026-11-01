@@ -1,4 +1,8 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
+import {
+  SESSION_LIFETIME_SECONDS,
+  SESSION_RENEWAL_SECONDS,
+} from "@cloudysuite/auth/session-lifetime";
 import type { RenderedBody } from "../email/render-body";
 import type {
   Folder,
@@ -23,8 +27,10 @@ export const MAX_BODIES_PER_BATCH = 40;
 export const MAX_BATCH_BYTES = 8 * 1024 * 1024;
 
 // No check can reach the server while offline, so saved mail stops opening once the
-// session it came from could have ended: Better Auth's default session lasts 7 days.
-export const OFFLINE_TRUST_MS = 7 * 24 * 60 * 60 * 1000;
+// session it came from could have ended. A check that reaches the server renews the
+// session at most one renewal period late, so this is the shortest time it can have left.
+export const OFFLINE_TRUST_MS =
+  (SESSION_LIFETIME_SECONDS - SESSION_RENEWAL_SECONDS) * 1000;
 
 export type DeviceOwner = { user: SignedIn; verifiedAt: number };
 

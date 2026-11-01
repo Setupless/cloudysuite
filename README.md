@@ -33,6 +33,7 @@ Every deployment contains every released app. An admin can turn each app off for
 - The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
+- The only other exception is `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Auth cannot be turned off, because admins use it to turn the other apps back on.
 
 D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
@@ -146,6 +147,7 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - Admins can reset a member's sign-in and require 2FA for the organisation.
 - Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
 - Resetting a sign-in removes the member's passkeys, authenticator app, password, and sessions, then gives the admin a one-time link to hand over. CloudySuite never emails it, because the member's only address may be a mailbox they cannot open.
+- A session lasts 60 days and renews when it is used, at most once a day, so each session costs at most one database write a day. Someone who opens Mail now and then stays signed in and keeps getting notifications, which need a live session. Renewal happens on any request that reads the session, including Mail's, and someone unused for 60 days signs in again. The session cookie cache stays off, so a sign-out or reset takes effect at once.
 - A person's sign-in address is their new mailbox address when the invite creates one, and otherwise the address the invite went to.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
@@ -202,17 +204,17 @@ Mail installs from its own host as a PWA. The **App and notifications** page in 
 
 **A device is cleared when:**
 
-| What happened                        | What notices                                                                    |
-| ------------------------------------ | ------------------------------------------------------------------------------- |
-| Signing out                          | The sign-out page sends the browser through Mail's `/device-cleared`            |
-| A session ending elsewhere           | The service worker asks who is signed in on each page load, with no page code   |
-| A tab left open when a session ends  | Its next call gets a 401                                                        |
-| Someone else signing in              | The same check, and the page, comparing against the device's owner              |
-| 7 days with no check from the server | Offline, saved mail stops opening, because the session could have ended by then |
+| What happened                         | What notices                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| Signing out                           | The sign-out page sends the browser through Mail's `/device-cleared`            |
+| A session ending elsewhere            | The service worker asks who is signed in on each page load, with no page code   |
+| A tab left open when a session ends   | Its next call gets a 401                                                        |
+| Someone else signing in               | The same check, and the page, comparing against the device's owner              |
+| 59 days with no check from the server | Offline, saved mail stops opening, because the session could have ended by then |
 
 Sign-out happens on Account's host, which cannot reach Mail's storage, so it has to pass through Mail's. `/device-cleared` is a plain file, so this also works while Mail is off.
 
-Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 7 days. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
+Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 59 days, which is a session's 60 days less the day a renewal can lag. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
 
 Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because `/pwa/session` is the one Mail address that answers while Mail is off. It returns a person's id or a 401, and no mail.
 
@@ -224,7 +226,7 @@ A person turns notifications on for each device and can turn off any mailbox the
 
 - **Web push is hand-written** with WebCrypto: RFC 8291 to encrypt and RFC 8292 to sign. A test checks it against RFC 8291's published message, byte for byte. The organisation's signing keys are made once, on first use.
 - **Only known push services.** A browser supplies its own endpoint and the Worker later sends a request to it, so an open list would let anyone signed in aim the Worker at any URL. `apps/mail/src/push/endpoint.ts` lists the hosts. Chromium handed out `jmt17.google.com` on 2026-11-01, which Google's documents do not name, so a browser could start using a host this list lacks. It then shows a plain failure, and the fix is one line.
-- **Access is checked when sending,** not when queuing, through the one access check. A person also needs a live session somewhere, so someone who signed out everywhere or was reset hears nothing, and neither does someone who has not opened Mail on any device for 7 days, because their session has ended.
+- **Access is checked when sending,** not when queuing, through the one access check. A person also needs a live session somewhere, so someone who signed out everywhere or was reset hears nothing, and neither does someone who has not used CloudySuite on any device for 60 days, because their session has ended.
 - **A flood stays small.** A device gets at most one notification every 30 seconds. The first message after a quiet spell goes at once, and the rest become one summary with no sender or subject. An alarm sends at most 50, and a device only ever owes its newest notice, so the queue cannot grow.
 - **Hostile text.** The service worker treats the decrypted message as hostile. A click opens a path built only from checked ids, on Mail's own host.
 - **Mail turned off** still stores inbound mail but tells nobody, then or later.

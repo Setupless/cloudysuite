@@ -12,6 +12,10 @@ import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../../../src/db/schema";
 import type { AppOrigins } from "./origins";
+import {
+  SESSION_LIFETIME_SECONDS,
+  SESSION_RENEWAL_SECONDS,
+} from "./session-lifetime";
 import { isEnrolled, type Removal, removalRefusal } from "./sign-in-methods";
 import { readRequire2fa, readSignInMethods } from "./sign-in-methods-store";
 
@@ -63,7 +67,11 @@ export function createAuth({
     // Accounts come from invites, through auth.api.createUser on the server,
     // which this setting does not block, and from the setup wizard's first admin.
     emailAndPassword: { enabled: true, disableSignUp: true },
-    session: { cookieCache: { enabled: false } },
+    session: {
+      expiresIn: SESSION_LIFETIME_SECONDS,
+      updateAge: SESSION_RENEWAL_SECONDS,
+      cookieCache: { enabled: false },
+    },
     // The default store is per isolate and the default switch reads NODE_ENV,
     // which Workers does not set, so sign-in would have no shared limit.
     rateLimit: { enabled: true, storage: "database" },

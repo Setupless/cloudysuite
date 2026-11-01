@@ -11,6 +11,7 @@
     "./handler": "./src/handler.ts",
     "./origins": "./src/origins.ts",
     "./session": "./src/session.ts",
+    "./session-lifetime": "./src/session-lifetime.ts",
     "./shell": "./src/shell.tsx",
     "./welcome": "./src/welcome/functions.ts",
     "./setup": "./src/setup/wizard.tsx",

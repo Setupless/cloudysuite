@@ -279,6 +279,30 @@ test("a banned person and a person with no live session get nothing", async () =
   }
 });
 
+test("a session unused for 61 days gets no notification, and one used on day 50 does", async () => {
+  const w = world();
+  try {
+    await device(w.d1, ALICE, "a");
+    await device(w.d1, BOB, "b");
+    await ingest(w.env, inbound());
+    const day = 86_400_000;
+    // Alice's 60 day session ended a day ago. Bob's was renewed 50 days ago.
+    w.sqlite.run("UPDATE session SET expires_at = ? WHERE user_id = ?", [
+      Date.now() - day,
+      ALICE,
+    ]);
+    w.sqlite.run("UPDATE session SET expires_at = ? WHERE user_id = ?", [
+      Date.now() + 10 * day,
+      BOB,
+    ]);
+    await w.instanceOf(MAILBOX_A).fireAlarm();
+    expect(w.sent).toHaveLength(1);
+    expect(w.sent[0]?.endpoint).toEndWith("/b");
+  } finally {
+    w.restore();
+  }
+});
+
 test.each([404, 410])("a %i removes the device for good", async (status) => {
   const w = world();
   try {
