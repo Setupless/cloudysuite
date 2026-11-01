@@ -50,6 +50,20 @@ export function requireUser(
   return requireUserOnServer({ data: { app, path: location.publicHref } });
 }
 
+const requireAdminOnServer = createServerFn({ method: "GET" })
+  .validator((input: { path: string }) => input)
+  .handler(async ({ data }): Promise<SignedIn> => {
+    const signedIn = await readSignedIn({ app: "auth", path: data.path });
+    if (signedIn.role !== "admin") throw redirect({ href: "/" });
+    return signedIn;
+  });
+
+export function requireAdmin(location: {
+  publicHref: string;
+}): Promise<SignedIn> {
+  return requireAdminOnServer({ data: { path: location.publicHref } });
+}
+
 export const prepareSignIn = createServerFn({ method: "GET" })
   .validator((input: { returnTo?: string }) => input)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {

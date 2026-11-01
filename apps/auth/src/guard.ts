@@ -36,3 +36,9 @@ export async function requireReadyUser(request: Request): Promise<SessionUser> {
   }
   return viewer.user;
 }
+
+export async function requireAdminUser(request: Request): Promise<SessionUser> {
+  const user = await requireReadyUser(request);
+  if (user.role !== "admin") throw refusal(403, "Only an admin can do this.");
+  return user;
+}

@@ -6,10 +6,12 @@
   "exports": {
     ".": "./src/index.tsx",
     "./account": "./src/account/functions.ts",
+    "./admin": "./src/admin/functions.ts",
     "./guard": "./src/guard.ts",
     "./handler": "./src/handler.ts",
     "./session": "./src/session.ts",
-    "./shell": "./src/shell.tsx"
+    "./shell": "./src/shell.tsx",
+    "./welcome": "./src/welcome/functions.ts"
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.14",
