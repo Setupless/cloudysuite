@@ -84,6 +84,8 @@ export type NewMessage = {
   replyTo: Address[];
   to: Address[];
   cc: Address[];
+  // Only a sent copy has this. An inbound message's Bcc header is the sender's business.
+  bcc: Address[];
   snippet: string;
   sentAt: number | null;
   receivedAt: number;
@@ -148,6 +150,7 @@ export type MessageDetail = {
   replyTo: Address[];
   to: Address[];
   cc: Address[];
+  bcc: Address[];
   subject: string | null;
   snippet: string;
   sentAt: number | null;

@@ -36,6 +36,13 @@ export function formatSize(bytes: number): string {
 export const displayName = (person: Address | null): string =>
   person ? person.name.trim() || person.address : "Unknown sender";
 
+// A display name such as "ceo@company.com" would hide the real address behind it.
+// NFKC also catches lookalike at signs, such as the full-width one.
+export const recipientLabel = (person: Address): string =>
+  person.name.normalize("NFKC").includes("@")
+    ? person.address
+    : displayName(person);
+
 export const formatAddress = (person: Address): string =>
   person.name.trim()
     ? `${person.name.trim()} <${person.address}>`

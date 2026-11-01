@@ -8,6 +8,7 @@
     "./client": "./src/client.ts",
     "./import": "./src/import/index.ts",
     "./import-api": "./src/import/api.ts",
+    "./compose-api": "./src/compose/api.ts",
     "./download": "./src/download.ts",
     "./ingest": "./src/ingest.ts",
     "./mailbox": "./src/mailbox.ts"

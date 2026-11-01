@@ -1,4 +1,20 @@
 import { DurableObject } from "cloudflare:workers";
+import type { MailboxId } from "@cloudysuite/access";
+import { runDueSends } from "./compose/job";
+import {
+  type AddAttachmentResult,
+  type NewOutgoing,
+  OutgoingStore,
+  type ScheduleResult,
+} from "./compose/store";
+import type {
+  DraftContent,
+  Editor,
+  OutgoingDetail,
+  OutgoingId,
+  OutgoingSummary,
+  SaveResult,
+} from "./compose/types";
 import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
@@ -12,6 +28,7 @@ import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
   AttachmentId,
   AttachmentRef,
+  Address,
   BodyRef,
   CommitResult,
   Folder,
@@ -35,6 +52,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #search: SearchStore;
   readonly #labels: LabelStore;
   readonly #rules: RuleStore;
+  readonly #outgoing: OutgoingStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -48,6 +66,7 @@ export class Mailbox extends DurableObject<Env> {
     this.#search = new SearchStore(db, this.#store);
     this.#rules = new RuleStore(db);
     this.#labels = new LabelStore(db, this.#rules);
+    this.#outgoing = new OutgoingStore(db, this.#store);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -229,6 +248,86 @@ export class Mailbox extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
   }
 
+  // A send's alarm is lost if the runtime gives up retrying it, so anyone with the
+  // mailbox open starts it again, as with imports.
+  async listOutgoing(viewerId: string): Promise<OutgoingSummary[]> {
+    if (
+      this.#outgoing.nextDueAt() !== null &&
+      (await this.ctx.storage.getAlarm()) === null
+    ) {
+      await this.#scheduleNextWakeUp();
+    }
+    return this.#outgoing.list(viewerId);
+  }
+
+  outgoingDetail(id: OutgoingId, viewerId: string): OutgoingDetail | null {
+    return this.#outgoing.detail(id, viewerId);
+  }
+
+  suggestAddresses(query: string): Address[] {
+    return this.#outgoing.suggestions(query, 8);
+  }
+
+  createOutgoing(input: NewOutgoing): void {
+    this.#outgoing.create(input);
+  }
+
+  saveOutgoing(input: {
+    id: OutgoingId;
+    baseRevision: number;
+    content: DraftContent;
+    plainText: string;
+    editor: Editor;
+    r2Prefix: string;
+  }): SaveResult {
+    return this.#outgoing.save(input);
+  }
+
+  async scheduleOutgoing(input: {
+    id: OutgoingId;
+    content: DraftContent;
+    plainText: string;
+    editor: Editor;
+    r2Prefix: string;
+    fromName: string;
+    mailboxId: MailboxId;
+  }): Promise<ScheduleResult> {
+    const result = this.#outgoing.schedule(input);
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
+  async undoOutgoing(id: OutgoingId): Promise<boolean> {
+    const undone = this.#outgoing.undo(id);
+    await this.#scheduleNextWakeUp();
+    return undone;
+  }
+
+  reopenOutgoing(id: OutgoingId): boolean {
+    return this.#outgoing.reopen(id);
+  }
+
+  async discardOutgoing(id: OutgoingId): Promise<boolean> {
+    const discarded = this.#outgoing.discard(id);
+    await this.#scheduleNextWakeUp();
+    return discarded;
+  }
+
+  addOutgoingAttachment(
+    input: Parameters<OutgoingStore["addAttachment"]>[0],
+  ): AddAttachmentResult {
+    return this.#outgoing.addAttachment(input);
+  }
+
+  async removeOutgoingAttachment(
+    id: OutgoingId,
+    attachmentId: number,
+  ): Promise<boolean> {
+    const removed = this.#outgoing.removeAttachment(id, attachmentId);
+    await this.#scheduleNextWakeUp();
+    return removed;
+  }
+
   // Every background job keeps its own due time in its own table, and this one
   // alarm is always the earliest of them. So a job that reschedules itself can
   // neither push another job back nor be pushed back by it. Call this before any
@@ -237,6 +336,7 @@ export class Mailbox extends DurableObject<Env> {
     const due = [
       this.#store.nextDeletionAt(),
       this.#imports.nextRunAt(),
+      this.#outgoing.nextDueAt(),
     ].filter((time) => time !== null);
     return due.length > 0
       ? this.ctx.storage.setAlarm(Math.min(...due))
@@ -246,9 +346,30 @@ export class Mailbox extends DurableObject<Env> {
   // Each job catches its own failure, so one that keeps failing still leaves the
   // others to run. A later job adds itself here and in #scheduleNextWakeUp.
   override async alarm(): Promise<void> {
+    await this.#runSends();
     await this.#sweep();
     await this.#runImports();
     await this.#scheduleNextWakeUp();
+  }
+
+  // First, so a long import batch can't stretch a ten-second undo window. A throw here
+  // leaves each job's state as saved, and its own due time brings it back.
+  async #runSends(): Promise<void> {
+    try {
+      await runDueSends(
+        this.#outgoing,
+        this.env.BUCKET,
+        this.env.EMAIL,
+        this.env.DB,
+        async () => {
+          await this.#scheduleNextWakeUp();
+          await this.ctx.storage.sync();
+        },
+        Date.now(),
+      );
+    } catch (error) {
+      console.error("A send step stopped. It will be looked at again.", error);
+    }
   }
 
   async #sweep(): Promise<void> {

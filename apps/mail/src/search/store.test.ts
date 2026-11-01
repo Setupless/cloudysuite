@@ -39,6 +39,7 @@ function deliver(overrides: Partial<NewMessage> = {}) {
     replyTo: [],
     to: [bob],
     cc: [],
+    bcc: [],
     snippet: `snippet ${serial}`,
     sentAt: T0 + serial,
     receivedAt: T0 + serial,

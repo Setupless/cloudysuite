@@ -64,6 +64,7 @@ function message(overrides: Partial<NewMessage> = {}): NewMessage {
     replyTo: [],
     to: [{ name: "Sales", address: "sales@example.com" }],
     cc: [{ name: "Finance", address: "finance@example.com" }],
+    bcc: [],
     snippet: "snippet",
     sentAt: serial,
     receivedAt: serial,

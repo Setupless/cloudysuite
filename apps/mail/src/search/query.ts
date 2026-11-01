@@ -114,10 +114,16 @@ export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
       query.hasAttachment = true;
     } else if (operator === "in" && value) {
       const folder = value.toLowerCase() as Folder;
+      if (folder === "drafts") {
+        return {
+          ok: false,
+          problem: "Search doesn't look in Drafts. Open Drafts from the menu.",
+        };
+      }
       if (!FOLDERS.includes(folder)) {
         return {
           ok: false,
-          problem: `There's no folder called "${shown(value)}". Try in:inbox, in:archive, in:sent, in:drafts, in:spam, or in:trash.`,
+          problem: `There's no folder called "${shown(value)}". Try in:inbox, in:archive, in:sent, in:spam, or in:trash.`,
         };
       }
       query.folder = folder;

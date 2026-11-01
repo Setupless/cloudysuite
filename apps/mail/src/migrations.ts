@@ -178,6 +178,66 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
   ],
   // A role from the theme, not a colour, so editing the theme recolours labels too.
   [`ALTER TABLE labels ADD COLUMN colour TEXT NOT NULL DEFAULT 'secondary'`],
+  // One row per message being written or sent. See compose/types.ts for its states.
+  [
+    `CREATE TABLE outgoing (
+      id TEXT PRIMARY KEY,
+      state TEXT NOT NULL CHECK (state IN ('draft', 'scheduled', 'sending', 'accepted', 'sent', 'failed', 'unknown')),
+      revision INTEGER NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('new', 'reply', 'replyAll', 'forward')),
+      -- A reply's threading facts are copied here, so deleting the parent can't break it.
+      parent_message_id INTEGER,
+      parent_rfc_id TEXT,
+      parent_refs TEXT NOT NULL,
+      from_address TEXT NOT NULL,
+      from_name TEXT NOT NULL,
+      to_addresses TEXT NOT NULL,
+      cc_addresses TEXT NOT NULL,
+      bcc_addresses TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      html TEXT NOT NULL,
+      body_text TEXT NOT NULL,
+      include_quote INTEGER NOT NULL CHECK (include_quote IN (0, 1)),
+      quote_bytes INTEGER,
+      quote_designed INTEGER NOT NULL,
+      r2_prefix TEXT NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_by_name TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      sent_by TEXT,
+      mailbox_id TEXT,
+      due_at INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      failure TEXT,
+      returned_message_id TEXT,
+      accepted_at INTEGER,
+      stored_message_id INTEGER
+    )`,
+    `CREATE INDEX outgoing_due ON outgoing(due_at) WHERE due_at IS NOT NULL`,
+    `CREATE INDEX outgoing_recent ON outgoing(updated_at DESC)`,
+    `CREATE TABLE outgoing_attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      outgoing_id TEXT NOT NULL REFERENCES outgoing(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      r2_key TEXT NOT NULL
+    )`,
+    `CREATE INDEX outgoing_attachments_owner ON outgoing_attachments(outgoing_id)`,
+    `ALTER TABLE messages ADD COLUMN bcc_addresses TEXT NOT NULL DEFAULT '[]'`,
+    // Address suggestions in the To field read this on every keystroke, so they can't
+    // scan the mailbox. Spam stays out, so a junk sender is never suggested.
+    `CREATE TABLE correspondents (
+      address TEXT PRIMARY KEY COLLATE NOCASE,
+      name TEXT NOT NULL,
+      last_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    `CREATE INDEX correspondents_name ON correspondents(name COLLATE NOCASE)`,
+    `INSERT OR IGNORE INTO correspondents (address, name, last_at)
+     SELECT from_address, COALESCE(from_name, ''), MAX(received_at) FROM messages
+     WHERE from_address IS NOT NULL AND folder NOT IN ('spam', 'trash')
+     GROUP BY from_address COLLATE NOCASE`,
+  ],
 ];
 
 export function applyMigrations(

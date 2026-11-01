@@ -45,6 +45,7 @@ export type ParsedMessage = {
   replyTo: Address[];
   to: Address[];
   cc: Address[];
+  bcc: Address[];
   sentAt: number | null;
   firstAuthenticationResults: string | null;
   text: string | null;
@@ -82,7 +83,7 @@ function parseDate(value: string | null | undefined): number | null {
 const STRIPPED_FROM_FILENAME = /[\p{Cc}"']/gu;
 const UNSAFE_FILENAME = /[‪-‮⁦-⁩/\\]/gu;
 
-function cleanFilename(filename: string | null): string | null {
+export function cleanFileName(filename: string | null): string | null {
   if (!filename) return null;
   const clean = filename
     .replace(STRIPPED_FROM_FILENAME, "")
@@ -93,7 +94,7 @@ function cleanFilename(filename: string | null): string | null {
 
 const MIME_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 
-function cleanMimeType(mimeType: string): string {
+export function cleanMimeType(mimeType: string): string {
   const type = mimeType.split(";")[0]!.trim().toLowerCase();
   return MIME_TYPE.test(type) ? type : "application/octet-stream";
 }
@@ -107,7 +108,7 @@ function cleanContentId(contentId: string | undefined): string | null {
 function toParsedAttachment(attachment: Attachment): ParsedAttachment {
   const { content } = attachment;
   return {
-    filename: cleanFilename(attachment.filename),
+    filename: cleanFileName(attachment.filename),
     mimeType: cleanMimeType(attachment.mimeType),
     inline: attachment.related === true || attachment.disposition === "inline",
     contentId: cleanContentId(attachment.contentId),
@@ -130,6 +131,7 @@ async function parseWithPostalMime(raw: ArrayBuffer): Promise<ParsedMessage> {
     replyTo: flatten(email.replyTo),
     to: flatten(email.to),
     cc: flatten(email.cc),
+    bcc: flatten(email.bcc),
     sentAt: parseDate(email.date),
     firstAuthenticationResults:
       email.headers.find((header) => header.key === "authentication-results")
@@ -204,6 +206,7 @@ function parseFallback(raw: ArrayBuffer): ParsedMessage {
     replyTo: safeAddresses(headers.get("reply-to")),
     to: safeAddresses(headers.get("to")),
     cc: safeAddresses(headers.get("cc")),
+    bcc: safeAddresses(headers.get("bcc")),
     sentAt: parseDate(headers.get("date")),
     firstAuthenticationResults: headers.get("authentication-results") ?? null,
     text: text || null,

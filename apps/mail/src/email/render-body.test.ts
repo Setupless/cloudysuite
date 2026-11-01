@@ -51,7 +51,9 @@ async function setUp() {
       raw,
       envelope: { from: "a@x.org", to: "b@x.org" },
     });
-    if (result.status === "tooLarge") throw new Error("too large");
+    if (result.status === "tooLarge") {
+      throw new Error(`not stored: ${result.status}`);
+    }
     return result.messageId;
   };
   return { mailbox, deliver };

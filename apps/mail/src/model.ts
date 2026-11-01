@@ -165,7 +165,8 @@ export const MOVES_BY_FOLDER: Record<Folder, readonly MoveId[]> = {
   inbox: ["archive", "spam", "trash"],
   archive: ["toInbox", "spam", "trash"],
   sent: ["trash"],
-  drafts: ["trash"],
+  // A draft is never a message, so it has no moves. It can only be discarded.
+  drafts: [],
   spam: ["notSpam", "trash", "deleteForever"],
   trash: ["restore", "deleteForever"],
 };

@@ -99,6 +99,7 @@ test("searches that can't run explain themselves in plain words", () => {
     expect(problemOf(text)).toContain("Add a word");
   }
   expect(problemOf("in:nowhere")).toContain('no folder called "nowhere"');
+  expect(problemOf("in:drafts")).toContain("doesn't look in Drafts");
   expect(problemOf("is:happy")).toContain("is:unread");
   expect(problemOf("has:pdf")).toContain("has:attachment");
   expect(problemOf("before:soon")).toContain("2026-03-31");

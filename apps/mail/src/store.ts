@@ -53,6 +53,7 @@ type MessageRow = SqlRow & {
   reply_to: string;
   to_addresses: string;
   cc_addresses: string;
+  bcc_addresses: string;
   subject: string | null;
   snippet: string;
   sent_at: number | null;
@@ -141,6 +142,7 @@ function toMessageDetail(
     replyTo: JSON.parse(row.reply_to) as Address[],
     to: JSON.parse(row.to_addresses) as Address[],
     cc: JSON.parse(row.cc_addresses) as Address[],
+    bcc: JSON.parse(row.bcc_addresses) as Address[],
     subject: row.subject,
     snippet: row.snippet,
     sentAt: row.sent_at,
@@ -270,6 +272,7 @@ export class MailboxStore {
         messageId,
         threadId,
       );
+      this.#rememberCorrespondents(message, placement.folder);
       this.refreshThread(threadId);
       return {
         status: "stored",
@@ -278,6 +281,27 @@ export class MailboxStore {
         folder: placement.folder,
       };
     });
+  }
+
+  #rememberCorrespondents(message: NewMessage, folder: Folder): void {
+    if (folder === "spam") return;
+    const people =
+      message.source === "sent"
+        ? [...message.to, ...message.cc, ...message.bcc]
+        : message.from
+          ? [message.from]
+          : [];
+    for (const person of people) {
+      this.#db.exec(
+        `INSERT INTO correspondents (address, name, last_at) VALUES (?, ?, ?)
+         ON CONFLICT (address) DO UPDATE SET
+           name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE name END,
+           last_at = MAX(last_at, excluded.last_at)`,
+        person.address,
+        person.name,
+        message.receivedAt,
+      );
+    }
   }
 
   // A message's thread is its connected component in a graph that does not depend
@@ -389,10 +413,10 @@ export class MailboxStore {
         `INSERT INTO messages (
            raw_hash, raw_size, r2_prefix, source, envelope_from, envelope_to,
            parse_status, rfc_message_id, refs, thread_id, from_name, from_address,
-           reply_to, to_addresses, cc_addresses, participants, subject,
+           reply_to, to_addresses, cc_addresses, bcc_addresses, participants, subject,
            normalized_subject, is_orphan_reply, snippet, sent_at, received_at,
            thread_date, is_read, is_starred, folder, has_attachments, auth_results
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
         message.rawHash,
         message.rawSize,
@@ -409,6 +433,7 @@ export class MailboxStore {
         JSON.stringify(message.replyTo),
         JSON.stringify(message.to),
         JSON.stringify(message.cc),
+        JSON.stringify(message.bcc),
         JSON.stringify(participantsOf(message)),
         message.subject,
         normalized,
@@ -458,7 +483,7 @@ export class MailboxStore {
       id,
       message.subject ?? "",
       message.from ? people([message.from]) : "",
-      people([...message.to, ...message.cc]),
+      people([...message.to, ...message.cc, ...message.bcc]),
       message.searchBody,
     );
     return id as MessageId;

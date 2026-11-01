@@ -1,4 +1,8 @@
 import type { MailboxGrant } from "@cloudysuite/access";
+import {
+  createMailboxOutgoing,
+  type MailboxOutgoing,
+} from "./compose/outgoing";
 import { createMailboxImports, type MailboxImports } from "./import/uploads";
 import type { LabelWrite } from "./labels/store";
 import { rawKey } from "./r2-keys";
@@ -86,6 +90,7 @@ export type MailboxClient = {
     attachmentId: AttachmentId,
   ): Promise<AttachmentDownload | null>;
   getRaw(messageId: MessageId): Promise<ReadableStream | null>;
+  outgoing: MailboxOutgoing;
 };
 
 // The only way for user-facing code to reach a mailbox. A grant cannot cross RPC,
@@ -153,6 +158,8 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       if (prefix === null) return null;
       return (await env.BUCKET.get(rawKey(prefix)))?.body ?? null;
     },
+
+    outgoing: createMailboxOutgoing(env.BUCKET, stub, grant.mailboxId),
   };
 }
 
