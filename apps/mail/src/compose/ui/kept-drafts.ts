@@ -10,16 +10,26 @@ import type { MailboxId } from "../../types";
 import { saveKeptDraft } from "../functions";
 import {
   isLeftOut,
+  keptHoldsSomething,
   moveToDrafts,
   parseKeptDraft,
   parseKeptNote,
 } from "../kept";
-import type { KeptDraft, KeptNote, OutgoingId } from "../types";
+import {
+  type KeptDraft,
+  type KeptNote,
+  type OutgoingId,
+  startOf,
+} from "../types";
 
-export const readKeptDrafts = async (userId: UserId): Promise<KeptDraft[]> =>
+const readEveryKept = async (userId: UserId): Promise<KeptDraft[]> =>
   (await readKeptRows(userId))
     .map(parseKeptDraft)
     .filter((draft) => draft !== null);
+
+// An earlier build could keep text someone had cleared, which isn't worth offering back.
+export const readKeptDrafts = async (userId: UserId): Promise<KeptDraft[]> =>
+  (await readEveryKept(userId)).filter(keptHoldsSomething);
 
 const readKeptNotes = async (userId: UserId): Promise<KeptNote[]> =>
   (await readKeptNoteRows(userId))
@@ -50,31 +60,36 @@ export type MovedDraft = {
 
 // Each one that goes is forgotten only after the server has it. Whatever fails stays
 // here for the next try, and the one open in an editor is that editor's to save. A
-// mailbox this person has lost is skipped: those words aren't for it any more.
+// mailbox this person has lost is skipped: those words aren't for it any more. What holds
+// nothing anyone added just goes.
 export async function saveKeptDrafts(
   userId: UserId,
   openId: OutgoingId | undefined,
   mayWrite: (mailboxId: MailboxId) => boolean,
 ): Promise<MovedDraft[]> {
   const moved: MovedDraft[] = [];
-  for (const draft of await readKeptDrafts(userId)) {
+  for (const draft of await readEveryKept(userId)) {
     if (draft.id === openId || !mayWrite(draft.mailboxId)) continue;
     try {
-      const { savedAs, leftOut, changed } = await moveToDrafts(
-        draft,
-        (copyId) =>
-          callAction(() =>
-            saveKeptDraft({
-              data: {
-                mailboxId: draft.mailboxId,
-                id: draft.id,
-                copyId,
-                baseRevision: draft.revision,
-                content: draft.content,
-              },
-            }),
-          ),
+      const result = await moveToDrafts(draft, (copyId) =>
+        callAction(() =>
+          saveKeptDraft({
+            data: {
+              mailboxId: draft.mailboxId,
+              id: draft.id,
+              copyId,
+              baseRevision: draft.revision,
+              content: draft.content,
+              start: startOf(draft),
+            },
+          }),
+        ),
       );
+      if (!result) {
+        await settleKeptDraft(userId, draft.id, draft.keptAt, null);
+        continue;
+      }
+      const { savedAs, leftOut, changed } = result;
       const note =
         isLeftOut(leftOut) || changed
           ? {

@@ -155,6 +155,8 @@ export const OFFLINE_DRAFT_KEPT =
   "You're offline, so this message is kept on this device. It will go to Drafts when you reconnect.";
 export const DRAFT_KEPT_AFTER_FAILURE =
   "We couldn't save this to Drafts, so it's kept on this device for now. We'll keep trying.";
+export const OFFLINE_DRAFT_NOT_REMOVED =
+  "You're offline, so this draft is still in Drafts. You can discard it when you're back online.";
 export const OFFLINE_DRAFT_NOT_SAVED =
   "You're offline, so this draft can't be saved yet, and it's still open here. Try again when you're back online.";
 

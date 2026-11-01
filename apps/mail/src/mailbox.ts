@@ -3,13 +3,10 @@ import type { MailboxId, UserId } from "@cloudysuite/access";
 import { runDueSends } from "./compose/job";
 import {
   type AddAttachmentResult,
-  type NewOutgoing,
   OutgoingStore,
   type ScheduleResult,
 } from "./compose/store";
 import type {
-  DraftContent,
-  Editor,
   OutgoingDetail,
   OutgoingId,
   OutgoingSummary,
@@ -327,43 +324,23 @@ export class Mailbox extends DurableObject<Env> {
     return this.#outgoing.suggestions(query, 8);
   }
 
-  createOutgoing(input: NewOutgoing): void {
-    this.#outgoing.create(input);
+  async saveOutgoing(
+    input: Parameters<OutgoingStore["save"]>[0],
+  ): Promise<SaveResult> {
+    const result = this.#outgoing.save(input);
+    if (result.status === "removed") await this.#scheduleNextWakeUp();
+    return result;
   }
 
-  saveOutgoing(input: {
-    id: OutgoingId;
-    baseRevision: number;
-    content: DraftContent;
-    plainText: string;
-    editor: Editor;
-    r2Prefix: string;
-  }): SaveResult {
-    return this.#outgoing.save(input);
-  }
-
-  saveKeptOutgoing(input: {
-    id: OutgoingId;
-    copyId: OutgoingId;
-    baseRevision: number;
-    content: DraftContent;
-    plainText: string;
-    editor: Editor;
-    r2Prefix: string;
-    copyR2Prefix: string;
-  }): KeptSaveResult {
+  saveKeptOutgoing(
+    input: Parameters<OutgoingStore["saveKept"]>[0],
+  ): KeptSaveResult {
     return this.#outgoing.saveKept(input);
   }
 
-  async scheduleOutgoing(input: {
-    id: OutgoingId;
-    content: DraftContent;
-    plainText: string;
-    editor: Editor;
-    r2Prefix: string;
-    fromName: string;
-    mailboxId: MailboxId;
-  }): Promise<ScheduleResult> {
+  async scheduleOutgoing(
+    input: Parameters<OutgoingStore["schedule"]>[0],
+  ): Promise<ScheduleResult> {
     const result = this.#outgoing.schedule(input);
     await this.#scheduleNextWakeUp();
     return result;
@@ -379,11 +356,8 @@ export class Mailbox extends DurableObject<Env> {
     return this.#outgoing.reopen(id);
   }
 
-  async discardOutgoing(
-    id: OutgoingId,
-    onlyAtRevision?: number,
-  ): Promise<boolean> {
-    const discarded = this.#outgoing.discard(id, onlyAtRevision);
+  async discardOutgoing(id: OutgoingId): Promise<boolean> {
+    const discarded = this.#outgoing.discard(id);
     await this.#scheduleNextWakeUp();
     return discarded;
   }

@@ -321,4 +321,14 @@ export const MIGRATIONS: Migrations = [
     `CREATE INDEX messages_recent_attachments ON messages(received_at, id)
      WHERE has_attachments = 1 AND folder IN ('inbox', 'sent', 'archive')`,
   ],
+  // A reply already here never recorded what it opened with. Its current recipients and
+  // subject stand in for that, so one with no words counts as holding nothing added.
+  [
+    `ALTER TABLE outgoing ADD COLUMN prefill_to TEXT NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE outgoing ADD COLUMN prefill_cc TEXT NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE outgoing ADD COLUMN prefill_subject TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE outgoing_attachments ADD COLUMN carried_from INTEGER`,
+    `UPDATE outgoing SET prefill_to = to_addresses, prefill_cc = cc_addresses, prefill_subject = subject WHERE mode <> 'new'`,
+    `UPDATE outgoing_attachments SET carried_from = 0 WHERE r2_key LIKE '%/forwarded/%'`,
+  ],
 ];

@@ -4,7 +4,7 @@ import { createTestDatabase } from "../../../../src/db/test-database";
 import { addresses, domains, mailboxes } from "../../../../src/db/schema";
 import { MAILBOX_A, MAILBOX_B } from "../test-support";
 import { recipientLabel } from "../ui/format";
-import type { MessageDetail, MessageId } from "../types";
+import type { AttachmentId, MessageDetail, MessageId } from "../types";
 import { drizzle } from "drizzle-orm/d1";
 import { buildQuote, htmlToPlainText } from "./body";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
@@ -13,10 +13,12 @@ import { judgeSendError } from "./send-outcome";
 import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
 import { isEditorLink } from "./editor-tags";
+import { holdsSomethingAdded } from "./added";
 import {
   isLeftOut,
   keptAsText,
   keptCopyId,
+  keptHoldsSomething,
   keptNoteText,
   leftOutOf,
   leftOutText,
@@ -27,11 +29,14 @@ import {
 } from "./kept";
 import { parseOutgoingId } from "./wire";
 import {
+  type DraftContent,
   type DraftHolds,
+  type DraftPrefill,
   fitsSendLimit,
   type KeptDraft,
   type KeptNote,
   type KeptSaveResult,
+  NOTHING_PREFILLED,
   type OutgoingId,
   writtenBytes,
 } from "./types";
@@ -49,6 +54,7 @@ const keptDraft: KeptDraft = {
   quote: null,
   quoteHtml: null,
   attachments: [],
+  prefill: NOTHING_PREFILLED,
   content: {
     from: "alex@example.com",
     to: [],
@@ -62,6 +68,7 @@ const keptDraft: KeptDraft = {
 
 const HOLDS_ALL = (draft: KeptDraft) => ({
   attachmentIds: draft.attachments.map((file) => file.id),
+  carriedFrom: [],
   quote: draft.quote !== null,
   threaded: draft.parent !== null,
 });
@@ -80,24 +87,192 @@ const keptForward: KeptDraft = {
   quote: { bytes: 20, designed: false },
   quoteHtml: "<p>Original</p>",
   attachments: [
-    { id: 1, filename: "alpha.pdf", mimeType: "a/b", size: 1 },
-    { id: 2, filename: "beta.pdf", mimeType: "a/b", size: 1 },
+    {
+      id: 1,
+      filename: "alpha.pdf",
+      mimeType: "a/b",
+      size: 1,
+      carriedFrom: null,
+    },
+    {
+      id: 2,
+      filename: "beta.pdf",
+      mimeType: "a/b",
+      size: 1,
+      carriedFrom: null,
+    },
   ],
   content: { ...keptDraft.content, includeQuote: true },
 };
 
+const blank: Pick<DraftContent, "to" | "cc" | "bcc" | "subject" | "html"> = {
+  to: [],
+  cc: [],
+  bcc: [],
+  subject: "",
+  html: "",
+};
+const holds = (
+  content: Partial<typeof blank>,
+  prefill: DraftPrefill = NOTHING_PREFILLED,
+  uploads = 0,
+) =>
+  holdsSomethingAdded({ content: { ...blank, ...content }, uploads }, prefill);
+
+test.each([
+  "",
+  "   ",
+  "<br>",
+  "<p><br></p>",
+  "<div><br></div><div>&nbsp;</div>",
+  "<p>&#xa0; \u00a0</p>",
+  "<ul><li></li></ul>",
+  "<b></b>\u200b",
+  '<a href="https://example.org"></a>',
+])("a body of %j counts as nothing", (html) => {
+  expect(holds({ html })).toBe(false);
+});
+
+test.each(["hi", "<p>hi</p>", "&lt;", "<ul><li>a</li></ul>", "0"])(
+  "a body of %j counts as something",
+  (html) => {
+    expect(holds({ html })).toBe(true);
+  },
+);
+
+test("any recipient, subject, or uploaded file on a new message counts", () => {
+  expect(holds({})).toBe(false);
+  expect(holds({ subject: "   " })).toBe(false);
+  expect(holds({ subject: "Hi" })).toBe(true);
+  expect(holds({ to: [person("a@x.org")] })).toBe(true);
+  expect(holds({ cc: [person("a@x.org")] })).toBe(true);
+  expect(holds({ bcc: [person("a@x.org")] })).toBe(true);
+  expect(holds({}, NOTHING_PREFILLED, 1)).toBe(true);
+});
+
+test("a reply's prefill doesn't count, and any change from it does", () => {
+  const prefill: DraftPrefill = {
+    to: [person("Pat@x.org", "Pat"), person("jo@x.org")],
+    cc: [person("kim@x.org")],
+    subject: "Re: Plans",
+  };
+  const as = { to: prefill.to, cc: prefill.cc, subject: prefill.subject };
+  expect(holds(as, prefill)).toBe(false);
+  expect(
+    holds(
+      {
+        ...as,
+        to: [person("jo@x.org"), person("pat@x.org")],
+        subject: " Re:  Plans ",
+      },
+      prefill,
+    ),
+  ).toBe(false);
+  expect(holds({ ...as, html: "<p>Agreed</p>" }, prefill)).toBe(true);
+  expect(holds({ ...as, subject: "Re: Other plans" }, prefill)).toBe(true);
+  expect(holds({ ...as, to: [person("jo@x.org")] }, prefill)).toBe(true);
+  expect(holds({ ...as, cc: [] }, prefill)).toBe(true);
+  expect(holds({ ...as, bcc: [person("boss@x.org")] }, prefill)).toBe(true);
+});
+
+const keptReply: KeptDraft = {
+  ...keptDraft,
+  id: "00000000-0000-4000-8000-000000000002" as OutgoingId,
+  revision: 0,
+  mode: "forward",
+  parent: { messageId: 9 as MessageId, rfcMessageId: "a@b", references: [] },
+  quote: { bytes: 20, designed: false },
+  quoteHtml: "<p>Original</p>",
+  prefill: { to: [person("pat@x.org")], cc: [], subject: "Fwd: Plans" },
+  attachments: [
+    {
+      id: 7,
+      filename: "plan.pdf",
+      mimeType: "a/b",
+      size: 1,
+      carriedFrom: 7 as AttachmentId,
+    },
+  ],
+  content: {
+    from: "alex@example.com",
+    to: [person("pat@x.org")],
+    cc: [],
+    bcc: [],
+    subject: "Fwd: Plans",
+    html: "<br>",
+    includeQuote: true,
+  },
+};
+
+test("kept text holding only what a reply opened with is never saved", async () => {
+  expect(keptHoldsSomething(keptReply)).toBe(false);
+  const moved = await moveToDrafts(keptReply, async () => {
+    throw new Error("nothing should be asked of the server");
+  });
+  expect(moved).toBeNull();
+});
+
+test("the server's word that kept text holds nothing leaves no draft", async () => {
+  const moved = await moveToDrafts(keptDraft, async () => ({
+    status: "nothing",
+  }));
+  expect(moved).toBeNull();
+});
+
+test("a kept reply's first save finds its files by where they came from", async () => {
+  const written = {
+    ...keptReply,
+    content: { ...keptReply.content, html: "<p>Agreed</p>" },
+  };
+  expect(keptHoldsSomething(written)).toBe(true);
+  const moved = await moveToDrafts(written, async () =>
+    savedHolding({
+      attachmentIds: [1],
+      carriedFrom: [7],
+      quote: true,
+      threaded: true,
+    }),
+  );
+  expect(moved?.leftOut).toEqual({ files: [], quote: false, reply: false });
+  const lost = await moveToDrafts(written, async () =>
+    savedHolding({
+      attachmentIds: [7],
+      carriedFrom: [8],
+      quote: true,
+      threaded: true,
+    }),
+  );
+  expect(lost?.leftOut.files).toEqual(["plan.pdf"]);
+});
+
+test("a kept row from an earlier build counts everything it holds as added", () => {
+  const { prefill: _prefill, ...earlier } = keptDraft;
+  const parsed = parseKeptDraft({
+    ...earlier,
+    id: keptForward.id,
+    content: { ...keptDraft.content, to: [person("pat@x.org")], subject: "" },
+    attachments: [{ id: 1, filename: "a", mimeType: "a/b", size: 1 }],
+  })!;
+  expect(parsed.prefill).toEqual(NOTHING_PREFILLED);
+  expect(parsed.attachments[0]?.carriedFrom).toBeNull();
+  expect(keptHoldsSomething(parsed)).toBe(true);
+  expect(
+    parseKeptDraft({ ...earlier, id: keptForward.id, prefill: { to: "x" } }),
+  ).toBeNull();
+});
+
 test("words kept on a device go to their own draft", async () => {
-  const { savedAs, leftOut, changed } = await moveToDrafts(
+  const { savedAs, leftOut, changed } = (await moveToDrafts(
     keptDraft,
     async () => savedHolding(HOLDS_ALL(keptDraft)),
-  );
+  ))!;
   expect(savedAs).toBe(keptDraft.id);
   expect(isLeftOut(leftOut)).toBe(false);
   expect(changed).toBeNull();
 });
 
 test("words kept for a message someone has since sent become a new draft", async () => {
-  const { savedAs, leftOut, changed } = await moveToDrafts(
+  const { savedAs, leftOut, changed } = (await moveToDrafts(
     keptForward,
     async (copyId) => ({
       status: "copied",
@@ -105,7 +280,7 @@ test("words kept for a message someone has since sent become a new draft", async
       copyIsDraft: true,
       changed: null,
     }),
-  );
+  ))!;
   expect(savedAs).toBe(await keptCopyId(keptForward.id, keptForward.keptAt));
   expect(changed).toBeNull();
   expect(leftOut).toEqual({
@@ -116,12 +291,12 @@ test("words kept for a message someone has since sent become a new draft", async
 });
 
 test("words beside a draft that moved on say who changed it", async () => {
-  const moved = await moveToDrafts(keptForward, async (copyId) => ({
+  const moved = (await moveToDrafts(keptForward, async (copyId) => ({
     status: "copied",
     copyId,
     copyIsDraft: true,
     changed: { by: "Sam" },
-  }));
+  })))!;
   expect(moved.changed).toEqual({ by: "Sam" });
   const text = keptNoteText({ ...moved, subject: "Plan" });
   expect(text).toStartWith(
@@ -145,12 +320,12 @@ test("the same person elsewhere is told the same thing, without a name", () => {
 });
 
 test("a copy already sent means the words went with it", async () => {
-  const moved = await moveToDrafts(keptForward, async (copyId) => ({
+  const moved = (await moveToDrafts(keptForward, async (copyId) => ({
     status: "copied",
     copyId,
     copyIsDraft: false,
     changed: { by: "Sam" },
-  }));
+  })))!;
   expect(isLeftOut(moved.leftOut)).toBe(false);
   expect(moved.changed).toBeNull();
 });
@@ -163,9 +338,14 @@ test("trying again for the same kept words reaches the same new draft", async ()
 });
 
 test("a draft removed elsewhere reports the files and quote it can no longer have", async () => {
-  const { savedAs, leftOut } = await moveToDrafts(keptForward, async () =>
-    savedHolding({ attachmentIds: [], quote: false, threaded: false }),
-  );
+  const { savedAs, leftOut } = (await moveToDrafts(keptForward, async () =>
+    savedHolding({
+      attachmentIds: [],
+      carriedFrom: [],
+      quote: false,
+      threaded: false,
+    }),
+  ))!;
   expect(savedAs).toBe(keptForward.id);
   const text = leftOutText(leftOut);
   expect(text).toContain("2 attached files (alpha.pdf, beta.pdf)");
@@ -176,7 +356,7 @@ test("a draft removed elsewhere reports the files and quote it can no longer hav
 test("one file removed elsewhere is the only one reported", () => {
   const leftOut = leftOutOf(
     { ...keptForward, includeQuote: true },
-    { attachmentIds: [2], quote: true, threaded: true },
+    { attachmentIds: [2], carriedFrom: [], quote: true, threaded: true },
   );
   expect(leftOut).toEqual({ files: ["alpha.pdf"], quote: false, reply: false });
   expect(leftOutText(leftOut)).toContain("the attached file alpha.pdf");
@@ -185,7 +365,7 @@ test("one file removed elsewhere is the only one reported", () => {
 test("a quote the person left out isn't reported as lost", () => {
   const leftOut = leftOutOf(
     { ...keptForward, includeQuote: false },
-    { attachmentIds: [1, 2], quote: false, threaded: true },
+    { attachmentIds: [1, 2], carriedFrom: [], quote: false, threaded: true },
   );
   expect(isLeftOut(leftOut)).toBe(false);
 });
@@ -193,7 +373,7 @@ test("a quote the person left out isn't reported as lost", () => {
 test("a reply that lost its conversation says it will go as a new message", () => {
   const leftOut = leftOutOf(
     { ...keptForward, mode: "reply", attachments: [], includeQuote: false },
-    { attachmentIds: [], quote: false, threaded: false },
+    { attachmentIds: [], carriedFrom: [], quote: false, threaded: false },
   );
   expect(leftOut.reply).toBe(true);
   expect(leftOutText(leftOut)).toContain("not as a reply");

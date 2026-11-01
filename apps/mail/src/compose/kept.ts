@@ -1,5 +1,7 @@
 import { safeFileName } from "@cloudysuite/transfer";
 import type { Address } from "../types";
+import { holdsSomethingAdded } from "./added";
+import { NOTHING_PREFILLED } from "./types";
 import type {
   DraftChange,
   DraftForEditor,
@@ -8,6 +10,7 @@ import type {
   KeptNote,
   KeptSaveResult,
   LeftOut,
+  OutgoingAttachment,
   OutgoingId,
 } from "./types";
 import { parseOutgoingId } from "./wire";
@@ -15,12 +18,30 @@ import { parseOutgoingId } from "./wire";
 const NOTHING_LEFT_OUT: LeftOut = { files: [], quote: false, reply: false };
 const HOLDS_NOTHING: DraftHolds = {
   attachmentIds: [],
+  carriedFrom: [],
   quote: false,
   threaded: false,
 };
 
 export const isLeftOut = ({ files, quote, reply }: LeftOut): boolean =>
   files.length > 0 || quote || reply;
+
+// A forward's file has the original's id until its row exists, so a device's copy of it
+// can only be matched by where it came from.
+export const isHeld = (file: OutgoingAttachment, holds: DraftHolds): boolean =>
+  file.carriedFrom
+    ? holds.carriedFrom.includes(file.carriedFrom)
+    : holds.attachmentIds.includes(file.id);
+
+export const keptHoldsSomething = (draft: KeptDraft): boolean =>
+  holdsSomethingAdded(
+    {
+      content: draft.content,
+      uploads: draft.attachments.filter((file) => file.carriedFrom === null)
+        .length,
+    },
+    draft.prefill,
+  );
 
 export function leftOutOf(
   had: Pick<DraftForEditor, "attachments" | "quote" | "parent" | "mode"> & {
@@ -30,7 +51,7 @@ export function leftOutOf(
 ): LeftOut {
   return {
     files: had.attachments
-      .filter((file) => !holds.attachmentIds.includes(file.id))
+      .filter((file) => !isHeld(file, holds))
       .map((file) => file.filename),
     quote: had.includeQuote && had.quote !== null && !holds.quote,
     reply: had.mode !== "forward" && had.parent !== null && !holds.threaded,
@@ -126,9 +147,11 @@ export async function moveToDrafts(
   savedAs: OutgoingId;
   leftOut: LeftOut;
   changed: DraftChange | null;
-}> {
+} | null> {
+  if (!keptHoldsSomething(draft)) return null;
   const had = { ...draft, includeQuote: draft.content.includeQuote };
   const result = await save(await keptCopyId(draft.id, draft.keptAt));
+  if (result.status === "nothing") return null;
   if (result.status === "saved") {
     return {
       savedAs: draft.id,
@@ -165,15 +188,17 @@ const areFiles = (raw: unknown): raw is KeptDraft["attachments"] =>
       typeof one.id === "number" &&
       isString(one.filename) &&
       isString(one.mimeType) &&
-      typeof one.size === "number",
+      typeof one.size === "number" &&
+      (one.carriedFrom == null || typeof one.carriedFrom === "number"),
   );
 
 // Another tab, an old version, or anything else on this origin may have written the
 // row, so its shape is checked like a request's. The parts the editor reads as markup
-// are cleaned where they enter it.
+// are cleaned where they enter it. A row from an earlier build recorded no prefill or
+// file origins. Without them everything counts as added, which can only keep its words.
 export function parseKeptDraft(raw: unknown): KeptDraft | null {
   if (!isRecord(raw) || !isRecord(raw.content)) return null;
-  const { content, quote, parent } = raw;
+  const { content, quote, parent, prefill } = raw;
   const valid =
     parseOutgoingId(raw.id) !== null &&
     isString(raw.mailboxId) &&
@@ -198,8 +223,22 @@ export function parseKeptDraft(raw: unknown): KeptDraft | null {
         (parent.rfcMessageId === null || isString(parent.rfcMessageId)) &&
         Array.isArray(parent.references) &&
         parent.references.every(isString))) &&
-    (raw.quoteHtml === null || isString(raw.quoteHtml));
-  return valid ? (raw as KeptDraft) : null;
+    (raw.quoteHtml === null || isString(raw.quoteHtml)) &&
+    (prefill === undefined ||
+      (isRecord(prefill) &&
+        arePeople(prefill.to) &&
+        arePeople(prefill.cc) &&
+        isString(prefill.subject)));
+  if (!valid) return null;
+  const draft = raw as KeptDraft;
+  return {
+    ...draft,
+    prefill: draft.prefill ?? NOTHING_PREFILLED,
+    attachments: draft.attachments.map((file) => ({
+      ...file,
+      carriedFrom: file.carriedFrom ?? null,
+    })),
+  };
 }
 
 export function parseKeptNote(raw: unknown): KeptNote | null {
