@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import type { MailboxId, UserId } from "../../../src/db/schema";
 import { createTestDatabase } from "../../../src/db/test-database";
-import { checkMailboxAccess, parseMailboxId } from "./index";
+import { checkMailboxAccess, type MailboxGrant, parseMailboxId } from "./index";
 
 const alice = "user-alice" as UserId;
 const bob = "user-bob" as UserId;
@@ -39,11 +39,9 @@ beforeEach(() => {
 test("a manager gets a grant with the manager role", async () => {
   const access = await checkMailboxAccess(d1, alice, support);
   if (!access.allowed) throw new Error("expected access");
-  expect(access.grant).toEqual({
-    userId: alice,
-    mailboxId: support,
-    role: "manager",
-  } as typeof access.grant);
+  expect(access.grant.userId).toBe(alice);
+  expect(access.grant.mailboxId).toBe(support);
+  expect(access.grant.role).toBe("manager");
 });
 
 test("a member gets a grant with the member role", async () => {
@@ -79,14 +77,27 @@ test("removing a user removes their access", async () => {
   });
 });
 
-test("a grant cannot be built by hand", () => {
-  // @ts-expect-error The brand has no exported constructor.
-  const forged: import("./index").MailboxGrant = {
+test("a grant cannot be built by hand or copied with other values", async () => {
+  const access = await checkMailboxAccess(d1, alice, sales);
+  if (!access.allowed) throw new Error("expected access");
+  const { grant } = access;
+
+  // @ts-expect-error A grant only comes from checkMailboxAccess.
+  const forged: MailboxGrant = {
     userId: alice,
     mailboxId: support,
     role: "manager",
   };
-  expect(forged.role).toBe("manager");
+  // @ts-expect-error A copy with changed values is not a grant.
+  const copied: MailboxGrant = { ...grant, role: "manager" };
+
+  expect(forged).not.toBeInstanceOf(grant.constructor);
+  expect(copied).not.toBeInstanceOf(grant.constructor);
+  expect(() => {
+    // @ts-expect-error A grant is read-only.
+    grant.role = "manager";
+  }).toThrow();
+  expect(grant.role).toBe("member");
 });
 
 test.each([

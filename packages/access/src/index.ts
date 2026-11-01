@@ -9,17 +9,23 @@ import {
 
 export type { MailboxId, MailboxRole, UserId };
 
-declare const issuedByCheck: unique symbol;
+// Mailbox code takes a grant rather than a mailbox id. The class is not
+// exported and its private field makes the type nominal, so only
+// checkMailboxAccess can produce one. Code that skips the check, or copies a
+// grant to change its values, does not compile.
+class Grant {
+  readonly #issuedByCheck = true;
 
-// Mailbox code takes a grant rather than a mailbox id. The brand has no
-// exported constructor, so only checkMailboxAccess can produce one, and code
-// that skips the check does not compile.
-export type MailboxGrant = {
-  readonly userId: UserId;
-  readonly mailboxId: MailboxId;
-  readonly role: MailboxRole;
-  readonly [issuedByCheck]: true;
-};
+  constructor(
+    readonly userId: UserId,
+    readonly mailboxId: MailboxId,
+    readonly role: MailboxRole,
+  ) {
+    Object.freeze(this);
+  }
+}
+
+export type MailboxGrant = Grant;
 
 export type MailboxAccess =
   { allowed: true; grant: MailboxGrant } | { allowed: false };
@@ -45,6 +51,5 @@ export async function checkMailboxAccess(
       ),
     );
   if (!row) return { allowed: false };
-  const grant = { userId, mailboxId, role: row.role } as MailboxGrant;
-  return { allowed: true, grant };
+  return { allowed: true, grant: new Grant(userId, mailboxId, row.role) };
 }
