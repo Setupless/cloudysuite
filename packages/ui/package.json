@@ -1,0 +1,11 @@
+{
+  "name": "@cloudysuite/ui",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": "./src/index.tsx",
+  "dependencies": {
+    "@tabler/icons-react": "3.50.0",
+    "react": "19.3.1"
+  }
+}

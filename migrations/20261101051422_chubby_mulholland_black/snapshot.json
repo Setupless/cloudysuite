@@ -1,0 +1,85 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "459d4091-7198-437a-89c0-53f87d1b2e2b",
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
+  "ddl": [
+    {
+      "name": "app_settings",
+      "entityType": "tables"
+    },
+    {
+      "name": "domains",
+      "entityType": "tables"
+    },
+    {
+      "table": "app_settings",
+      "name": "app",
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "app_settings",
+      "name": "enabled",
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "domains",
+      "name": "name",
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "domains",
+      "name": "is_primary",
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "domains",
+      "name": "domains_one_primary",
+      "columns": [
+        {
+          "value": "is_primary",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"domains\".\"is_primary\" = 1",
+      "origin": "manual",
+      "entityType": "indexes"
+    },
+    {
+      "table": "app_settings",
+      "name": "app_settings_pk",
+      "columns": ["app"],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "domains",
+      "name": "domains_pk",
+      "columns": ["name"],
+      "nameExplicit": false,
+      "entityType": "pks"
+    }
+  ],
+  "renames": []
+}
