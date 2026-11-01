@@ -29,6 +29,8 @@ test("only the access-checked client and ingest import the stub", () => {
   const users = productionFiles()
     .filter((file) => /from "[^"]*\/stub"/.test(readFileSync(file, "utf8")))
     .map((file) => relative(ROOT, file))
+    // Storage has its own stub, with its own test in that app.
+    .filter((file) => !file.startsWith("apps/storage/"))
     .sort();
   expect(users).toEqual(["apps/mail/src/client.ts", "apps/mail/src/ingest.ts"]);
 });
