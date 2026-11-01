@@ -15,13 +15,13 @@ import {
   useState,
 } from "react";
 import { isPageHidden } from "../pwa/connectivity";
+import { MAX_FILE_BYTES } from "@cloudysuite/transfer";
 import type { ManagedMailbox } from "./functions";
 import {
   IMPORT_FAILURES,
   type ImportJobView,
   type ImportState,
   isActive,
-  MAX_FILE_BYTES,
   UNREADABLE_REASONS,
 } from "./types";
 import type { ImportStatus } from "./uploads";

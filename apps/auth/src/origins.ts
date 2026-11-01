@@ -37,6 +37,19 @@ export function appOrigins(
   ) as Record<AppId, string>;
 }
 
+// The session cookie reaches every subdomain of the app domain, so a request from a
+// sibling site carries it too. Only the page an app itself serves may send it a file,
+// so the browser's Origin must be that app's exact origin: scheme, host, and port.
+export function isFromApp(
+  request: Request,
+  primaryDomain: string,
+  app: AppId,
+): boolean {
+  return (
+    request.headers.get("Origin") === appOrigins(primaryDomain, request)[app]
+  );
+}
+
 // A server function called by GET may arrive with no payload at all.
 export function parseReturnTo(input: unknown): { returnTo?: string } {
   const returnTo = (input as { returnTo?: unknown } | null | undefined)

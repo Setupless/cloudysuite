@@ -6,7 +6,7 @@
 
 - `bun fmt` formats the code.
 - `bun run check` runs every CI check except the PR format check, including the production build and `tsc`.
-- `bun run dev` serves `https://auth.cloudysuite.localhost` and `https://mail.cloudysuite.localhost` through portless and Vite. In a linked worktree, the branch name goes before `cloudysuite`, such as `https://auth.my-branch.cloudysuite.localhost`.
+- `bun run dev` serves `https://auth.cloudysuite.localhost`, `https://mail.cloudysuite.localhost`, and `https://storage.cloudysuite.localhost` through portless and Vite. In a linked worktree, the branch name goes before `cloudysuite`, such as `https://auth.my-branch.cloudysuite.localhost`.
 - `bun run build && bunx wrangler dev` serves the production build on the Workers runtime. It uses those same hostnames on port 8787 over `http`, such as `http://auth.cloudysuite.localhost:8787`.
 - `curl -X POST --data-binary @message.eml 'http://localhost:8787/cdn-cgi/handler/email?from=a@example.org&to=b@localhost'` sends inbound mail to `wrangler dev`.
 - `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores this checkout's portless hostname as the primary domain. Run it again after a worktree's branch changes name.
@@ -35,7 +35,7 @@ Do not guess or build around these. Ask the user first.
 
 ## Scope
 
-- The first release contains Auth and Mail only.
+- The first release contains Auth, Mail, and Storage only.
 - Do not add a CLI, MCP server, chat integration, public API, or AI feature. Jev is the one exception, and every feature must work without a Jev key.
 - Do not add IMAP or SMTP servers. They cannot run on Workers.
 - Build what the task asks for. Do not add options, abstractions, or fallbacks that no current caller needs.
@@ -52,9 +52,9 @@ Do not guess or build around these. Ask the user first.
 - Route files in `src/routes/<app>` only render components from `apps/<app>`. `src/router.tsx` adds that prefix from the hostname.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off. The only other exception is a `GET` of `/pwa/session` on the Mail host, which returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Production code runs on Workers, so it cannot use Bun APIs.
-- Each mailbox is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies and attachments go in R2.
-- D1 holds domains, users, addresses, and mailbox access.
-- Every mailbox read and write goes through one access-check function.
+- Each mailbox and each drive is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
+- D1 holds domains, users, addresses, mailbox access, drives, and drive access.
+- Every mailbox or drive read and write goes through its one access-check function.
 - Every message enters a mailbox through `ingest`, including imports.
 - Durable Object alarms handle background work. Do not add Queues or Workflows.
 - Make jobs safe to repeat. A retry must not duplicate messages or skip work.

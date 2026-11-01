@@ -11,7 +11,7 @@ import { ingest } from "../ingest";
 import { LabelStore } from "../labels/store";
 import { RuleStore } from "../rules/store";
 import type { RuleDraft } from "../rules/types";
-import type { SqlDriver } from "../sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { MailboxStore } from "../store";
 import {
   createTestEnv,

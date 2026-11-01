@@ -1,4 +1,4 @@
-import type { SqlDriver, SqlRow } from "../sql";
+import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import type { LabelId } from "../types";
 import {
   descriptionsIn,

@@ -1,0 +1,25 @@
+{
+  "name": "@cloudysuite/storage",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.tsx",
+    "./api": "./src/api.ts",
+    "./download": "./src/download.ts",
+    "./drive": "./src/drive.ts"
+  },
+  "dependencies": {
+    "@cloudysuite/access": "workspace:*",
+    "@cloudysuite/auth": "workspace:*",
+    "@cloudysuite/object-sql": "workspace:*",
+    "@cloudysuite/transfer": "workspace:*",
+    "@cloudysuite/ui": "workspace:*",
+    "@tabler/icons-react": "3.50.0",
+    "@tanstack/react-query": "5.105.0",
+    "@tanstack/react-router": "1.170.46",
+    "@tanstack/react-start": "1.169.4",
+    "drizzle-orm": "1.0.0-rc.5",
+    "react": "19.3.1"
+  }
+}

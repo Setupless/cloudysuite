@@ -1,5 +1,5 @@
 import type { MailboxId, UserId } from "@cloudysuite/access";
-import type { SqlDriver, SqlRow } from "../sql";
+import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import type { Folder, MessageId, ThreadId } from "../types";
 import { type PushNotice, senderText, subjectText } from "./notice";
 

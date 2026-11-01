@@ -1,5 +1,5 @@
 import { readableText } from "../parse";
-import type { SqlDriver } from "../sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import type { AuthResults, Folder, MessageId, NewMessage } from "../types";
 import {
   acceptedLinksIn,

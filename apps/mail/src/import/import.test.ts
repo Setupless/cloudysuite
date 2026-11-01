@@ -2,13 +2,14 @@ import { expect, test } from "bun:test";
 import { checkMailboxAccess, type MailboxGrant } from "@cloudysuite/access";
 import type { MailboxRole, UserId } from "../../../../src/db/schema";
 import { createTestDatabase } from "../../../../src/db/test-database";
+import { MAX_FILE_BYTES, PART_BYTES, readUpTo } from "@cloudysuite/transfer";
 import { openMailbox, openMailboxImports } from "../client";
 import { ingest } from "../ingest";
 import { createTestEnv, eml, MAILBOX_A } from "../test-support";
 import type { MessageDetail, ThreadId } from "../types";
 import { BATCH_LIMITS } from "./job";
-import { type MailboxImports, readUpTo } from "./uploads";
-import { type ImportJobView, MAX_FILE_BYTES, PART_BYTES } from "./types";
+import type { MailboxImports } from "./uploads";
+import type { ImportJobView } from "./types";
 
 const alice = "user-alice" as UserId;
 const encoder = new TextEncoder();

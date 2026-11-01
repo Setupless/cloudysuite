@@ -14,6 +14,7 @@ type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
 export type UserId = Brand<string, "UserId">;
 export type MailboxId = Brand<string, "MailboxId">;
+export type DriveId = Brand<string, "DriveId">;
 
 export const ORG_ROLES = ["admin", "user"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -26,6 +27,12 @@ export type AddressKind = (typeof ADDRESS_KINDS)[number];
 
 export const MAILBOX_ROLES = ["manager", "member"] as const;
 export type MailboxRole = (typeof MAILBOX_ROLES)[number];
+
+export const DRIVE_KINDS = ["personal", "team"] as const;
+export type DriveKind = (typeof DRIVE_KINDS)[number];
+
+export const DRIVE_ROLES = ["manager", "member"] as const;
+export type DriveRole = (typeof DRIVE_ROLES)[number];
 
 const now = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
 const timestamp = (name: string) => integer(name, { mode: "timestamp_ms" });
@@ -302,4 +309,58 @@ export const pushSubscriptions = sqliteTable(
     createdAt: timestamp("created_at").notNull().default(now),
   },
   (table) => [index("push_subscriptions_user_id_idx").on(table.userId)],
+);
+
+// The Drive object is the truth for used_bytes, file_count, and changed_at. It writes
+// absolute values here so Home and the meter can read them without waking any object.
+export const drives = sqliteTable(
+  "drives",
+  {
+    id: text()
+      .$type<DriveId>()
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID() as DriveId),
+    kind: text({ enum: DRIVE_KINDS }).notNull(),
+    name: text().notNull(),
+    colour: integer().notNull(),
+    // Removing a person sets this to null, so their files stay and stay counted. A
+    // personal drive with no owner is one whose person was removed.
+    ownerId: text("owner_id")
+      .$type<UserId>()
+      .references(() => user.id, { onDelete: "set null" }),
+    usedBytes: integer("used_bytes").notNull().default(0),
+    fileCount: integer("file_count").notNull().default(0),
+    changedAt: timestamp("changed_at").notNull().default(now),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    check("drives_colour", sql`${table.colour} BETWEEN 1 AND 6`),
+    check(
+      "drives_owner_only_when_personal",
+      sql`${table.ownerId} IS NULL OR ${table.kind} = 'personal'`,
+    ),
+    uniqueIndex("drives_one_personal_per_owner")
+      .on(table.ownerId)
+      .where(sql`${table.kind} = 'personal'`),
+  ],
+);
+
+export const driveAccess = sqliteTable(
+  "drive_access",
+  {
+    driveId: text("drive_id")
+      .$type<DriveId>()
+      .notNull()
+      .references(() => drives.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text({ enum: DRIVE_ROLES }).notNull(),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey({ columns: [table.driveId, table.userId] }),
+    index("drive_access_user_id_idx").on(table.userId),
+  ],
 );

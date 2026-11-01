@@ -238,6 +238,7 @@ test("every step checks, applies, checks again, and a repeat run writes nothing"
   ).toEqual([
     ["auth.example.com", "cloudysuite"],
     ["mail.example.com", "cloudysuite"],
+    ["storage.example.com", "cloudysuite"],
   ]);
 
   const writesAfterFirstRun = fake.writes().length;
@@ -278,12 +279,12 @@ test("a step that fails partway reports it, and a repeat finishes only what's le
   expect((await runStep("app-hostnames")).state).toBe("done");
   expect(
     fake.state.workerDomains.get(OWNER)?.map((row) => row.hostname),
-  ).toEqual(["auth.example.com", "mail.example.com"]);
+  ).toEqual(["auth.example.com", "mail.example.com", "storage.example.com"]);
   const attempts = fake.calls.filter(
     (call) => call.method === "PUT" && call.path.endsWith("workers/domains"),
   );
-  // auth, the failed mail, then mail alone.
-  expect(attempts.length).toBe(3);
+  // auth, the failed mail, then mail and storage.
+  expect(attempts.length).toBe(4);
 });
 
 test("a step Cloudflare accepted but did not make becomes a job for the person", async () => {
@@ -640,7 +641,11 @@ test("with a parent domain, apps sit under it while email stays on the apex", as
   }
   expect(
     fake.state.workerDomains.get(OWNER)?.map((row) => row.hostname),
-  ).toEqual(["auth.suite.example.com", "mail.suite.example.com"]);
+  ).toEqual([
+    "auth.suite.example.com",
+    "mail.suite.example.com",
+    "storage.suite.example.com",
+  ]);
   expect(fake.state.zones.get(ZONE)?.sending.map((row) => row.name)).toEqual([
     "example.com",
   ]);
@@ -1288,7 +1293,11 @@ test("an app name on another Worker counts as hosted", async () => {
 test("a repeat run's own app names don't count as hosted", async () => {
   await runStep("app-hostnames");
   const zone = fake.state.zones.get(ZONE);
-  for (const name of ["auth.example.com", "mail.example.com"])
+  for (const name of [
+    "auth.example.com",
+    "mail.example.com",
+    "storage.example.com",
+  ])
     zone?.dns.push({ type: "AAAA", name, content: "100::" });
 
   const { body } = await post({ action: "scan", claim, zoneId: ZONE });

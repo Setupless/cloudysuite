@@ -1,6 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
+  driveAccess,
+  type DriveId,
+  type DriveKind,
+  type DriveRole,
   mailboxAccess,
   type MailboxId,
   type MailboxRole,
@@ -8,7 +12,7 @@ import {
   type UserId,
 } from "../../../src/db/schema";
 
-export type { MailboxId, MailboxRole, UserId };
+export type { DriveId, DriveKind, DriveRole, MailboxId, MailboxRole, UserId };
 
 const ISSUE = Symbol();
 
@@ -37,10 +41,36 @@ export type MailboxGrant = Grant;
 export type MailboxAccess =
   { allowed: true; grant: MailboxGrant } | { allowed: false };
 
+// Its own class, so a drive's grant can't open a mailbox or the other way round. The
+// same rules as Grant above apply.
+class DriveGrantRecord {
+  readonly #issuedByCheck = true;
+
+  constructor(
+    token: symbol,
+    readonly userId: UserId,
+    readonly driveId: DriveId,
+    readonly role: DriveRole,
+  ) {
+    if (token !== ISSUE)
+      throw new Error("Only the access check issues grants.");
+    Object.freeze(this);
+  }
+}
+
+export type DriveGrant = DriveGrantRecord;
+
+export type DriveAccess =
+  { allowed: true; grant: DriveGrant } | { allowed: false };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseMailboxId(raw: string): MailboxId | null {
   return UUID.test(raw) ? (raw as MailboxId) : null;
+}
+
+export function parseDriveId(raw: string): DriveId | null {
+  return UUID.test(raw) ? (raw as DriveId) : null;
 }
 
 // Matches Better Auth's admin plugin: a ban with no end date never expires, and
@@ -76,5 +106,28 @@ export async function checkMailboxAccess(
   return {
     allowed: true,
     grant: new Grant(ISSUE, userId, mailboxId, row.role),
+  };
+}
+
+export async function checkDriveAccess(
+  database: D1Database,
+  userId: UserId,
+  driveId: DriveId,
+): Promise<DriveAccess> {
+  const [row] = await drizzle(database)
+    .select({
+      role: driveAccess.role,
+      banned: user.banned,
+      banExpires: user.banExpires,
+    })
+    .from(driveAccess)
+    .innerJoin(user, eq(user.id, driveAccess.userId))
+    .where(
+      and(eq(driveAccess.userId, userId), eq(driveAccess.driveId, driveId)),
+    );
+  if (!row || isBanned(row)) return { allowed: false };
+  return {
+    allowed: true,
+    grant: new DriveGrantRecord(ISSUE, userId, driveId, row.role),
   };
 }

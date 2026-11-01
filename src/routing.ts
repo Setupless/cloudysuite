@@ -1,6 +1,7 @@
 export const APPS = {
   auth: { toggleable: false },
   mail: { toggleable: true },
+  storage: { toggleable: true },
 } as const;
 
 export type AppId = keyof typeof APPS;
@@ -76,7 +77,9 @@ export function gate(route: HostRoute, pathname: string, method: string): Gate {
         : { action: "redirect", to: "/setup" };
     case "off":
       return pathname === "/off" ||
-        (pathname === DEVICE_SESSION_PATH && method === "GET")
+        (route.app === "mail" &&
+          pathname === DEVICE_SESSION_PATH &&
+          method === "GET")
         ? { action: "pass" }
         : { action: "redirect", to: "/off" };
     case "app":

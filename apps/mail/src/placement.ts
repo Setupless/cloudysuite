@@ -8,7 +8,7 @@ import {
 import { RuleStore } from "./rules/store";
 import { RULE_MOVED, SpamStore } from "./spam/store";
 import { opinionCouldDecide, type SpamVerdict } from "./spam/types";
-import type { SqlDriver } from "./sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import type { Folder, LabelId, NewMessage } from "./types";
 
 export type Placement = {

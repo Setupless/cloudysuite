@@ -1,0 +1,289 @@
+import type { DriveId } from "@cloudysuite/access";
+import { Button, Modal, Notice, TextField } from "@cloudysuite/ui";
+import { IconChevronRight, IconPlus, IconUpload } from "@tabler/icons-react";
+import { Link } from "@tanstack/react-router";
+import {
+  type DragEvent,
+  Fragment,
+  type FormEvent,
+  type ReactNode,
+  useRef,
+  useState,
+} from "react";
+import type { ItemId } from "../types";
+import type { Destination } from "./upload-queue";
+import { destinationName } from "./upload-queue";
+import { useUploads } from "./uploads-context";
+
+export function FolderLink({
+  driveId,
+  folderId,
+  file,
+  className,
+  children,
+}: {
+  driveId: DriveId;
+  folderId: ItemId | null;
+  file?: ItemId;
+  className?: string;
+  children: ReactNode;
+}) {
+  return folderId === null ? (
+    <Link
+      to="/storage/drive/$driveId"
+      params={{ driveId }}
+      search={{ file }}
+      className={className}
+    >
+      {children}
+    </Link>
+  ) : (
+    <Link
+      to="/storage/drive/$driveId/$folderId"
+      params={{ driveId, folderId }}
+      search={{ file }}
+      className={className}
+    >
+      {children}
+    </Link>
+  );
+}
+
+export type Crumb = { key: string; link: ReactNode };
+
+export function Breadcrumb({
+  trail,
+  current,
+}: {
+  trail: readonly Crumb[];
+  current: string;
+}) {
+  const crumbClass = "hover:text-accent";
+  return (
+    <nav
+      aria-label="Where you are"
+      className="flex flex-wrap items-center gap-[3px] px-4 pt-3 text-[13px] text-secondary"
+    >
+      <Link
+        to="/storage"
+        activeOptions={{ exact: true }}
+        className={crumbClass}
+      >
+        Home
+      </Link>
+      {trail.map(({ key, link }) => (
+        <Fragment key={key}>
+          <IconChevronRight size={13} stroke={1.75} aria-hidden />
+          <span className={crumbClass}>{link}</span>
+        </Fragment>
+      ))}
+      <IconChevronRight size={13} stroke={1.75} aria-hidden />
+      <span className="min-w-0 truncate" aria-current="page">
+        {current}
+      </span>
+    </nav>
+  );
+}
+
+export function PageTop({
+  title,
+  children,
+}: {
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5">
+      <h1 className="mr-auto min-w-0 text-[21px] font-semibold break-words">
+        {title}
+      </h1>
+      {children}
+    </div>
+  );
+}
+
+export function NameDialog({
+  title,
+  hint,
+  submitLabel,
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  hint: string;
+  submitLabel: string;
+  // Resolves once done, and throws with the words to show if it can't be.
+  onSubmit: (name: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      await onSubmit(name);
+      onClose();
+    } catch (failure) {
+      setError((failure as Error).message);
+      setPending(false);
+    }
+  }
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <TextField
+          label="Name"
+          value={name}
+          hint={hint}
+          autoFocus
+          onChange={(event) => setName(event.target.value)}
+        />
+        {error && <Notice tone="danger">{error}</Notice>}
+        <div className="flex justify-end gap-2">
+          <Button variant="toolbar" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="toolbarAction" disabled={pending}>
+            {submitLabel}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export function PageActions({
+  destination,
+  onNewFolder,
+}: {
+  destination: Destination;
+  onNewFolder: (name: string) => Promise<void>;
+}) {
+  const uploads = useUploads();
+  const picker = useRef<HTMLInputElement>(null);
+  const [naming, setNaming] = useState(false);
+  return (
+    <>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        aria-label={`Choose files to upload to ${destinationName(destination)}`}
+        className="hidden"
+        onChange={(event) => {
+          uploads.add(destination, [...(event.target.files ?? [])]);
+          // Picking the same file again must fire this again, because that resumes it.
+          event.target.value = "";
+        }}
+      />
+      <Button
+        variant="toolbar"
+        icon={IconUpload}
+        onClick={() => picker.current?.click()}
+      >
+        Upload
+      </Button>
+      <Button
+        variant="toolbarAction"
+        icon={IconPlus}
+        onClick={() => setNaming(true)}
+      >
+        New folder
+      </Button>
+      {naming && (
+        <NameDialog
+          title="New folder"
+          hint={`It goes in ${destinationName(destination)}.`}
+          submitLabel="Create folder"
+          onSubmit={onNewFolder}
+          onClose={() => setNaming(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// A folder dragged in shows as a file with no readable bytes, so it's told apart here.
+function droppedFiles(event: DragEvent): { files: File[]; hadFolder: boolean } {
+  const entries = [...event.dataTransfer.items].map((item) =>
+    item.webkitGetAsEntry(),
+  );
+  const hadFolder = entries.some((entry) => entry?.isDirectory);
+  return {
+    files: [...event.dataTransfer.files].filter(
+      (_, index) => !entries[index]?.isDirectory,
+    ),
+    hadFolder,
+  };
+}
+
+const carriesFiles = (event: DragEvent) =>
+  event.dataTransfer.types.includes("Files");
+
+export function DropZone({
+  destination,
+  className,
+  children,
+}: {
+  destination: Destination;
+  className?: string;
+  children: ReactNode;
+}) {
+  const uploads = useUploads();
+  const [over, setOver] = useState(false);
+  const [folderRefused, setFolderRefused] = useState(false);
+  return (
+    <div
+      data-drop-zone
+      className={`${className ?? ""} ${over ? "outline-2 -outline-offset-2 outline-accent" : ""}`}
+      onDragEnter={(event) => {
+        if (carriesFiles(event)) setOver(true);
+      }}
+      onDragOver={(event) => {
+        if (!carriesFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOver(false);
+        }
+      }}
+      onDrop={(event) => {
+        if (!carriesFiles(event)) return;
+        event.preventDefault();
+        setOver(false);
+        const { files, hadFolder } = droppedFiles(event);
+        setFolderRefused(hadFolder);
+        uploads.add(destination, files);
+      }}
+    >
+      {folderRefused && (
+        <div className="px-4 pt-3">
+          <Notice tone="danger">
+            Folders can't be uploaded yet. Open the folder on your computer and
+            drag in the files instead.
+          </Notice>
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+export function Problem({ message }: { message: string }) {
+  return (
+    <div className="mx-auto mt-16 flex max-w-sm flex-col items-center gap-3 px-4 text-center">
+      <p className="text-secondary">{message}</p>
+      <Link to="/storage" className="text-sm text-accent underline">
+        Go to Home
+      </Link>
+    </div>
+  );
+}

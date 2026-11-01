@@ -13,7 +13,7 @@ import {
 } from "./rules/types";
 import { whyInSpam } from "./spam/explain";
 import { SpamStore } from "./spam/store";
-import type { SqlDriver } from "./sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { MailboxStore } from "./store";
 import { createTestEnv, eml, type EmlOptions, MAILBOX_A } from "./test-support";
 import type { MessageId, ThreadId } from "./types";

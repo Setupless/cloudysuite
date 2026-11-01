@@ -1,9 +1,8 @@
-import type { SqlDriver } from "./sql";
+import type { Migrations } from "@cloudysuite/object-sql";
 
-// Append only: a mailbox that ran a migration never runs it again, so editing
-// one would leave mailboxes with different schemas. Add a new entry instead.
-// migrations.test.ts pins the digest of every entry.
-export const MIGRATIONS: readonly (readonly string[])[] = [
+// Append only. Add a new entry instead of editing one: migrations.test.ts pins the
+// digest of every entry.
+export const MIGRATIONS: Migrations = [
   [
     `CREATE TABLE threads (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -317,28 +316,3 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
     ) WITHOUT ROWID`,
   ],
 ];
-
-export function applyMigrations(
-  db: SqlDriver,
-  migrations: readonly (readonly string[])[] = MIGRATIONS,
-): void {
-  db.transaction(() => {
-    db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      applied_at INTEGER NOT NULL
-    )`);
-    const [latest] = db
-      .exec<{ version: number | null }>(
-        "SELECT MAX(version) AS version FROM schema_migrations",
-      )
-      .toArray();
-    migrations.slice(latest?.version ?? 0).forEach((statements, index) => {
-      for (const statement of statements) db.exec(statement);
-      db.exec(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-        (latest?.version ?? 0) + index + 1,
-        Date.now(),
-      );
-    });
-  });
-}

@@ -19,7 +19,8 @@ import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
 import { LabelStore, type LabelWrite } from "./labels/store";
-import { applyMigrations } from "./migrations";
+import { applyMigrations } from "@cloudysuite/object-sql";
+import { MIGRATIONS } from "./migrations";
 import type { JevPlan } from "./placement";
 import { RuleStore } from "./rules/store";
 import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
@@ -28,7 +29,7 @@ import type { SenderEntry, SenderList, SenderWrite } from "./spam/types";
 import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import { runDuePush } from "./push/job";
 import { announces, PushStore } from "./push/store";
-import type { SqlDriver } from "./sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
   AttachmentId,
@@ -67,7 +68,7 @@ export class Mailbox extends DurableObject<Env> {
       exec: (query, ...bindings) => ctx.storage.sql.exec(query, ...bindings),
       transaction: (body) => ctx.storage.transactionSync(body),
     };
-    applyMigrations(db);
+    applyMigrations(db, MIGRATIONS);
     this.#store = new MailboxStore(db);
     this.#imports = new ImportStore(db, this.#store);
     this.#search = new SearchStore(db, this.#store);

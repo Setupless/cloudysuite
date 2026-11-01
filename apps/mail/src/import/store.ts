@@ -4,19 +4,18 @@ import {
   importFileKey,
   importFilePrefix,
 } from "../r2-keys";
-import type { SqlDriver, SqlRow } from "../sql";
+import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import type { MailboxStore } from "../store";
 import type { NewMessage } from "../types";
 import type { MboxPosition } from "./mbox";
+import { expectedPartBytes, partCountFor } from "@cloudysuite/transfer";
 import {
-  expectedPartBytes,
   IMPORT_TRANSITIONS,
   type ImportFailure,
   type ImportJobView,
   type ImportState,
   isActive,
   type NewImportFile,
-  partCountFor,
   type UnreadableItem,
 } from "./types";
 
