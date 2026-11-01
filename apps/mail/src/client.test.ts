@@ -79,6 +79,7 @@ test("the client offers no way to add mail or reach the raw stub", async () => {
     "getThread",
     "inlineAttachments",
     "listRules",
+    "listSenders",
     "listThreads",
     "moveToFolder",
     "moveToTrash",

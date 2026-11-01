@@ -283,6 +283,7 @@ test("a broken rule table still leaves the mail in the inbox", () => {
     read: false,
     starred: false,
     labelIds: [],
+    spam: null,
   });
 });
 

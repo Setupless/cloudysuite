@@ -1,4 +1,5 @@
 import type { MailboxId } from "@cloudysuite/access";
+import type { SpamFacts, SpamTraining, SpamVerdict } from "./spam/types";
 
 type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
@@ -46,6 +47,10 @@ export type AuthResults = {
   spf: AuthVerdict | null;
   dkim: AuthVerdict | null;
   dmarc: AuthVerdict | null;
+  // Which domains those passes were for. A pass alone says nothing about the From
+  // line. These are absent when the header doesn't name them, and on older mail.
+  dkimPassDomains?: string[];
+  dmarcDomain?: string;
 };
 
 export type Address = { name: string; address: string };
@@ -90,6 +95,8 @@ export type NewMessage = {
   sentAt: number | null;
   receivedAt: number;
   authResults: AuthResults | null;
+  // Only inbound mail is scored, so only inbound mail has these.
+  spamFacts?: SpamFacts | undefined;
   searchBody: string;
   bodies: NewBody[];
   attachments: NewAttachment[];
@@ -162,6 +169,8 @@ export type MessageDetail = {
   envelopeTo: string | null;
   parseStatus: ParseStatus;
   authResults: AuthResults | null;
+  spam: SpamVerdict | null;
+  spamTraining: SpamTraining | null;
   labelIds: LabelId[];
   attachments: AttachmentInfo[];
 };

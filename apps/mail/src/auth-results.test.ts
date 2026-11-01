@@ -6,7 +6,24 @@ test("reads each method's result from Cloudflare's header", () => {
     parseAuthenticationResults(
       "mx.cloudflare.net; dkim=pass header.d=example.org; spf=softfail (domain; of sender) smtp.mailfrom=a@example.org; dmarc=none header.from=example.org",
     ),
-  ).toEqual({ spf: "softfail", dkim: "pass", dmarc: "none" });
+  ).toEqual({
+    spf: "softfail",
+    dkim: "pass",
+    dmarc: "none",
+    dkimPassDomains: ["example.org"],
+    dmarcDomain: "example.org",
+  });
+});
+
+test("keeps which domains passed, so a pass can't be claimed for another domain", () => {
+  const results = parseAuthenticationResults(
+    "mx.cloudflare.net; dkim=fail header.d=victim.example; dkim=pass header.d=Sender.Example header.s=a; dmarc=fail header.from=victim.example",
+  );
+  expect(results?.dkimPassDomains).toEqual(["sender.example"]);
+  expect(results?.dmarcDomain).toBe("victim.example");
+  expect(
+    parseAuthenticationResults("mx.cloudflare.net; dkim=pass")?.dkimPassDomains,
+  ).toBeUndefined();
 });
 
 test("ignores a header from any other server", () => {

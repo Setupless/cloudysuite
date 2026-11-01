@@ -5,7 +5,11 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
-import { openMailbox, openMailboxRuleEditor } from "./client";
+import {
+  openMailbox,
+  openMailboxRuleEditor,
+  openMailboxSenderListEditor,
+} from "./client";
 
 export const NO_ACCESS_MESSAGE =
   "You don't have access to this mailbox. Ask your admin if you need it.";
@@ -43,6 +47,30 @@ export async function openRuleEditorFor(
     : null;
   if (!editor) {
     const message = access.allowed ? NOT_A_MANAGER_MESSAGE : NO_ACCESS_MESSAGE;
+    throw new Response(JSON.stringify({ message }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return editor;
+}
+
+const NOT_A_LIST_MANAGER_MESSAGE =
+  "Only a manager of this mailbox can change who is blocked or allowed. Ask a manager if a sender needs changing.";
+
+export async function openSenderListEditorFor(
+  request: Request,
+  mailboxId: MailboxId,
+) {
+  const user = await requireReadyUser(request);
+  const access = await checkMailboxAccess(env.DB, user.id, mailboxId);
+  const editor = access.allowed
+    ? openMailboxSenderListEditor(env, access.grant)
+    : null;
+  if (!editor) {
+    const message = access.allowed
+      ? NOT_A_LIST_MANAGER_MESSAGE
+      : NO_ACCESS_MESSAGE;
     throw new Response(JSON.stringify({ message }), {
       status: 403,
       headers: { "Content-Type": "application/json" },

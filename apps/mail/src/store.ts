@@ -1,4 +1,6 @@
 import { type Placement, placementFor } from "./placement";
+import { SpamStore } from "./spam/store";
+import { parseStoredVerdict, type SpamTraining } from "./spam/types";
 import type { SqlDriver, SqlRow } from "./sql";
 import {
   normalizeSubject,
@@ -41,7 +43,12 @@ const MAX_SENDERS_IN_VIEW = 5;
 const MAX_SUBJECT_CANDIDATES = 100;
 export const DELETION_SETTLE_MS = 5 * 60 * 1000;
 
-type RefRow = SqlRow & { id: number; thread_id: number; folder: Folder };
+type RefRow = SqlRow & {
+  id: number;
+  thread_id: number;
+  folder: Folder;
+  source?: MessageSource;
+};
 
 type MessageRow = SqlRow & {
   id: number;
@@ -65,6 +72,8 @@ type MessageRow = SqlRow & {
   envelope_to: string | null;
   parse_status: ParseStatus;
   auth_results: string | null;
+  spam_verdict: string | null;
+  spam_training: SpamTraining | null;
 };
 
 type AttachmentRow = SqlRow & {
@@ -156,6 +165,8 @@ function toMessageDetail(
     authResults: row.auth_results
       ? (JSON.parse(row.auth_results) as AuthResults)
       : null,
+    spam: parseStoredVerdict(row.spam_verdict),
+    spamTraining: row.spam_training,
     labelIds,
     attachments,
   };
@@ -227,9 +238,11 @@ export function describeMembers(members: ViewSourceRow[]) {
 // access is checked before a caller can reach it (see client.ts).
 export class MailboxStore {
   readonly #db: SqlDriver;
+  readonly #spam: SpamStore;
 
   constructor(db: SqlDriver) {
     this.#db = db;
+    this.#spam = new SpamStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -257,6 +270,7 @@ export class MailboxStore {
       const placement = placementFor(message, this.#db);
       const threadId = this.#assignThread(message);
       const messageId = this.#insertMessage(message, threadId, placement);
+      this.#spam.noteStored(message, placement.folder);
       this.#db.exec(
         `INSERT OR IGNORE INTO message_labels (message_id, label_id)
          SELECT ?, id FROM labels WHERE id IN (SELECT value FROM json_each(?))`,
@@ -415,7 +429,8 @@ export class MailboxStore {
            parse_status, rfc_message_id, refs, thread_id, from_name, from_address,
            reply_to, to_addresses, cc_addresses, bcc_addresses, participants, subject,
            normalized_subject, is_orphan_reply, snippet, sent_at, received_at,
-           thread_date, is_read, is_starred, folder, has_attachments, auth_results
+           thread_date, is_read, is_starred, folder, has_attachments, auth_results,
+           spam_verdict
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
         message.rawHash,
@@ -447,6 +462,7 @@ export class MailboxStore {
         placement.folder,
         message.attachments.some((attachment) => !attachment.inline) ? 1 : 0,
         message.authResults ? JSON.stringify(message.authResults) : null,
+        placement.spam ? JSON.stringify(placement.spam) : null,
       )
       .toArray();
     const id = row!.id;
@@ -662,14 +678,14 @@ export class MailboxStore {
     if ("messageIds" in selection) {
       return this.#db
         .exec<RefRow>(
-          "SELECT id, thread_id, folder FROM messages WHERE id IN (SELECT value FROM json_each(?))",
+          "SELECT id, thread_id, folder, source FROM messages WHERE id IN (SELECT value FROM json_each(?))",
           JSON.stringify(selection.messageIds),
         )
         .toArray();
     }
     return this.#db
       .exec<RefRow>(
-        `SELECT id, thread_id, folder FROM messages
+        `SELECT id, thread_id, folder, source FROM messages
          WHERE thread_id IN (SELECT value FROM json_each(?))
            AND (?2 IS NULL OR folder IN (SELECT value FROM json_each(?2)))`,
         JSON.stringify(selection.threadIds),
@@ -739,6 +755,9 @@ export class MailboxStore {
         folder,
         JSON.stringify(rows.map((row) => row.id)),
       );
+      this.#spam.noteMoves(
+        rows.map((row) => ({ id: row.id, from: row.folder, to: folder })),
+      );
       this.#refreshThreadsOf(rows);
       return rows.map(toRef);
     });
@@ -754,6 +773,18 @@ export class MailboxStore {
          SET folder = CASE source WHEN 'sent' THEN 'sent' WHEN 'import' THEN 'archive' ELSE 'inbox' END
          WHERE id IN (SELECT value FROM json_each(?))`,
         JSON.stringify(rows.map((row) => row.id)),
+      );
+      this.#spam.noteMoves(
+        rows.map((row) => ({
+          id: row.id,
+          from: row.folder,
+          to:
+            row.source === "sent"
+              ? "sent"
+              : row.source === "import"
+                ? "archive"
+                : "inbox",
+        })),
       );
       this.#refreshThreadsOf(rows);
       return rows.map(toRef);

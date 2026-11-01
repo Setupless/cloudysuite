@@ -46,6 +46,12 @@ function splitResinfo(value: string): string[] {
   return parts;
 }
 
+// The domain a method's result was for, from a property such as header.d=example.org.
+function propertyOf(info: string, name: string): string | null {
+  const start = new RegExp(`(?:^|\\s)${name}\\s*=\\s*"?([^\\s";]+)`, "i");
+  return start.exec(info)?.[1]?.toLowerCase() ?? null;
+}
+
 function toVerdict(raw: string): AuthVerdict | null {
   const verdict = raw === "hardfail" ? "fail" : raw;
   return AUTH_VERDICTS.find((known) => known === verdict) ?? null;
@@ -69,8 +75,16 @@ export function parseAuthenticationResults(
     const verdict = toVerdict(match[2]!.toLowerCase());
     if (!method || !verdict) continue;
     // A message can carry several DKIM signatures, and one good one is enough.
-    if (results[method] === null || verdict === "pass") {
-      results[method] = verdict;
+    if (method === "dkim" && verdict === "pass") {
+      const signer = propertyOf(info, "header\\.d");
+      if (signer) (results.dkimPassDomains ??= []).push(signer);
+    }
+    if (results[method] !== null && verdict !== "pass") continue;
+    results[method] = verdict;
+    if (method === "dmarc") {
+      const domain = propertyOf(info, "header\\.from");
+      if (domain) results.dmarcDomain = domain;
+      else delete results.dmarcDomain;
     }
   }
   return results;

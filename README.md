@@ -193,6 +193,16 @@ Spam filtering works without a Jev key and adds no dependency.
 - Each mailbox learns from the messages its users mark as spam.
 - CloudySuite never rejects mail. A message that looks like spam goes to the Spam folder, so a wrong guess loses nothing.
 
+Some details of how this works:
+
+- A failed DMARC check goes to Spam on its own, because the sender's domain asked for that check. This includes a domain that only asked for reports, and a mailing list that breaks a strict domain's check, so some real mail lands in Spam this way. Every other signal is something real mail also does, so it takes several together: a name showing another address, replies going to another site, a link whose text names another site, a program file from a stranger, a subject in capitals, and a broken SPF or DKIM result. Cloudflare's first `Authentication-Results` header is the only one read, because anything below it is the sender's to forge.
+- Spam shows why a message is there, in plain words, from the reasons stored when it was filed.
+- Rules run first, so their labels and stars still apply, and the verdict has the last word on the folder. Imported and sent mail skip the filter and teach it nothing, unless a person marks that mail themselves.
+- An allowed sender skips the filter only if the message proves it came from them: DMARC passed for the `From` domain, or DKIM passed for that domain or a parent of it, and DMARC did not fail. A pass for some other domain proves nothing, and a `From` line alone is easy to forge. Without that proof the message is scored like any other, and a block list entry still counts.
+- The block list goes by the `From` line and covers subdomains. The narrowest entry decides, so one trusted address can sit inside a blocked domain. Anyone with access can read the lists and mark mail. Only a manager can change the lists, because the allow list decides what the whole mailbox sees.
+- "Mark as spam" and "Not spam" teach a small word-count model, one per mailbox, in the same transaction as the move. It reads the first 32 KB of a message, holds at most 20,000 hashed words, and forgets the weakest first. Undo, or "Not spam" on a message someone marked, leaves the counts as they were before. It stays off until 5 messages are marked as spam, or 3 as not spam.
+- The model files a message only when at least 85% of its words are in the marked mail and they lean clearly towards spam, so it catches repeats of what people marked and little else. One "Not spam" outweighs many marks of the same kind. It never files a sender this mailbox already deals with who proves who they are, unless someone marks that sender as spam.
+
 ### Mail import
 
 A user can upload an `.mbox` file, such as a Google Takeout export, into a mailbox they manage. Most target teams have little to migrate, so this is the only import source in the first release, and the first feature to cut if the release slips.

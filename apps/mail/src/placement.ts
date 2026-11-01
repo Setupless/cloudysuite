@@ -5,6 +5,8 @@ import {
   type RuleOutcome,
 } from "./rules/evaluate";
 import { RuleStore } from "./rules/store";
+import { RULE_MOVED, SpamStore } from "./spam/store";
+import type { SpamVerdict } from "./spam/types";
 import type { SqlDriver } from "./sql";
 import type { Folder, LabelId, NewMessage } from "./types";
 
@@ -13,6 +15,8 @@ export type Placement = {
   read: boolean;
   starred: boolean;
   labelIds: LabelId[];
+  // Set only when this puts the message in Spam, and it says why.
+  spam: SpamVerdict | null;
 };
 
 // A problem with a rule must not stop mail: a throw here would fail the delivery.
@@ -26,15 +30,34 @@ function ruleOutcome(message: NewMessage, db: SqlDriver): RuleOutcome {
   }
 }
 
-// Rules run first and spam scoring, when it plugs in here, has the last word on the
-// folder. A rule reads a From line that anyone can forge, so a rule must not be a way
-// to talk past the spam filter. Each mailbox's allow list is the deliberate way to do
-// that. Labels and stars still apply, so "Not spam" brings back the mail as it should
-// have been. This runs inside the commit transaction, so a retry cannot apply it
-// twice. A verdict can only choose where a message goes: spam is never rejected.
+// Nor must a problem with the filter: real mail matters more than catching spam.
+function spamVerdict(message: NewMessage, db: SqlDriver): SpamVerdict | null {
+  try {
+    return new SpamStore(db).judge(message);
+  } catch (error) {
+    console.error(
+      "Spam scoring could not run. The message is not filed.",
+      error,
+    );
+    return null;
+  }
+}
+
+// Rules run first and the spam verdict has the last word on the folder. A rule reads a
+// From line that anyone can forge, so a rule must not be a way to talk past the spam
+// filter. Each mailbox's allow list is the deliberate way to do that. Labels and stars
+// still apply, so "Not spam" brings back the mail as it should have been. This runs
+// inside the commit transaction, so a retry cannot apply it twice. A verdict can only
+// choose where a message goes: spam is never rejected.
 export function triageInbound(message: NewMessage, db: SqlDriver): Placement {
   const { move, read, starred, labelIds } = ruleOutcome(message, db);
-  return { folder: move ?? "inbox", read, starred, labelIds };
+  const verdict = spamVerdict(message, db);
+  if (verdict?.spam) {
+    return { folder: "spam", read, starred, labelIds, spam: verdict };
+  }
+  const folder = move ?? "inbox";
+  const spam = folder === "spam" ? RULE_MOVED : null;
+  return { folder, read, starred, labelIds, spam };
 }
 
 // Imported and sent mail never reaches triage, so rules and spam skip it.
@@ -43,8 +66,20 @@ export function placementFor(message: NewMessage, db: SqlDriver): Placement {
     case "inbound":
       return triageInbound(message, db);
     case "import":
-      return { folder: "archive", read: true, starred: false, labelIds: [] };
+      return {
+        folder: "archive",
+        read: true,
+        starred: false,
+        labelIds: [],
+        spam: null,
+      };
     case "sent":
-      return { folder: "sent", read: true, starred: false, labelIds: [] };
+      return {
+        folder: "sent",
+        read: true,
+        starred: false,
+        labelIds: [],
+        spam: null,
+      };
   }
 }

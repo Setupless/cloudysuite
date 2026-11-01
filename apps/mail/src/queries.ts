@@ -15,6 +15,7 @@ import {
 import { type MailListing, parseViewParam, viewParam } from "./model";
 import { getRules } from "./rules/functions";
 import type { SearchPage } from "./search/store";
+import { getSenderLists } from "./spam/functions";
 import type { MailboxId, MessageId, ThreadId } from "./types";
 
 export const REFRESH_MS = 60_000;
@@ -61,6 +62,7 @@ export const mailKeys = {
   all: (mailboxId: MailboxId) => ["mail", mailboxId] as const,
   threads: (mailboxId: MailboxId) => ["mail", mailboxId, "threads"] as const,
   rules: (mailboxId: MailboxId) => ["mail", mailboxId, "rules"] as const,
+  senders: (mailboxId: MailboxId) => ["mail", mailboxId, "senders"] as const,
   threadsIn: (mailboxId: MailboxId, listing: MailListing) =>
     "search" in listing
       ? (["mail", mailboxId, "threads", "search", listing.search] as const)
@@ -114,6 +116,12 @@ export const rulesQuery = (mailboxId: MailboxId) =>
     queryFn: () => call(() => getRules({ data: { mailboxId } })),
   });
 
+export const sendersQuery = (mailboxId: MailboxId) =>
+  queryOptions({
+    queryKey: mailKeys.senders(mailboxId),
+    queryFn: () => call(() => getSenderLists({ data: { mailboxId } })),
+  });
+
 export const threadQuery = (mailboxId: MailboxId, threadId: ThreadId) =>
   queryOptions({
     queryKey: mailKeys.thread(mailboxId, threadId),
@@ -161,6 +169,13 @@ export async function prefetchRules(mailboxId: string) {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await client.prefetchQuery(rulesQuery(mailboxId as MailboxId));
+  return dehydrate(client);
+}
+
+export async function prefetchSenders(mailboxId: string) {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(sendersQuery(mailboxId as MailboxId));
   return dehydrate(client);
 }
 

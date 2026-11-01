@@ -4,6 +4,7 @@ import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconArchive,
+  IconBan,
   IconFile,
   IconFileImport,
   IconFilter,
@@ -147,6 +148,17 @@ function MailNavigation({
         >
           <IconFilter size={18} stroke={1.75} aria-hidden />
           <span className="min-w-0 truncate">Rules</span>
+        </Link>
+      )}
+      {current && (
+        <Link
+          to="/mail/$mailboxId/senders"
+          params={{ mailboxId }}
+          className={NAV_ITEM}
+          activeProps={{ className: NAV_ITEM_ACTIVE }}
+        >
+          <IconBan size={18} stroke={1.75} aria-hidden />
+          <span className="min-w-0 truncate">Blocked and allowed</span>
         </Link>
       )}
       {current?.role === "manager" && (
