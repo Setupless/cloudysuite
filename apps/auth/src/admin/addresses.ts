@@ -1,6 +1,12 @@
 import { eq, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { addresses, domains, invites, user } from "../../../../src/db/schema";
+import {
+  addresses,
+  domains,
+  invites,
+  user,
+  type UserId,
+} from "../../../../src/db/schema";
 
 // An app domain such as suite.example.com is only for app addresses when its
 // parent, the domain people's email uses, is stored too. With no stored parent,
@@ -46,9 +52,12 @@ export function parseAddress(raw: string): ParsedAddress | null {
 export type AddressCheck =
   { ok: true; parsed: ParsedAddress } | { ok: false; message: string };
 
+// `owner` may take the address they already sign in with. For anyone else it is
+// taken, because mail to it would reach a different person from its sign-in.
 export async function checkNewAddress(
   database: D1Database,
   raw: string,
+  owner?: UserId,
 ): Promise<AddressCheck> {
   const parsed = parseAddress(raw);
   if (!parsed) {
@@ -78,7 +87,8 @@ export async function checkNewAddress(
       message: `${parsed.domain} isn't one of your email domains. Add it under Email domains first.`,
     };
   }
-  if (stored.length > 0 || reserved.length > 0 || person.length > 0) {
+  const signsInElsewhere = person.some(({ id }) => id !== owner);
+  if (stored.length > 0 || reserved.length > 0 || signsInElsewhere) {
     return {
       ok: false,
       message: `${parsed.address} is already taken. Choose a different address.`,

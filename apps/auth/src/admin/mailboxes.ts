@@ -131,7 +131,7 @@ export async function addPersonalMailbox(
       `${person.name} already has a personal mailbox. Add an alias to it instead.`,
     );
   }
-  const check = await checkNewAddress(database, input.address);
+  const check = await checkNewAddress(database, input.address, input.userId);
   if (!check.ok) return check;
   try {
     await createPersonalMailbox(

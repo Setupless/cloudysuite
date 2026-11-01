@@ -98,11 +98,23 @@ test("granting access opens the mailbox, and revoking closes it", async () => {
   );
 });
 
+test("a person's sign-in address can become their own mailbox, but nobody else's", async () => {
+  const someoneElse = await addPersonalMailbox(kit.database, {
+    userId: kit.admin,
+    address: "m@example.com",
+  });
+  expect(someoneElse).toEqual({
+    ok: false,
+    message: expect.stringContaining("already taken"),
+  });
+  const own = await addPersonalMailbox(kit.database, {
+    userId: member,
+    address: "M@example.com",
+  });
+  expect(own.ok).toBe(true);
+});
+
 test("a person gets one personal mailbox", async () => {
-  const input = { userId: member, address: "m@example.com" };
-  const refused = await addPersonalMailbox(kit.database, input);
-  // Their sign-in address already belongs to their account.
-  expect(refused.ok).toBe(false);
   expect(
     (
       await addPersonalMailbox(kit.database, {
