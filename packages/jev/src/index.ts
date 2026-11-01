@@ -151,6 +151,9 @@ export async function askYesNo(
               ]),
             ),
           }),
+          // A redirect would send the key and the message to another host, and
+          // its answer would count. Any 3xx is a failed check.
+          redirect: "manual",
           signal: abort.signal,
         },
       );
@@ -190,6 +193,7 @@ export async function checkJevKey(
   try {
     const response = await connection.fetch(`${connection.base}/v1/models`, {
       headers: { Authorization: `Bearer ${connection.key}` },
+      redirect: "manual",
       signal: AbortSignal.timeout(KEY_CHECK_TIMEOUT_MS),
     });
     await response.body?.cancel();

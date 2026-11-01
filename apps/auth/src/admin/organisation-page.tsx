@@ -187,8 +187,8 @@ function JevKeyForm({
           that, most new mail in that mailbox goes to Jev.
         </p>
         <p>
-          Jev has no fixed period for how long it keeps what it receives. Only
-          its enterprise customers get zero retention.{" "}
+          Jev keeps data for as long as it considers necessary, with no fixed
+          period, and offers zero retention to enterprise customers.{" "}
           <a
             className="text-accent underline outline-accent focus-visible:outline-2"
             href={JEV_PRIVACY_URL}

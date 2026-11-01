@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createTestDatabase } from "../../../src/db/test-database";
 import {
+  askYesNo,
   checkJevKey,
   JEV_API,
   jevApiBase,
@@ -104,4 +105,30 @@ test("a key can be added, replaced, and removed", async () => {
   await writeJevKey(d1, null);
   expect(await jevKeyIsSet(d1)).toBe(false);
   expect(await readJevKey(d1)).toBeNull();
+});
+
+test("a redirect is a failed check, and its target is never asked", async () => {
+  const asked: string[] = [];
+  const answer = {
+    model: "jev-1.14.0",
+    answers: { spam: { type: "noul", noul: 1 } },
+    usage: { input_tokens: 1, output_tokens: 0 },
+  };
+  const follows = (url: string, init: RequestInit): Response => {
+    asked.push(url);
+    if (url.startsWith("http://second.test")) return Response.json(answer);
+    return init.redirect === "manual"
+      ? new Response(null, {
+          status: 302,
+          headers: { Location: "http://second.test/v1/systemone" },
+        })
+      : Response.json(answer);
+  };
+  const result = await askYesNo(
+    { base: JEV_API, key: "k", fetch: async (url, init) => follows(url, init) },
+    {},
+    { spam: { instructions: "Is it spam?" } },
+  );
+  expect(result.ok).toBe(false);
+  expect(asked).toEqual([`${JEV_API}/v1/systemone`]);
 });

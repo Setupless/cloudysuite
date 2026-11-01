@@ -292,7 +292,7 @@ An admin can add a [Jev](https://docs.typesafe.ai/introduction) API key to impro
 
 Jev is a third-party service. When an admin adds a key, CloudySuite sends message content to that service. The Organisation page says so before the key can be saved, and the server refuses a save without the admin's acknowledgement.
 
-- Jev has no fixed retention period. Zero retention is for enterprise customers only. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you enable it.
+- Jev keeps data for as long as it considers necessary, with no fixed period, and offers zero retention to enterprise customers. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you enable it.
 - Jev charges $0.042 per million input tokens, as of November 2026. The Organisation page shows how many messages were checked this month, the tokens used, and how many checks couldn't finish.
 - CloudySuite calls `POST https://api.typesafe.ai/v1/systemone` with a plain `fetch` and the admin's key as a bearer token, using the `jev-latest` alias and `noul` questions. It adds no SDK. An alias, because a copy of CloudySuite never updates itself and a retired version would quietly end every check.
 - Saving a key checks it with `GET /v1/models`, which spends no tokens. A key Jev rejects isn't saved. A key that can't be checked right now is saved, and the screen says so. The key is stored in D1 and never returned to any browser. The screen only says that one is set.
