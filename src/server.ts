@@ -1,6 +1,9 @@
+import { ingest } from "@cloudysuite/mail/ingest";
 import handler from "@tanstack/react-start/server-entry";
 import { gate, resolveHost } from "./routing";
 import { readSettings } from "./settings";
+
+export { Mailbox } from "@cloudysuite/mail/mailbox";
 
 export default {
   async fetch(request, env) {
@@ -22,5 +25,10 @@ export default {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
     }
+  },
+
+  async email(message, env) {
+    const raw = await new Response(message.raw).arrayBuffer();
+    await ingest(env, { to: message.to, raw });
   },
 } satisfies ExportedHandler<Env>;
