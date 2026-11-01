@@ -1,14 +1,14 @@
 import { record, refusal, requireMailboxId } from "../wire";
-import { parseSenderPattern, SENDER_LISTS, type SenderList } from "./types";
+import {
+  BAD_SENDER_PATTERN,
+  parseSenderPattern,
+  SENDER_LISTS,
+  type SenderList,
+} from "./types";
 
 const requirePattern = (raw: unknown) => {
   const pattern = parseSenderPattern(raw);
-  if (pattern === null) {
-    throw refusal(
-      400,
-      "Enter one email address, like name@example.com, or one domain, like example.com.",
-    );
-  }
+  if (pattern === null) throw refusal(400, BAD_SENDER_PATTERN);
   return pattern;
 };
 

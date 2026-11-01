@@ -12,7 +12,7 @@ export type CorpusMessage = {
   raw: string;
 };
 
-type Auth = { spf: string; dkim: string; dmarc: string };
+type Auth = { spf: string; dkim: string; dmarc: string; policy?: string };
 
 // A small deterministic generator, so a seed always gives the same corpus.
 function randomFrom(seed: number) {
@@ -169,7 +169,7 @@ function authHeader(auth: Auth, fromDomain: string, signer = fromDomain) {
   return [
     "Authentication-Results: mx.cloudflare.net",
     `dkim=${auth.dkim}${auth.dkim === "none" ? "" : ` header.d=${signer}`}`,
-    `dmarc=${auth.dmarc} header.from=${fromDomain}`,
+    `dmarc=${auth.dmarc}${auth.policy ? ` (p=${auth.policy} dis=none)` : ""} header.from=${fromDomain}`,
     `spf=${auth.spf} smtp.mailfrom=${fromDomain}`,
   ].join("; ");
 }
@@ -388,16 +388,15 @@ const HAM_KINDS: Record<
       };
     },
   },
-  // Real mail the filter is told to treat as spam. These are the false positives the
-  // decisions to file every DMARC failure and every program from a stranger accept, so
-  // they stay in the count.
-  "misconfigured sender whose real mail fails DMARC": {
+  // Real mail that fails DMARC where the domain asked for nothing, which is what
+  // Cloudflare lets through. These stay in the false positive count.
+  "vendor whose real mail fails DMARC under p=none": {
     share: 3,
     make: (random) => {
       const name = person(random);
       const site = domain(random);
       return {
-        auth: { spf: "pass", dkim: "none", dmarc: "fail" },
+        auth: { spf: "pass", dkim: "none", dmarc: "fail", policy: "none" },
         fromName: name,
         fromAddress: `${local(name)}@${site}`,
         subject: "Invoice for last month",
@@ -405,6 +404,54 @@ const HAM_KINDS: Record<
       };
     },
   },
+  "vendor on a mail service, failing DMARC under p=none, with tracked links": {
+    share: 3,
+    make: (random) => {
+      const brand = random.pick(COMPANIES);
+      const site = `${brand}.com`;
+      return {
+        auth: { spf: "pass", dkim: "pass", dmarc: "fail", policy: "none" },
+        signer: "mailservice.example",
+        fromName: `${brand} news`,
+        fromAddress: `news@${site}`,
+        replyTo: "support@helpdesk.mailservice.example",
+        subject: random.pick(NEWSLETTER_ITEMS),
+        html: trackedNewsletter(random, brand, site),
+      };
+    },
+  },
+  "mailing list keeping an author's From, failing DMARC under p=none": {
+    share: 3,
+    make: (random) => {
+      const name = person(random);
+      const site = domain(random);
+      return {
+        auth: { spf: "softfail", dkim: "fail", dmarc: "fail", policy: "none" },
+        fromName: name,
+        fromAddress: `${local(name)}@${site}`,
+        replyTo: "devs@lists.opensource.example",
+        subject: `[devs] ${random.pick(LIST_TOPICS)}`,
+        text: `Replying about ${random.pick(LIST_TOPICS)}. ${random.pick(WORK_LINES)}`,
+      };
+    },
+  },
+  "forwarded and changed on the way, failing DMARC with no policy stated": {
+    share: 2,
+    make: (random) => {
+      const name = person(random);
+      const site = domain(random);
+      return {
+        auth: { spf: "fail", dkim: "fail", dmarc: "fail" },
+        fromName: name,
+        fromAddress: `${local(name)}@${site}`,
+        subject: "Fwd: the notes",
+        text: `${random.pick(WORK_LINES)} ${random.pick(WORK_LINES)}`,
+      };
+    },
+  },
+  // Real mail the filter is told to treat as spam. These are the false positives the
+  // decisions to file a failure under an enforcing policy and a program from a stranger
+  // accept, so they stay in the count.
   "stranger with a signed message sending a script": {
     share: 1,
     make: (random) => {
@@ -425,7 +472,12 @@ const HAM_KINDS: Record<
       const name = person(random);
       const site = domain(random);
       return {
-        auth: { spf: "softfail", dkim: "fail", dmarc: "fail" },
+        auth: {
+          spf: "softfail",
+          dkim: "fail",
+          dmarc: "fail",
+          policy: "quarantine",
+        },
         fromName: name,
         fromAddress: `${local(name)}@${site}`,
         subject: `[devs] ${random.pick(LIST_TOPICS)}`,
@@ -463,16 +515,49 @@ const SPAM_KINDS: Record<
   string,
   { share: number; make: (random: Random) => Draft; campaign?: boolean }
 > = {
-  "phishing forging a real company, DMARC fails": {
-    share: 18,
+  "phishing forging a real company, DMARC fails under p=quarantine": {
+    share: 12,
     make: (random) => {
       const brand = random.pick(COMPANIES);
       return {
-        auth: { spf: "fail", dkim: "none", dmarc: "fail" },
+        auth: {
+          spf: "fail",
+          dkim: "none",
+          dmarc: "fail",
+          policy: "quarantine",
+        },
         fromName: `${brand} security`,
         fromAddress: `security@${brand}.com`,
         subject: "Action required on your account",
         html: phishPage(random, brand),
+      };
+    },
+  },
+  "phishing forging a p=none company, with a misleading link": {
+    share: 6,
+    make: (random) => {
+      const brand = random.pick(COMPANIES);
+      return {
+        auth: { spf: "softfail", dkim: "none", dmarc: "fail", policy: "none" },
+        fromName: `${brand} security`,
+        fromAddress: `security@${brand}.com`,
+        subject: "Action required on your account",
+        html: phishPage(random, brand),
+      };
+    },
+  },
+  // Nothing tells this from a real vendor with a half-set record, so it is missed.
+  "plain forgery of a p=none company, replies going to free mail": {
+    share: 4,
+    make: (random) => {
+      const brand = random.pick(COMPANIES);
+      return {
+        auth: { spf: "fail", dkim: "none", dmarc: "fail", policy: "none" },
+        fromName: `${brand} accounts`,
+        fromAddress: `accounts@${brand}.com`,
+        replyTo: `accounts${random.between(1, 99)}@${random.pick(FREEMAIL)}`,
+        subject: "New bank details for your next payment",
+        text: "We have changed banks. Please reply to confirm before your next payment.",
       };
     },
   },

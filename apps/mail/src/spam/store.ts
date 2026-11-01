@@ -3,15 +3,19 @@ import type { SqlDriver } from "../sql";
 import type { AuthResults, Folder, MessageId, NewMessage } from "../types";
 import {
   addressShownInName,
+  dmarcEnforced,
   domainOf,
+  forgeryEvidence,
   isShouting,
   provedDomain,
   replyDomainElsewhere,
   runnableFilename,
+  sitesIn,
 } from "./signals";
 import { SCAN_CHARS, tokensOf } from "./tokens";
 import {
   MAX_SENDER_ENTRIES,
+  parseStoredVerdict,
   REASON_POINTS,
   type SenderEntry,
   type SenderList,
@@ -63,6 +67,16 @@ const MAX_TRAINED_PER_MOVE = 200;
 
 const MAX_HTML_FOR_TOKENS = 8 * SCAN_CHARS;
 const MAX_PARENT_DOMAINS = 10;
+const MAX_ACCEPTED_SITES = 20;
+
+// From the end, so a long run of subdomains can't push the real domain out.
+function domainAndParents(domain: string): string[] {
+  const labels = domain.split(".");
+  return labels
+    .map((_, index) => labels.slice(index).join("."))
+    .filter((one) => one.includes("."))
+    .slice(-MAX_PARENT_DOMAINS);
+}
 
 const isLive = (folder: Folder) => folder === "inbox" || folder === "archive";
 
@@ -136,8 +150,11 @@ type TrainingRow = {
   from_name: string | null;
   from_address: string | null;
   auth_results: string | null;
+  spam_verdict: string | null;
   spam_training: SpamTraining | null;
 };
+
+type ContactRow = { vouched: number; accepted_sites: string };
 
 export class SpamStore {
   readonly #db: SqlDriver;
@@ -186,18 +203,7 @@ export class SpamStore {
     this.#db.exec("DELETE FROM spam_senders WHERE pattern = ?", pattern);
   }
 
-  // Narrowest first, so one trusted address can sit inside a blocked domain, and one
-  // blocked address inside an allowed domain.
-  #listEntriesFor(address: string): SenderEntry[] {
-    const labels = domainOf(address).split(".");
-    // From the end, so a long run of subdomains can't push the real domain out.
-    const candidates = [
-      address,
-      ...labels
-        .map((_, index) => labels.slice(index).join("."))
-        .filter((domain) => domain.includes("."))
-        .slice(-MAX_PARENT_DOMAINS),
-    ];
+  #entriesFor(candidates: readonly string[]): SenderEntry[] {
     const rows = this.#db
       .exec<SenderEntry>(
         "SELECT pattern, list FROM spam_senders WHERE pattern IN (SELECT value FROM json_each(?))",
@@ -209,10 +215,43 @@ export class SpamStore {
     );
   }
 
-  #isKnown(address: string): boolean {
+  // Narrowest first, so one trusted address can sit inside a blocked domain, and one
+  // blocked address inside an allowed domain.
+  #listEntriesFor(address: string): SenderEntry[] {
+    return this.#entriesFor([address, ...domainAndParents(domainOf(address))]);
+  }
+
+  #allowedDomainAmong(domains: readonly string[]): SenderEntry | null {
+    return (
+      this.#entriesFor(domains.flatMap(domainAndParents)).find(
+        (entry) => entry.list === "allow",
+      ) ?? null
+    );
+  }
+
+  #contact(address: string): ContactRow | null {
+    const [row] = this.#db
+      .exec<ContactRow>(
+        "SELECT vouched, accepted_sites FROM spam_contacts WHERE address = ?",
+        address,
+      )
+      .toArray();
+    return row ?? null;
+  }
+
+  // Only a Message-ID this mailbox wrote counts, not one it only received, because
+  // anyone can reference mail they sent here themselves.
+  #repliesToSent(references: readonly string[]): boolean {
+    if (references.length === 0) return false;
     return (
       this.#db
-        .exec("SELECT 1 FROM spam_contacts WHERE address = ?", address)
+        .exec(
+          `SELECT 1 FROM thread_refs r
+           JOIN messages m ON m.thread_id = r.thread_id AND m.rfc_message_id = r.rfc_id
+           WHERE r.rfc_id IN (SELECT value FROM json_each(?)) AND m.source = 'sent'
+           LIMIT 1`,
+          JSON.stringify(references),
+        )
         .toArray().length > 0
     );
   }
@@ -226,10 +265,13 @@ export class SpamStore {
     return { spam: row?.spam_docs ?? 0, ham: row?.ham_docs ?? 0 };
   }
 
-  #learned(message: NewMessage, known: boolean): "spam" | "real" | null {
+  #learned(
+    message: NewMessage,
+    known: boolean,
+    proved: string | null,
+  ): "spam" | "real" | null {
     const docs = this.#documents();
     if (docs.spam < MIN_SPAM_SAMPLES && docs.ham < MIN_HAM_SAMPLES) return null;
-    const proved = provedDomain(message.authResults, message.from);
     const tokens = tokensOf({
       subject: message.subject,
       text: message.searchBody,
@@ -248,40 +290,73 @@ export class SpamStore {
     return lean === "spam" && known && proved !== null ? null : lean;
   }
 
-  // The order here is the promise made on the Senders page. An allowed sender skips
-  // everything, but only with proof, so a forged From never gets that. Then the block
-  // list, then the failed sender check: neither can be argued down by anything below.
+  // The order here is the promise made on the Senders page. A block entry that is the
+  // narrowest match for the From line wins over everything. Then a person's trust: the
+  // allow list and "Not spam" both keep a sender's mail out of Spam, and a From line
+  // anyone can type earns that unless the message looks forged (see forgeryEvidence).
+  // Only then the score.
   judge(message: NewMessage): SpamVerdict {
     const { from, authResults, spamFacts } = message;
-    const entries = from
-      ? this.#listEntriesFor(from.address.toLowerCase())
-      : [];
+    const address = from?.address.toLowerCase() ?? null;
+    const entries = address ? this.#listEntriesFor(address) : [];
     const narrowest = entries[0];
-    const allowed = narrowest?.list === "allow" ? narrowest : null;
-    if (allowed && provedDomain(authResults, from) !== null) return CLEAN;
+    const proved = spamFacts?.ambiguousFrom
+      ? null
+      : provedDomain(authResults, from);
+    const contact = address ? this.#contact(address) : null;
 
     const reasons: SpamReason[] = [];
-    // An allow entry without proof counts for nothing, so a blocked domain still holds.
+    let forged = false;
+    if (narrowest?.list !== "block") {
+      // A signature by an allowed domain is that domain's word, whatever From says,
+      // which is how a list that signs its posts can be allowed.
+      if (this.#allowedDomainAmong(authResults?.dkimPassDomains ?? [])) {
+        return CLEAN;
+      }
+      const allowed = narrowest ?? null;
+      const vouched = contact !== null && contact.vouched === 1;
+      if (proved !== null && (allowed || vouched)) return CLEAN;
+      const listEntry = spamFacts?.listDomain
+        ? this.#allowedDomainAmong([spamFacts.listDomain])
+        : null;
+      const trusted: SpamReason | null = allowed
+        ? { kind: "allowNotProved", entry: allowed.pattern }
+        : vouched
+          ? { kind: "markedRealNotProved", address: address! }
+          : listEntry
+            ? { kind: "allowNotProved", entry: listEntry.pattern }
+            : null;
+      if (trusted) {
+        const accepted = JSON.parse(
+          contact?.accepted_sites ?? "[]",
+        ) as string[];
+        const evidence = forgeryEvidence(message, accepted);
+        if (evidence === null) return CLEAN;
+        forged = evidence === "strong";
+        reasons.push(trusted);
+      }
+    }
+
+    // A wider block still holds for mail that looks forged, whatever narrower entry it
+    // claims.
     const blocked = entries.find((one) => one.list === "block");
     if (blocked) reasons.push({ kind: "blocked", entry: blocked.pattern });
-    if (authResults?.dmarc === "fail") {
-      reasons.push({ kind: "senderCheckFailed" });
-    }
-    const hard = reasons.length > 0;
-    if (allowed)
-      reasons.push({ kind: "allowNotProved", entry: allowed.pattern });
-    if (
-      authResults &&
-      authResults.dkim !== "pass" &&
-      authResults.dmarc !== "pass"
-    ) {
+    const enforced = dmarcEnforced(authResults);
+    if (enforced) reasons.push({ kind: "senderCheckFailed" });
+    const hard = forged || blocked !== undefined || enforced;
+    // Only a pass for the From line's own domain says these failures don't matter. Anyone
+    // can pass with a signature for their own domain.
+    if (authResults && proved === null) {
       if (authResults.spf === "fail")
         reasons.push({ kind: "serverNotAllowed" });
       if (authResults.spf === "softfail") {
         reasons.push({ kind: "serverNotListed" });
       }
-      if (authResults.dkim === "fail")
+      if (authResults.dmarc === "fail" && !enforced) {
+        reasons.push({ kind: "senderCheckUnproved" });
+      } else if (authResults.dkim === "fail") {
         reasons.push({ kind: "signatureBroken" });
+      }
     }
     if (from) {
       const shown = addressShownInName(from);
@@ -289,7 +364,7 @@ export class SpamStore {
       const domain = replyDomainElsewhere(from, message.replyTo);
       if (domain) reasons.push({ kind: "replyGoesElsewhere", domain });
     }
-    const known = from !== null && this.#isKnown(from.address.toLowerCase());
+    const known = contact !== null;
     if (from && !known) reasons.push({ kind: "firstContact" });
     const filename = runnableFilename(message.attachments);
     if (filename) reasons.push({ kind: "runnableAttachment", filename });
@@ -300,9 +375,12 @@ export class SpamStore {
     if (spamFacts?.opinion?.spam) {
       reasons.push({ kind: "opinion", why: spamFacts.opinion.why });
     }
-    const learned = this.#learned(message, known);
+    const learned = this.#learned(message, known, proved);
     if (learned === "spam") reasons.push({ kind: "learnedSpam" });
     if (learned === "real") reasons.push({ kind: "learnedReal" });
+    if (this.#repliesToSent(message.references)) {
+      reasons.push({ kind: "replyToSent" });
+    }
 
     const score = reasons.reduce(
       (total, reason) => total + REASON_POINTS[reason.kind],
@@ -345,9 +423,25 @@ export class SpamStore {
     if (row!.total <= MAX_CONTACTS) return;
     this.#db.exec(
       `DELETE FROM spam_contacts WHERE address IN (
-         SELECT address FROM spam_contacts ORDER BY last_at LIMIT ?
+         SELECT address FROM spam_contacts ORDER BY vouched, last_at LIMIT ?
        )`,
       row!.total - PRUNE_TO_CONTACTS,
+    );
+  }
+
+  // Someone took this sender's mail out of Spam. Whatever that message's link and name
+  // pointed at is then the sender's own habit, so the next copy doesn't count as forged
+  // for it, or every issue of that sender's newsletter would land back in Spam.
+  #vouchFor(address: string, verdict: string | null): void {
+    const lower = address.toLowerCase();
+    this.#rememberContact(lower, Date.now());
+    const reasons = parseStoredVerdict(verdict)?.reasons ?? [];
+    const before = JSON.parse(this.#contact(lower)!.accepted_sites) as string[];
+    const sites = [...new Set([...before, ...sitesIn(reasons)])];
+    this.#db.exec(
+      "UPDATE spam_contacts SET vouched = 1, accepted_sites = ? WHERE address = ?",
+      JSON.stringify(sites.slice(-MAX_ACCEPTED_SITES)),
+      lower,
     );
   }
 
@@ -450,7 +544,7 @@ export class SpamStore {
       this.#db
         .exec<TrainingRow>(
           `SELECT id, source, subject, snippet, from_name, from_address, auth_results,
-                  spam_training
+                  spam_verdict, spam_training
            FROM messages WHERE id IN (SELECT value FROM json_each(?))`,
           JSON.stringify(changed.map(({ id }) => id)),
         )
@@ -472,11 +566,13 @@ export class SpamStore {
         next,
         id as MessageId,
       );
+      // The latest thing a person did about a sender decides, so undoing a mark puts
+      // the trust back as well.
       if (row.from_address && to === "spam" && isLive(from)) {
         this.#forgetContact(row.from_address);
       }
       if (row.from_address && from === "spam" && isLive(to)) {
-        this.#rememberContact(row.from_address, Date.now());
+        this.#vouchFor(row.from_address, row.spam_verdict);
       }
       trained = true;
     }

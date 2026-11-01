@@ -17,6 +17,7 @@ import {
 } from "../queries";
 import { addSender, removeSender } from "../spam/functions";
 import {
+  BAD_SENDER_PATTERN,
   MAX_SENDER_ENTRIES,
   parseSenderPattern,
   type SenderEntry,
@@ -76,9 +77,7 @@ function AddSender({
   const submit = async (list: SenderList) => {
     const pattern = parseSenderPattern(value);
     if (pattern === null) {
-      setProblem(
-        "Enter one email address, like name@example.com, or one domain, like example.com.",
-      );
+      setProblem(BAD_SENDER_PATTERN);
       return;
     }
     const failure = await onAdd(pattern, list);
@@ -192,7 +191,7 @@ function Senders({ mailboxId }: { mailboxId: MailboxId }) {
         </Section>
         <Section
           title="Allowed"
-          description="New mail from these senders skips the spam filter, as long as the message proves it really came from them. Anyone can fake a sender's name and address, so mail without that proof is checked like any other."
+          description="New mail from these senders stays out of Spam, unless a message shows clear signs of being faked. An allowed domain also covers the mailing lists it runs, so you can allow a list by its domain."
         >
           <SenderRows
             entries={entries.filter((entry) => entry.list === "allow")}

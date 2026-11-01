@@ -43,6 +43,10 @@ export const AUTH_VERDICTS = [
 ] as const;
 export type AuthVerdict = (typeof AUTH_VERDICTS)[number];
 
+// Weakest first.
+export const DMARC_POLICIES = ["none", "quarantine", "reject"] as const;
+export type DmarcPolicy = (typeof DMARC_POLICIES)[number];
+
 export type AuthResults = {
   spf: AuthVerdict | null;
   dkim: AuthVerdict | null;
@@ -51,6 +55,8 @@ export type AuthResults = {
   // line. These are absent when the header doesn't name them, and on older mail.
   dkimPassDomains?: string[];
   dmarcDomain?: string;
+  // What the domain asks receivers to do with mail that fails, when the header says.
+  dmarcPolicy?: DmarcPolicy;
 };
 
 export type Address = { name: string; address: string };

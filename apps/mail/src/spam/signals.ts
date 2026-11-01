@@ -1,6 +1,6 @@
 import { htmlToSearchText } from "../parse";
-import type { Address, AuthResults } from "../types";
-import type { MisleadingLink } from "./types";
+import type { Address, AuthResults, NewMessage } from "../types";
+import { isSharedEnding, type MisleadingLink, type SpamReason } from "./types";
 
 const MAX_HTML_SCANNED = 256 * 1024;
 const MAX_TAG_LENGTH = 4096;
@@ -10,39 +10,94 @@ const MAX_SHOWN_IN_REASON = 80;
 export const domainOf = (address: string): string =>
   address.slice(address.lastIndexOf("@") + 1).toLowerCase();
 
-const SECOND_LEVEL = /^(?:ac|co|com|edu|gov|net|org)$/;
-
 // The part of a domain one organisation owns, close enough to tell mail.example.com
 // from example.org without shipping a public suffix list. It treats two sites on one
 // shared host as the same site, which only ever misses a signal.
 export function siteOf(domain: string): string {
   const labels = domain.toLowerCase().split(".");
-  const keep =
-    labels.length > 2 &&
-    labels.at(-1)!.length === 2 &&
-    SECOND_LEVEL.test(labels.at(-2)!)
-      ? 3
-      : 2;
-  return labels.slice(-keep).join(".");
+  return labels
+    .slice(labels.length > 2 && isSharedEnding(labels) ? -3 : -2)
+    .join(".");
 }
 
-// The domain this message proves it came from, or null. A pass only counts for the
-// From line's own domain: `dkim=pass` for a domain the sender owns says nothing about
-// the domain they typed into From. A signature by a parent domain covers its
-// subdomains, and DMARC already allows for a signature by a child. DMARC failing beats
-// a passing signature, because then the two disagree. Mail stored before the domains
-// were kept proves nothing.
+// The domain this message proves it came from, or null. A DMARC pass means aligned with
+// the From line by definition, so it counts when the header doesn't name the domain,
+// and not when it names another. A DKIM pass counts only for a named domain that is
+// the From line's or a parent of it: `dkim=pass` for a domain the sender owns says
+// nothing about the domain they typed into From. DMARC failing beats a passing
+// signature, because then the two disagree.
 export function provedDomain(
   auth: AuthResults | null,
   from: Address | null,
 ): string | null {
   if (!auth || !from || auth.dmarc === "fail") return null;
   const domain = domainOf(from.address);
-  if (auth.dmarc === "pass" && auth.dmarcDomain === domain) return domain;
+  if (auth.dmarc === "pass" && (auth.dmarcDomain ?? domain) === domain) {
+    return domain;
+  }
   const signed = auth.dkimPassDomains?.some(
     (signer) => domain === signer || domain.endsWith(`.${signer}`),
   );
   return signed ? domain : null;
+}
+
+export const dmarcEnforced = (auth: AuthResults | null): boolean =>
+  auth?.dmarc === "fail" &&
+  (auth.dmarcPolicy === "quarantine" || auth.dmarcPolicy === "reject");
+
+const failedACheck = (auth: AuthResults | null): boolean =>
+  auth !== null &&
+  (auth.spf === "fail" ||
+    auth.spf === "softfail" ||
+    auth.dkim === "fail" ||
+    auth.dmarc === "fail");
+
+// How much a message that can't prove its sender looks forged, once a person has said
+// they trust that sender. "strong" sends it to Spam. "weak" means a link alone with no
+// failed check: click tracking does that too, so the message is scored instead of
+// skipping the filter. Anything else can't be told apart from real mail that has lost
+// its signature on the way, and real mail in Spam is the worse mistake. A site in
+// `acceptedSites` was on mail a person already took out of Spam, so it is no evidence.
+export function forgeryEvidence(
+  message: Pick<
+    NewMessage,
+    "authResults" | "from" | "attachments" | "spamFacts"
+  >,
+  acceptedSites: readonly string[],
+): "strong" | "weak" | null {
+  const { authResults: auth, from, attachments, spamFacts } = message;
+  if (dmarcEnforced(auth) || spamFacts?.ambiguousFrom) return "strong";
+  const isNew = (domain: string) => !acceptedSites.includes(siteOf(domain));
+  const actual = spamFacts?.misleadingLink?.actual;
+  const link = actual !== undefined && isNew(actual);
+  if (failedACheck(auth)) {
+    const shown = from && addressShownInName(from);
+    const lookalike = shown ? isNew(domainOf(shown)) : false;
+    if (link || lookalike || runnableFilename(attachments)) return "strong";
+  }
+  return link ? "weak" : null;
+}
+
+// The sites a message's link and name pointed at, from why it was filed.
+export function sitesIn(reasons: readonly SpamReason[]): string[] {
+  return reasons.flatMap((reason) => {
+    if (reason.kind === "linkShowsOtherSite") return [siteOf(reason.actual)];
+    if (reason.kind === "nameShowsOtherAddress") {
+      return [siteOf(domainOf(reason.shown))];
+    }
+    return [];
+  });
+}
+
+const LIST_ID = /(?:^|<)([a-z0-9][a-z0-9._-]*\.[a-z0-9-]{2,})>?\s*$/i;
+const MAX_LIST_ID_READ = 512;
+
+// List-Id is `Name <label.lists.example>`, and a sender can write anything in it.
+export function listDomainOf(listId: string | null): string | null {
+  if (!listId) return null;
+  return (
+    LIST_ID.exec(listId.slice(-MAX_LIST_ID_READ))?.[1]?.toLowerCase() ?? null
+  );
 }
 
 const ADDRESS_IN_NAME = /[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/i;
@@ -112,38 +167,47 @@ function hostOf(href: string): string | null {
   }
 }
 
-const HREF = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const HREF = /[\s/]href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/;
+const NEXT_ANCHOR = /<a[\s/]/g;
+const LINK_TEXT_END = /<\/a|<a[\s/]/;
+
+// Where the start tag at `open` ends, minding quotes as a browser does. Null if it
+// never does, or runs into the next anchor first, which also keeps the total work to
+// about one pass: only a quote can carry this past that next anchor.
+function tagEnd(html: string, open: number): number | null {
+  const stop = Math.min(html.length, open + MAX_TAG_LENGTH);
+  let quote = "";
+  for (let index = open + 2; index < stop; index += 1) {
+    const char = html[index]!;
+    if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === ">") return index;
+    else if (char === "<" && /^<a[\s/]/.test(html.slice(index, index + 3))) {
+      return null;
+    }
+  }
+  return null;
+}
 
 // A link whose text is itself a web address, going somewhere else. "Click here" says
-// nothing about where it goes, so it can't mislead this way. One forward pass over a
-// bounded prefix, so hostile markup can't make this slow. A link past the prefix goes
-// unseen.
+// nothing about where it goes, so it can't mislead this way. A malformed tag is skipped,
+// never the end of the search, because a sender could otherwise hide every later link
+// behind one. A bounded prefix keeps hostile markup from making this slow, and a link
+// past the prefix goes unseen. Everything here reads the lowercased text, because
+// hostnames don't care and lowercasing can change where an offset falls.
 export function findMisleadingLink(html: string | null): MisleadingLink | null {
   if (!html) return null;
-  const source = html.slice(0, MAX_HTML_SCANNED);
-  const lower = source.toLowerCase();
-  let position = 0;
-  while (position < source.length) {
-    const open = lower.indexOf("<a", position);
-    if (open === -1) return null;
-    if (!/\s/.test(source[open + 2] ?? "")) {
-      position = open + 2;
-      continue;
-    }
-    const close = lower.indexOf(">", open);
-    if (close === -1) return null;
-    const end = lower.indexOf("</a", close);
-    if (end === -1) return null;
-    position = end + 3;
-
-    const tag = HREF.exec(source.slice(open, open + MAX_TAG_LENGTH));
+  const source = html.slice(0, MAX_HTML_SCANNED).toLowerCase();
+  for (const { index: open } of source.matchAll(NEXT_ANCHOR)) {
+    const close = tagEnd(source, open);
+    if (close === null) continue;
+    const tag = HREF.exec(source.slice(open, close + 1));
     const actual = hostOf(tag?.[1] ?? tag?.[2] ?? tag?.[3] ?? "");
     if (!actual) continue;
-    const text = source.slice(
-      close + 1,
-      Math.min(end, close + 1 + MAX_LINK_TEXT_LENGTH),
-    );
-    const shown = siteShownBy(htmlToSearchText(text));
+    const after = source.slice(close + 1, close + 1 + MAX_LINK_TEXT_LENGTH);
+    const length = LINK_TEXT_END.exec(after)?.index ?? after.length;
+    const shown = siteShownBy(htmlToSearchText(after.slice(0, length)));
     if (shown && siteOf(shown) !== siteOf(actual)) {
       return {
         shown: shown.slice(0, MAX_SHOWN_IN_REASON),

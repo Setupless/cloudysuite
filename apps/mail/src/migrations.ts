@@ -263,10 +263,14 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
       list TEXT NOT NULL CHECK (list IN ('allow', 'block')),
       created_at INTEGER NOT NULL
     ) WITHOUT ROWID`,
-    // Scoring runs on every delivery, and messages has no index by sender.
+    // Scoring runs on every delivery, and messages has no index by sender. vouched
+    // means a person took this sender's mail out of Spam, and accepted_sites lists the
+    // sites that mail's links and name pointed at, as JSON.
     `CREATE TABLE spam_contacts (
       address TEXT PRIMARY KEY,
-      last_at INTEGER NOT NULL
+      last_at INTEGER NOT NULL,
+      vouched INTEGER NOT NULL DEFAULT 0,
+      accepted_sites TEXT NOT NULL DEFAULT '[]'
     ) WITHOUT ROWID`,
   ],
 ];

@@ -21,7 +21,12 @@ import {
 } from "../test-support";
 import type { Folder, MessageDetail, MessageId, ThreadId } from "../types";
 import { whyInSpam } from "./explain";
-import { findMisleadingLink, provedDomain, runnableFilename } from "./signals";
+import {
+  findMisleadingLink,
+  listDomainOf,
+  provedDomain,
+  runnableFilename,
+} from "./signals";
 import {
   MAX_CONTACTS,
   MAX_MODEL_TOKENS,
@@ -55,7 +60,10 @@ const DMARC_PASS = cloudflare(
   "dkim=pass header.d=example.org; dmarc=pass header.from=example.org; spf=pass",
 );
 const DMARC_FAIL = cloudflare(
-  "dkim=none; dmarc=fail header.from=example.org; spf=fail",
+  "dkim=none; dmarc=fail (p=reject dis=none) header.from=example.org; spf=fail",
+);
+const NO_POLICY_FAIL = cloudflare(
+  "spf=softfail smtp.mailfrom=example.org; dkim=fail header.d=example.org; dmarc=fail (p=NONE dis=none) header.from=example.org",
 );
 
 async function deliver(options: EmlOptions = {}) {
@@ -129,12 +137,141 @@ test("a first header from any other server is not read, whatever it says", async
   expect(detail(message.threadId, message.messageId).authResults).toBeNull();
 });
 
-test("mail that fails DMARC lands in Spam and says so in plain words", async () => {
-  const message = await deliver({ headers: [DMARC_FAIL] });
+test("mail that fails DMARC under a domain's enforcing policy lands in Spam and says so", async () => {
+  for (const policy of ["quarantine", "reject"]) {
+    const message = await deliver({
+      headers: [
+        cloudflare(
+          `dmarc=fail (p=${policy}) header.from=example.org; spf=pass`,
+        ),
+      ],
+    });
+    expect(message.folder).toBe("spam");
+    expect(whyInSpam(detail(message.threadId, message.messageId))).toContain(
+      "failed the sender checks",
+    );
+  }
+});
+
+test("a DMARC failure with p=none or no stated policy is one soft sign", async () => {
+  for (const dmarc of [
+    "dmarc=fail (p=NONE dis=none) header.from=example.org",
+    "dmarc=fail header.from=example.org",
+    "dmarc=fail",
+  ]) {
+    const message = await deliver({
+      headers: [cloudflare(`spf=pass; ${dmarc}`)],
+    });
+    expect(message.folder).toBe("inbox");
+  }
+  const withOtherSigns = await deliver({
+    from: "Bank <alerts@example.org>",
+    subject: "Please look",
+    headers: [
+      "Reply-To: Other <o@other.example>",
+      cloudflare(
+        "spf=fail; dkim=none; dmarc=fail (p=none) header.from=example.org",
+      ),
+      "Content-Type: text/html",
+    ],
+    body: '<a href="http://evil.example/x">www.bank.com</a>',
+  });
+  expect(withOtherSigns.folder).toBe("spam");
+  expect(
+    whyInSpam(detail(withOtherSigns.threadId, withOtherSigns.messageId)),
+  ).toContain("doesn't allow");
+});
+
+test("a DMARC failure counts once, not again as a broken signature", async () => {
+  const message = await deliver({
+    from: '"desk@elsewhere.example" <n@example.org>',
+    headers: ["Reply-To: Other <o@other.example>", NO_POLICY_FAIL],
+  });
   expect(message.folder).toBe("spam");
-  expect(whyInSpam(detail(message.threadId, message.messageId))).toContain(
-    "failed the sender checks",
+  const kinds = detail(message.threadId, message.messageId).spam?.reasons.map(
+    (reason) => reason.kind,
   );
+  expect(kinds).toContain("senderCheckUnproved");
+  expect(kinds).not.toContain("signatureBroken");
+});
+
+test("only a signature for the From line's domain cancels an SPF failure", async () => {
+  const shaped = (dkim: string) =>
+    deliver({
+      from: '"support@paypal.com" <ceo@nodmarc.example>',
+      headers: [
+        "Reply-To: Help <help@gmail.example>",
+        cloudflare(`spf=fail; ${dkim}; dmarc=none`),
+      ],
+    });
+  expect((await shaped("dkim=none")).folder).toBe("spam");
+  expect((await shaped("dkim=pass header.d=evil.example")).folder).toBe("spam");
+  expect((await shaped("dkim=pass")).folder).toBe("spam");
+  expect((await shaped("dkim=pass header.d=nodmarc.example")).folder).toBe(
+    "inbox",
+  );
+});
+
+test("a reply to mail this mailbox sent is strong evidence of real mail", async () => {
+  await ingest(env, {
+    source: "sent",
+    mailboxId: MAILBOX_A,
+    raw: eml({ to: "Pal <pal@example.org>", messageId: "ours@cloudysuite" }),
+  });
+  const reply = await deliver({
+    from: '"sales@big.example" <new.person@example.org>',
+    subject: "Re: Hello",
+    inReplyTo: "ours@cloudysuite",
+    headers: [
+      "Reply-To: Desk <desk@other.example>",
+      cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+    ],
+  });
+  expect(reply.folder).toBe("inbox");
+  const twin = await deliver({
+    from: '"sales@big.example" <new.person@example.org>',
+    subject: "Re: Hello",
+    inReplyTo: "not-ours@cloudysuite",
+    headers: [
+      "Reply-To: Desk <desk@other.example>",
+      cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+    ],
+  });
+  expect(twin.folder).toBe("spam");
+});
+
+test("a reference to mail this mailbox only received counts for nothing", async () => {
+  await deliver({ messageId: "theirs@x", from: "Them <them@example.org>" });
+  const message = await deliver({
+    from: '"sales@big.example" <new.person@example.org>',
+    subject: "Re: Hello",
+    inReplyTo: "theirs@x",
+    headers: [
+      "Reply-To: Desk <desk@other.example>",
+      cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+    ],
+  });
+  expect(message.folder).toBe("spam");
+});
+
+test("a reply can't argue with the block list or an enforcing policy", async () => {
+  await ingest(env, {
+    source: "sent",
+    mailboxId: MAILBOX_A,
+    raw: eml({ to: "Pal <pal@example.org>", messageId: "ours@cloudysuite" }),
+  });
+  const forged = await deliver({
+    inReplyTo: "ours@cloudysuite",
+    headers: [DMARC_FAIL],
+  });
+  expect(forged.folder).toBe("spam");
+  spam.addSender("pest@example.org", "block");
+  const blocked = await deliver({
+    from: "Pest <pest@example.org>",
+    inReplyTo: "ours@cloudysuite",
+    headers: [DMARC_PASS],
+  });
+  expect(blocked.folder).toBe("spam");
 });
 
 test("nothing is ever refused: every message is stored and can be read", async () => {
@@ -306,25 +443,28 @@ test("the same allowed From with failing proof gets no special treatment", async
   );
 });
 
-test("a passing signature for some other domain proves nothing about the From line", async () => {
-  spam.addSender("example.org", "block");
+test("a passing signature for some other domain doesn't count as proof", async () => {
   spam.addSender("friend@example.org", "allow");
   const forged = await deliver({
     from: "Friend <friend@example.org>",
     headers: [
+      "Content-Type: text/html",
       cloudflare(
-        "dkim=pass header.d=attacker.example; dmarc=none header.from=example.org; spf=pass",
+        "dkim=pass header.d=attacker.example; dmarc=none header.from=example.org; spf=fail",
       ),
     ],
+    body: '<a href="http://evil.example/x">www.bank.com</a>',
   });
   expect(forged.folder).toBe("spam");
   const domainClaim = await deliver({
     from: "Friend <friend@example.org>",
     headers: [
+      "Content-Type: text/html",
       cloudflare(
-        "dkim=none; dmarc=pass header.from=attacker.example; spf=pass",
+        "dkim=none; dmarc=pass header.from=attacker.example; spf=fail",
       ),
     ],
+    body: '<a href="http://evil.example/x">www.bank.com</a>',
   });
   expect(domainClaim.folder).toBe("spam");
 });
@@ -335,8 +475,9 @@ test("proof means a pass for the From line's own domain", () => {
   const proved = (auth: object) =>
     provedDomain({ ...base, ...auth }, from) !== null;
   expect(proved({ dmarc: "pass", dmarcDomain: "mail.example.org" })).toBe(true);
-  expect(proved({ dmarc: "pass" })).toBe(false);
+  expect(proved({ dmarc: "pass" })).toBe(true);
   expect(proved({ dmarc: "pass", dmarcDomain: "evil.example" })).toBe(false);
+  expect(proved({ dkim: "pass" })).toBe(false);
   expect(proved({ dkim: "pass", dkimPassDomains: ["example.org"] })).toBe(true);
   expect(proved({ dkim: "pass", dkimPassDomains: ["org.example"] })).toBe(
     false,
@@ -350,6 +491,268 @@ test("proof means a pass for the From line's own domain", () => {
     }),
   ).toBe(false);
   expect(provedDomain(null, from)).toBeNull();
+});
+
+const LOUD = {
+  from: '"sales@big.example" <friend@example.org>',
+  subject: "VERY LOUD SUBJECT LINE HERE",
+};
+
+test("an allowed sender with Cloudflare's shortest header is proved", async () => {
+  spam.addSender("friend@example.org", "allow");
+  const message = await deliver({
+    ...LOUD,
+    headers: [
+      "Reply-To: Other <o@other.example>",
+      "Content-Type: text/html",
+      cloudflare("spf=pass; dkim=pass; dmarc=pass"),
+    ],
+    body: '<a href="http://evil.example/x">www.bank.com</a>',
+  });
+  expect(message.folder).toBe("inbox");
+});
+
+test("a dmarc=pass can't prove a From line with two addresses", async () => {
+  spam.addSender("friend@example.org", "allow");
+  const message = await deliver({
+    from: "Friend <friend@example.org>, Me <me@attacker.example>",
+    headers: [cloudflare("spf=pass; dkim=pass; dmarc=pass")],
+  });
+  expect(message.folder).toBe("spam");
+  expect(whyInSpam(detail(message.threadId, message.messageId))).toContain(
+    "couldn't prove",
+  );
+});
+
+test("a name with a comma in it isn't a second address", async () => {
+  spam.addSender("friend@example.org", "allow");
+  for (const from of [
+    '"Smith, Jo" <friend@example.org>',
+    "Smith, Jo <friend@example.org>",
+  ]) {
+    const message = await deliver({
+      from,
+      headers: [cloudflare("spf=pass; dkim=pass; dmarc=pass")],
+    });
+    expect(message.folder).toBe("inbox");
+  }
+});
+
+const UNPROVABLE_SHAPES = [
+  cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+  cloudflare("spf=fail; dkim=fail; dmarc=fail"),
+  cloudflare("spf=pass; dkim=none; dmarc=none"),
+  cloudflare("spf=fail; dkim=pass header.d=forwarder.example; dmarc=none"),
+];
+
+for (const [list, entry] of [
+  ["an address", "mina@corner-cafe.example"],
+  ["a domain", "corner-cafe.example"],
+] as const) {
+  test(`allowing ${list} keeps every later message with no sign of forgery in the Inbox`, async () => {
+    spam.addSender(entry, "allow");
+    for (const auth of UNPROVABLE_SHAPES) {
+      const message = await deliver({
+        from: "Mina <mina@corner-cafe.example>",
+        subject: "SPECIALS THIS WEEK AT THE CAFE",
+        headers: ["Reply-To: Other <o@other.example>", auth],
+      });
+      expect(message.folder).toBe("inbox");
+    }
+  });
+}
+
+test("marking a sender not spam keeps every later message with no sign of forgery in the Inbox", async () => {
+  const filed = await deliver({
+    from: '"bookings@elsewhere.example" <mina@corner-cafe.example>',
+    subject: "SPECIALS THIS WEEK AT THE CAFE",
+    headers: [
+      "Reply-To: Other <o@other.example>",
+      cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+    ],
+  });
+  expect(filed.folder).toBe("spam");
+  store.restore({ messageIds: [filed.messageId] });
+  for (const auth of UNPROVABLE_SHAPES) {
+    const next = await deliver({
+      from: "Mina <mina@corner-cafe.example>",
+      subject: "SPECIALS THIS WEEK AT THE CAFE",
+      headers: ["Reply-To: Other <o@other.example>", auth],
+    });
+    expect(next.folder).toBe("inbox");
+  }
+});
+
+test("mark as spam takes back a not spam, and undoing the mark puts it back", async () => {
+  const send = () =>
+    deliver({
+      from: '"desk@elsewhere.example" <mina@corner-cafe.example>',
+      headers: [
+        "Reply-To: Other <o@other.example>",
+        cloudflare("spf=softfail; dkim=none; dmarc=none"),
+      ],
+    });
+  const filed = await send();
+  expect(filed.folder).toBe("spam");
+  store.restore({ messageIds: [filed.messageId] });
+  const forged = {
+    from: "Mina <mina@corner-cafe.example>",
+    headers: [
+      "Reply-To: Other <o@other.example>",
+      cloudflare("spf=fail; dkim=fail; dmarc=fail"),
+    ],
+    subject: "SPECIALS THIS WEEK AT THE CAFE",
+  };
+  const clean = await deliver({ ...forged, body: "One." });
+  expect(detail(clean.threadId, clean.messageId).spam).toBeNull();
+  store.moveToFolder({ messageIds: [clean.messageId] }, "spam");
+  const mark = () =>
+    db
+      .exec<{ vouched: number }>(
+        "SELECT vouched FROM spam_contacts WHERE address = 'mina@corner-cafe.example'",
+      )
+      .toArray()[0]?.vouched ?? 0;
+  expect(mark()).toBe(0);
+  store.moveToFolder({ messageIds: [clean.messageId] }, "inbox");
+  expect(mark()).toBe(1);
+});
+
+test("not spam on a newsletter with broken checks keeps its next issue out of Spam", async () => {
+  const issue = (href: string) =>
+    deliver({
+      from: "Books <news@velvet-books.example>",
+      headers: [
+        "Content-Type: text/html",
+        cloudflare("spf=softfail; dkim=fail; dmarc=fail (p=none)"),
+        "Reply-To: Help <help@helpdesk.example>",
+      ],
+      body: `<a href="${href}">www.velvet-books.example</a>`,
+    });
+  const filed = await issue("https://click.mailservice.example/t/1");
+  expect(filed.folder).toBe("spam");
+  store.restore({ messageIds: [filed.messageId] });
+  const next = await issue("https://track.mailservice.example/t/2");
+  expect(next.folder).toBe("inbox");
+  const forged = await issue("http://steal.example/x");
+  expect(forged.folder).toBe("spam");
+  expect(whyInSpam(detail(forged.threadId, forged.messageId))).toContain(
+    "was marked as not spam",
+  );
+});
+
+const PHISH_LINK = '<a href="http://evil.example/x">www.bank.com</a>';
+const forgedFromTrusted = (body: string, auth: string, from?: string) =>
+  deliver({
+    from: from ?? "Friend <friend@example.org>",
+    headers: ["Content-Type: text/html", auth],
+    body,
+  });
+
+for (const trust of ["allow list", "not spam"] as const) {
+  const trustSender = async () => {
+    if (trust === "allow list") {
+      spam.addSender("friend@example.org", "allow");
+      return;
+    }
+    const filed = await deliver({
+      from: "Friend <friend@example.org>",
+      headers: [DMARC_FAIL],
+    });
+    store.restore({ messageIds: [filed.messageId] });
+  };
+
+  test(`${trust}: a forgery with clear evidence still goes to Spam, and says why`, async () => {
+    await trustSender();
+    const enforced = await forgedFromTrusted(
+      "Plain words.",
+      cloudflare("spf=pass; dmarc=fail (p=quarantine) header.from=example.org"),
+    );
+    expect(enforced.folder).toBe("spam");
+    expect(whyInSpam(detail(enforced.threadId, enforced.messageId))).toContain(
+      "couldn't prove it came from them",
+    );
+    const link = await forgedFromTrusted(
+      PHISH_LINK,
+      cloudflare("spf=softfail; dkim=none; dmarc=none"),
+    );
+    expect(link.folder).toBe("spam");
+    expect(whyInSpam(detail(link.threadId, link.messageId))).toContain(
+      "bank.com",
+    );
+    const lookalike = await forgedFromTrusted(
+      "Plain words.",
+      cloudflare("spf=fail; dkim=none; dmarc=fail (p=none)"),
+      '"support@paypal.com" <friend@example.org>',
+    );
+    expect(lookalike.folder).toBe("spam");
+  });
+
+  test(`${trust}: a misleading link with no failed check is scored, not skipped`, async () => {
+    await trustSender();
+    const newsletter = await forgedFromTrusted(
+      PHISH_LINK,
+      cloudflare("spf=pass; dkim=pass header.d=mailer.example; dmarc=none"),
+    );
+    expect(newsletter.folder).toBe("inbox");
+    const oddly = await forgedFromTrusted(
+      PHISH_LINK,
+      cloudflare("spf=pass; dkim=pass header.d=mailer.example; dmarc=none"),
+      '"support@paypal.com" <friend@example.org>',
+    );
+    expect(oddly.folder).toBe("inbox");
+  });
+}
+
+test("a list can be allowed by the domain that signs it or by its List-Id", async () => {
+  spam.addSender("lists.example", "allow");
+  const signed = await deliver({
+    from: "Bob <bob@strict.example>",
+    headers: [
+      cloudflare(
+        "spf=pass; dkim=pass header.d=lists.example; dmarc=fail (p=reject) header.from=strict.example",
+      ),
+    ],
+  });
+  expect(signed.folder).toBe("inbox");
+  const byListId = await deliver({
+    from: '"desk@elsewhere.example" <carol@other.example>',
+    headers: [
+      "List-Id: Devs <devs.lists.example>",
+      "Reply-To: Devs <devs@lists.example>",
+      cloudflare("spf=pass; dkim=none; dmarc=none"),
+    ],
+  });
+  expect(byListId.folder).toBe("inbox");
+  const claimOnly = await deliver({
+    from: "Bank <alerts@strict.example>",
+    headers: [
+      "List-Id: Devs <devs.lists.example>",
+      cloudflare("spf=fail; dkim=none; dmarc=fail (p=reject)"),
+    ],
+  });
+  expect(claimOnly.folder).toBe("spam");
+});
+
+test("the block list still beats a signature by an allowed domain", async () => {
+  spam.addSender("lists.example", "allow");
+  spam.addSender("pest@example.org", "block");
+  const message = await deliver({
+    from: "Pest <pest@example.org>",
+    headers: [
+      "List-Id: Devs <devs.lists.example>",
+      cloudflare("spf=pass; dkim=pass header.d=lists.example; dmarc=none"),
+    ],
+  });
+  expect(message.folder).toBe("spam");
+});
+
+test("a list's id is read from its header, with or without brackets", () => {
+  expect(listDomainOf("Devs list <devs.Lists.Example>")).toBe(
+    "devs.lists.example",
+  );
+  expect(listDomainOf("devs.lists.example")).toBe("devs.lists.example");
+  expect(listDomainOf("no brackets here")).toBeNull();
+  expect(listDomainOf(null)).toBeNull();
 });
 
 test("a long run of subdomains doesn't escape a blocked domain", async () => {
@@ -392,6 +795,18 @@ test("the lists have a limit, and it says what to do", () => {
   const full = spam.addSender("one-more@example.org", "block");
   expect(full).toMatchObject({ ok: false, status: 409 });
   expect(spam.addSender("a1@example.org", "allow").ok).toBe(true);
+});
+
+test("a shared ending can't be listed, because it covers unrelated companies", () => {
+  for (const ending of ["co.uk", "COM.AU", "@org.nz", "gov.uk", "or.jp"]) {
+    expect(parseSenderPattern(ending)).toBeNull();
+  }
+  expect(parseSenderPattern("victim.co.uk")).toBe("victim.co.uk");
+  expect(parseSenderPattern("accounts@victim.co.uk")).toBe(
+    "accounts@victim.co.uk",
+  );
+  expect(parseSenderPattern("id.me")).toBe("id.me");
+  expect(parseSenderPattern("example.com")).toBe("example.com");
 });
 
 test("a list entry is one address or one domain", () => {
@@ -556,15 +971,16 @@ test("marking a known sender teaches the filter about them", async () => {
 test("an allowed sender stays allowed however much like spam it reads", async () => {
   await mark(MIN_SPAM_SAMPLES + 1);
   spam.addSender("bulk-pharmacy.example", "allow");
-  const message = await deliver({
-    ...campaign(9),
-    headers: [
-      cloudflare(
-        "dkim=pass header.d=bulk-pharmacy.example; dmarc=none; spf=pass",
-      ),
-    ],
-  });
-  expect(message.folder).toBe("inbox");
+  for (const results of [
+    "dkim=pass header.d=bulk-pharmacy.example; dmarc=none; spf=pass",
+    "dkim=none; dmarc=none; spf=pass",
+  ]) {
+    const message = await deliver({
+      ...campaign(9),
+      headers: [cloudflare(results)],
+    });
+    expect(message.folder).toBe("inbox");
+  }
 });
 
 test("what was learned can't argue down a failed sender check", async () => {
@@ -814,11 +1230,60 @@ test("a link is misleading only when its text names another site", () => {
   expect(findMisleadingLink(null)).toBeNull();
 });
 
+test("a malformed tag doesn't hide the links after it", () => {
+  const phish = '<a href="http://evil.example/x">https://www.bank.com</a>';
+  const found = { shown: "bank.com", actual: "evil.example" };
+  for (const before of [
+    '<a href="http://preload.example"\n<p>Hello</p>\n',
+    '<a href="http://preload.example"',
+    '<a href="http://preload.example',
+    "<a href=",
+    "<a ",
+    '<a href="http://preload.example">no closing tag ',
+    "<a title='>' ",
+    `<a ${"x".repeat(10_000)}\n`,
+    `<a "${"x".repeat(10_000)}\n`,
+    "<a>",
+    "<abbr>",
+  ]) {
+    expect(findMisleadingLink(`${before}${phish}`)).toMatchObject({
+      shown: "bank.com",
+    });
+  }
+  expect(findMisleadingLink(`<p>${phish}`)).toEqual(found);
+  expect(
+    findMisleadingLink(
+      '<a title=">" href="http://evil.example">www.bank.com</a>',
+    ),
+  ).toEqual(found);
+  expect(
+    findMisleadingLink('<a/href="http://evil.example">www.bank.com</a>'),
+  ).toEqual(found);
+  expect(
+    findMisleadingLink('<a href="http://evil.example">www.bank.com'),
+  ).toEqual(found);
+  expect(
+    findMisleadingLink(
+      '<a href="http://evil.example">www.bank.com<a href=x>y</a>',
+    ),
+  ).toEqual(found);
+  expect(
+    findMisleadingLink('<a href="https://bank.com"\n<p>www.bank.com</p></a>'),
+  ).toBeNull();
+});
+
 test("hostile markup can't slow the link check down", () => {
   const started = performance.now();
   findMisleadingLink("<a ".repeat(5_000_000));
   findMisleadingLink("<a href=x>".repeat(2_000_000));
   findMisleadingLink(`${"<a href=x>y</a>".repeat(1_000_000)}`);
+  findMisleadingLink('<a ">"'.repeat(1_000_000));
+  findMisleadingLink("<a '".repeat(1_000_000));
+  findMisleadingLink(`<a "${"<a '>".repeat(1_000_000)}`);
+  findMisleadingLink(`${"<a href=http://a.example>".repeat(1_000_000)}`);
+  findMisleadingLink(
+    `${`<a href=http://a.example>${"x".repeat(1000)}`.repeat(1_000)}`,
+  );
   expect(performance.now() - started).toBeLessThan(1000);
 });
 

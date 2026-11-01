@@ -48,6 +48,10 @@ export type ParsedMessage = {
   bcc: Address[];
   sentAt: number | null;
   firstAuthenticationResults: string | null;
+  listId: string | null;
+  // More than one From header or address. A DMARC result might be about another one
+  // than the address shown, so such a message can't prove who sent it.
+  ambiguousFrom: boolean;
   text: string | null;
   html: string | null;
   attachments: ParsedAttachment[];
@@ -122,6 +126,7 @@ async function parseWithPostalMime(raw: ArrayBuffer): Promise<ParsedMessage> {
     ...PARSE_LIMITS,
     attachmentEncoding: "arraybuffer",
   });
+  const fromHeaders = email.headers.filter((header) => header.key === "from");
   return {
     status: "parsed",
     rfcMessageId: parseMessageIds(email.messageId)[0] ?? null,
@@ -136,6 +141,10 @@ async function parseWithPostalMime(raw: ArrayBuffer): Promise<ParsedMessage> {
     firstAuthenticationResults:
       email.headers.find((header) => header.key === "authentication-results")
         ?.value ?? null,
+    listId:
+      email.headers.find((header) => header.key === "list-id")?.value ?? null,
+    ambiguousFrom:
+      fromHeaders.length > 1 || safeAddresses(fromHeaders[0]?.value).length > 1,
     text: email.text ?? null,
     html: email.html ?? null,
     attachments: email.attachments.map(toParsedAttachment),
@@ -183,12 +192,15 @@ function safeDecodeWords(value: string | undefined): string | null {
   }
 }
 
+const FROM_LINE = /^from[ \t]*:/gim;
+
 // Reads what it can from the raw bytes when the parser gives up, so that a
 // hostile message still appears, with its sender, subject, and readable text.
 function parseFallback(raw: ArrayBuffer): ParsedMessage {
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const headBytes = raw.slice(0, FALLBACK_HEADER_BYTES);
-  const headers = readHeaders(decoder.decode(headBytes));
+  const head = decoder.decode(headBytes);
+  const headers = readHeaders(head);
   // A single-byte decoding, so that a character offset is also a byte offset.
   const start = bodyStart(new TextDecoder("latin1").decode(headBytes));
   const text = decoder.decode(
@@ -209,6 +221,11 @@ function parseFallback(raw: ArrayBuffer): ParsedMessage {
     bcc: safeAddresses(headers.get("bcc")),
     sentAt: parseDate(headers.get("date")),
     firstAuthenticationResults: headers.get("authentication-results") ?? null,
+    listId: headers.get("list-id") ?? null,
+    // readHeaders keeps only the first of a repeated header, so this counts them itself.
+    ambiguousFrom:
+      (head.slice(0, bodyStart(head)).match(FROM_LINE)?.length ?? 0) > 1 ||
+      safeAddresses(headers.get("from")).length > 1,
     text: text || null,
     html: null,
     attachments: [],

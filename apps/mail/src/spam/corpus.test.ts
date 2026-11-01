@@ -71,11 +71,12 @@ async function run(
   return { tallies, counts };
 }
 
-// Real mail the filter was told to file, by the decisions that every DMARC failure and
-// every program from a stranger go to Spam. Anything else landing in Spam is a false
-// positive this tuning must not make.
+// Real mail the filter was told to file, by the decisions that a DMARC failure under a
+// domain's enforcing policy and a program from a stranger go to Spam. Anything else
+// landing in Spam is a false positive this tuning must not make. A p=none failure is
+// not here, so the number can't hide it.
 const FILED_BY_DECISION =
-  /fails DMARC|breaking a strict sender's DMARC|stranger with a signed message sending a script/;
+  /breaking a strict sender's DMARC|stranger with a signed message sending a script/;
 
 const wrongHam = (tallies: Map<string, Tally>) =>
   [...tallies]
@@ -88,7 +89,7 @@ for (const [name, seed] of [
   ["tuning", TUNING_SEED],
   ["held-out", HOLDOUT_SEED],
 ] as const) {
-  test(`with nothing learned, the ${name} corpus files no real mail beyond DMARC failures`, async () => {
+  test(`with nothing learned, the ${name} corpus files no real mail beyond those decisions`, async () => {
     const { deliver } = freshMailbox();
     for (const raw of introductions()) await deliver(raw);
     const { tallies, counts } = await run(buildCorpus(seed, SIZE), deliver);
