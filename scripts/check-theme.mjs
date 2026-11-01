@@ -61,6 +61,7 @@ function contrast(a, b) {
 function sourceFiles(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
+    if (name === "node_modules") return [];
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return sourceFiles(path);
     return SOURCE_FILE.test(name) ? [path] : [];
@@ -88,7 +89,7 @@ for (const mode of ["light", "dark"]) {
   }
 }
 
-for (const file of sourceFiles("src")) {
+for (const file of ["src", "apps", "packages"].flatMap(sourceFiles)) {
   if (file === THEME_PATH) continue;
   readFileSync(file, "utf8")
     .split("\n")
