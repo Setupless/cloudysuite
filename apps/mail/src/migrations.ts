@@ -264,13 +264,22 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
       created_at INTEGER NOT NULL
     ) WITHOUT ROWID`,
     // Scoring runs on every delivery, and messages has no index by sender. vouched
-    // means a person took this sender's mail out of Spam, and accepted_sites lists the
-    // sites that mail's links and name pointed at, as JSON.
+    // means a person took this sender's mail out of Spam.
     `CREATE TABLE spam_contacts (
       address TEXT PRIMARY KEY,
       last_at INTEGER NOT NULL,
-      vouched INTEGER NOT NULL DEFAULT 0,
-      accepted_sites TEXT NOT NULL DEFAULT '[]'
+      vouched INTEGER NOT NULL DEFAULT 0
+    ) WITHOUT ROWID`,
+    // What the links and name of a message taken out of Spam showed and really pointed
+    // at, as sites. Marking a sender as spam leaves these in place, and they count only
+    // while the sender is trusted, so undoing that mark restores them.
+    `CREATE TABLE spam_accepted_links (
+      address TEXT NOT NULL,
+      shown TEXT NOT NULL,
+      actual TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (address, shown, actual, message_id)
     ) WITHOUT ROWID`,
   ],
 ];

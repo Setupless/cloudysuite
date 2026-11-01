@@ -10,7 +10,7 @@ import {
   truncateUtf8,
 } from "./parse";
 import { attachmentKey, bodyKey, newMessagePrefix, rawKey } from "./r2-keys";
-import { findMisleadingLink, listDomainOf } from "./spam/signals";
+import { findMisleadingLinks, listDomainOf } from "./spam/signals";
 import { mailboxStub } from "./stub";
 import {
   BODY_INLINE_LIMIT_BYTES,
@@ -136,7 +136,7 @@ function describeMessage(
     spamFacts:
       input.source === "inbound"
         ? {
-            misleadingLink: findMisleadingLink(parsed.html),
+            misleadingLinks: findMisleadingLinks(parsed.html),
             listDomain: listDomainOf(parsed.listId),
             ambiguousFrom: parsed.ambiguousFrom,
             opinion: null,

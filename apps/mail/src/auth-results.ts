@@ -1,3 +1,4 @@
+import { siteOf } from "./spam/signals";
 import {
   AUTH_VERDICTS,
   type AuthResults,
@@ -18,7 +19,7 @@ const JUST_A_VERDICT = /^[a-z0-9_-]+\s*=\s*[a-z0-9_-]+$/i;
 
 type Resinfo = {
   text: string;
-  // The comment directly after `method=verdict`, the one place a server states a
+  // The comments directly after `method=verdict`, the one place a server states a
   // DMARC policy. Text further along can echo what a sender wrote.
   verdictComment: string | null;
 };
@@ -54,8 +55,8 @@ function splitResinfo(value: string): Resinfo[] {
       else if (char === "(") depth += 1;
       else if (char === ")") depth -= 1;
       if (depth > 0) comment += char;
-      else if (verdictComment === null && JUST_A_VERDICT.test(current.trim())) {
-        verdictComment = comment;
+      else if (JUST_A_VERDICT.test(current.trim())) {
+        verdictComment = `${verdictComment ?? ""} ${comment}`;
       }
       continue;
     }
@@ -72,24 +73,50 @@ function splitResinfo(value: string): Resinfo[] {
   return parts;
 }
 
-const POLICY_IN_COMMENT = /(?:^|[\s,;])(?:s?p|policy)\s*=\s*([a-z]+)/gi;
+const POLICY_IN_COMMENT = /(?:^|[\s,;])(s?p|policy)\s*=\s*([a-z]+)/gi;
 
-// Servers write this as `dmarc=fail (p=NONE sp=REJECT dis=NONE)` or as the property
-// `policy.dmarc=none`. Which of p and sp applied isn't stated, and real mail in Spam
-// costs more than a forgery scored on its other signs, so the weakest one stands.
-function statedPolicy({ text, verdictComment }: Resinfo): DmarcPolicy | null {
-  const stated = [...(verdictComment?.matchAll(POLICY_IN_COMMENT) ?? [])].map(
-    (match) => match[1]!.toLowerCase(),
-  );
-  const property = propertyOf(text, "policy\\.dmarc");
-  if (property) stated.push(property);
-  return DMARC_POLICIES.find((policy) => stated.includes(policy)) ?? null;
+// A name=value pair, or a quoted string on its own. Matching quoted strings whole means
+// that nothing inside one can read as a property.
+const PROPERTY =
+  /(?:^|\s)([a-z0-9._-]+)\s*=\s*("[^"\\]*(?:\\.[^"\\]*)*"?|[^\s";]*)|"[^"\\]*(?:\\.[^"\\]*)*"?/gi;
+
+function propertiesOf(info: string, name: string): string[] {
+  return [...info.matchAll(PROPERTY)].flatMap((match) => {
+    if (match[1]?.toLowerCase() !== name) return [];
+    const value = /^"?([^\s";]+)/.exec(match[2]!)?.[1];
+    return value ? [value.toLowerCase()] : [];
+  });
 }
 
-// The domain a method's result was for, from a property such as header.d=example.org.
-function propertyOf(info: string, name: string): string | null {
-  const start = new RegExp(`(?:^|\\s)${name}\\s*=\\s*"?([^\\s";]+)`, "i");
-  return start.exec(info)?.[1]?.toLowerCase() ?? null;
+const strongest = (stated: readonly string[]): DmarcPolicy | null =>
+  DMARC_POLICIES.findLast((policy) => stated.includes(policy)) ?? null;
+
+// Servers write this as `dmarc=fail (p=NONE sp=REJECT dis=NONE)` or as the property
+// `policy.dmarc=none`. If one tag is stated twice the strongest stands, so that an echo
+// can't talk a real policy down. `sp` covers subdomains only, so a domain that is itself
+// the organisation's follows `p`. Otherwise which of the two applied isn't stated, and
+// real mail in Spam costs more than a forgery scored on its other signs, so the weaker
+// stands. A rarer shared ending makes a domain look like a subdomain, which only reaches
+// that weaker answer.
+function statedPolicy(
+  { text, verdictComment }: Resinfo,
+  domain: string | undefined,
+): DmarcPolicy | null {
+  const tags = [...(verdictComment?.matchAll(POLICY_IN_COMMENT) ?? [])];
+  const valuesWhere = (wanted: (tag: string) => boolean) =>
+    tags
+      .filter((match) => wanted(match[1]!.toLowerCase()))
+      .map((match) => match[2]!.toLowerCase());
+  const own = strongest([
+    ...valuesWhere((tag) => tag !== "sp"),
+    ...propertiesOf(text, "policy.dmarc"),
+  ]);
+  if (domain !== undefined && siteOf(domain) === domain) return own;
+  const subdomains = strongest(valuesWhere((tag) => tag === "sp"));
+  return (
+    DMARC_POLICIES.find((policy) => policy === own || policy === subdomains) ??
+    null
+  );
 }
 
 function toVerdict(raw: string): AuthVerdict | null {
@@ -117,16 +144,16 @@ export function parseAuthenticationResults(
     if (!method || !verdict) continue;
     // A message can carry several DKIM signatures, and one good one is enough.
     if (method === "dkim" && verdict === "pass") {
-      const signer = propertyOf(info, "header\\.d");
+      const [signer] = propertiesOf(info, "header.d");
       if (signer) (results.dkimPassDomains ??= []).push(signer);
     }
     if (results[method] !== null && verdict !== "pass") continue;
     results[method] = verdict;
     if (method === "dmarc") {
-      const domain = propertyOf(info, "header\\.from");
+      const [domain] = propertiesOf(info, "header.from");
       if (domain) results.dmarcDomain = domain;
       else delete results.dmarcDomain;
-      const policy = statedPolicy(part);
+      const policy = statedPolicy(part, domain);
       if (policy) results.dmarcPolicy = policy;
       else delete results.dmarcPolicy;
     }

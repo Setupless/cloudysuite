@@ -9,7 +9,12 @@ export type SpamReason =
   | { kind: "signatureBroken" }
   | { kind: "nameShowsOtherAddress"; shown: string }
   | { kind: "replyGoesElsewhere"; domain: string }
-  | { kind: "linkShowsOtherSite"; shown: string; actual: string }
+  | {
+      kind: "linkShowsOtherSite";
+      shown: string;
+      actual: string;
+      others?: MisleadingLink[];
+    }
   | { kind: "runnableAttachment"; filename: string }
   | { kind: "firstContact" }
   | { kind: "shouting" }
@@ -76,7 +81,7 @@ export type MisleadingLink = { shown: string; actual: string };
 export type SpamOpinion = { spam: boolean; why: string };
 
 export type SpamFacts = {
-  misleadingLink: MisleadingLink | null;
+  misleadingLinks: MisleadingLink[];
   listDomain: string | null;
   ambiguousFrom: boolean;
   opinion: SpamOpinion | null;

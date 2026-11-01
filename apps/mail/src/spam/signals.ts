@@ -6,6 +6,7 @@ const MAX_HTML_SCANNED = 256 * 1024;
 const MAX_TAG_LENGTH = 4096;
 const MAX_LINK_TEXT_LENGTH = 1024;
 const MAX_SHOWN_IN_REASON = 80;
+const MAX_MISLEADING_LINKS = 8;
 
 export const domainOf = (address: string): string =>
   address.slice(address.lastIndexOf("@") + 1).toLowerCase();
@@ -52,38 +53,65 @@ const failedACheck = (auth: AuthResults | null): boolean =>
     auth.dkim === "fail" ||
     auth.dmarc === "fail");
 
+const siteLink = ({ shown, actual }: MisleadingLink): MisleadingLink => ({
+  shown: siteOf(shown),
+  actual: siteOf(actual),
+});
+
+const nameAsLink = (shown: string, address: string): MisleadingLink => ({
+  shown: domainOf(shown),
+  actual: domainOf(address),
+});
+
+export function isAccepted(
+  link: MisleadingLink,
+  accepted: readonly MisleadingLink[],
+): boolean {
+  const { shown, actual } = siteLink(link);
+  return accepted.some((one) => one.shown === shown && one.actual === actual);
+}
+
 // How much a message that can't prove its sender looks forged, once a person has said
 // they trust that sender. "strong" sends it to Spam. "weak" means a link alone with no
 // failed check: click tracking does that too, so the message is scored instead of
 // skipping the filter. Anything else can't be told apart from real mail that has lost
-// its signature on the way, and real mail in Spam is the worse mistake. A site in
-// `acceptedSites` was on mail a person already took out of Spam, so it is no evidence.
+// its signature on the way, and real mail in Spam is the worse mistake. A link or name
+// in `accepted` was on mail a person already took out of Spam, so it is no evidence.
 export function forgeryEvidence(
   message: Pick<
     NewMessage,
     "authResults" | "from" | "attachments" | "spamFacts"
   >,
-  acceptedSites: readonly string[],
+  accepted: readonly MisleadingLink[],
 ): "strong" | "weak" | null {
   const { authResults: auth, from, attachments, spamFacts } = message;
   if (dmarcEnforced(auth) || spamFacts?.ambiguousFrom) return "strong";
-  const isNew = (domain: string) => !acceptedSites.includes(siteOf(domain));
-  const actual = spamFacts?.misleadingLink?.actual;
-  const link = actual !== undefined && isNew(actual);
+  const link = spamFacts?.misleadingLinks.some(
+    (one) => !isAccepted(one, accepted),
+  );
   if (failedACheck(auth)) {
     const shown = from && addressShownInName(from);
-    const lookalike = shown ? isNew(domainOf(shown)) : false;
+    const lookalike =
+      from && shown && !isAccepted(nameAsLink(shown, from.address), accepted);
     if (link || lookalike || runnableFilename(attachments)) return "strong";
   }
   return link ? "weak" : null;
 }
 
-// The sites a message's link and name pointed at, from why it was filed.
-export function sitesIn(reasons: readonly SpamReason[]): string[] {
+// What a message's links and name pointed at, from why it was filed, as sites. A tracking
+// host is shared by unrelated senders, and a forged From line is easy, so what the link
+// says counts as well as where it goes. Otherwise one rescued newsletter would excuse any
+// text on that host.
+export function acceptedLinksIn(
+  reasons: readonly SpamReason[],
+  address: string,
+): MisleadingLink[] {
   return reasons.flatMap((reason) => {
-    if (reason.kind === "linkShowsOtherSite") return [siteOf(reason.actual)];
+    if (reason.kind === "linkShowsOtherSite") {
+      return [reason, ...(reason.others ?? [])].map(siteLink);
+    }
     if (reason.kind === "nameShowsOtherAddress") {
-      return [siteOf(domainOf(reason.shown))];
+      return [siteLink(nameAsLink(reason.shown, address))];
     }
     return [];
   });
@@ -190,14 +218,17 @@ function tagEnd(html: string, open: number): number | null {
   return null;
 }
 
-// A link whose text is itself a web address, going somewhere else. "Click here" says
+// Links whose text is itself a web address, going somewhere else. "Click here" says
 // nothing about where it goes, so it can't mislead this way. A malformed tag is skipped,
 // never the end of the search, because a sender could otherwise hide every later link
 // behind one. A bounded prefix keeps hostile markup from making this slow, and a link
-// past the prefix goes unseen. Everything here reads the lowercased text, because
+// past the prefix goes unseen. Links are told apart by site, and it keeps looking past
+// the first, because a link a person already accepted could otherwise hide a phish
+// behind it. Everything here reads the lowercased text, because
 // hostnames don't care and lowercasing can change where an offset falls.
-export function findMisleadingLink(html: string | null): MisleadingLink | null {
-  if (!html) return null;
+export function findMisleadingLinks(html: string | null): MisleadingLink[] {
+  if (!html) return [];
+  const found: MisleadingLink[] = [];
   const source = html.slice(0, MAX_HTML_SCANNED).toLowerCase();
   for (const { index: open } of source.matchAll(NEXT_ANCHOR)) {
     const close = tagEnd(source, open);
@@ -209,11 +240,14 @@ export function findMisleadingLink(html: string | null): MisleadingLink | null {
     const length = LINK_TEXT_END.exec(after)?.index ?? after.length;
     const shown = siteShownBy(htmlToSearchText(after.slice(0, length)));
     if (shown && siteOf(shown) !== siteOf(actual)) {
-      return {
+      const link = {
         shown: shown.slice(0, MAX_SHOWN_IN_REASON),
         actual: actual.slice(0, MAX_SHOWN_IN_REASON),
       };
+      if (isAccepted(link, found.map(siteLink))) continue;
+      found.push(link);
+      if (found.length === MAX_MISLEADING_LINKS) break;
     }
   }
-  return null;
+  return found;
 }

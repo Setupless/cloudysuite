@@ -111,6 +111,67 @@ test("when p and sp differ, the weaker stands, because the header doesn't say wh
   expect(policy("p=REJECT sp=QUARANTINE")).toBe("quarantine");
 });
 
+test("sp covers subdomains only, so it doesn't weaken a policy for the domain itself", () => {
+  const policy = (comment: string, from: string) =>
+    parseAuthenticationResults(
+      `mx.cloudflare.net; dmarc=fail (${comment}) header.from=${from}`,
+    )?.dmarcPolicy;
+  expect(policy("p=REJECT sp=NONE", "strict.example")).toBe("reject");
+  expect(policy("p=REJECT sp=NONE", "strict.co.uk")).toBe("reject");
+  expect(policy("p=NONE sp=REJECT", "strict.example")).toBe("none");
+  expect(policy("p=REJECT sp=NONE", "news.strict.example")).toBe("none");
+  expect(policy("p=NONE sp=REJECT", "news.strict.example")).toBe("none");
+  expect(policy("sp=REJECT", "strict.example")).toBeUndefined();
+});
+
+test("when one policy is stated more than once, the strongest stands", () => {
+  const policy = (dmarc: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; ${dmarc}`)?.dmarcPolicy;
+  expect(policy("dmarc=fail (p=none) (p=REJECT)")).toBe("reject");
+  expect(policy("dmarc=fail (p=REJECT) (p=none)")).toBe("reject");
+  expect(policy("dmarc=fail (p=none p=REJECT dis=NONE)")).toBe("reject");
+  expect(policy("dmarc=fail (p=none p=quarantine)")).toBe("quarantine");
+  expect(policy("dmarc=fail (policy=none p=reject)")).toBe("reject");
+  expect(policy("dmarc=fail (p=reject) policy.dmarc=none")).toBe("reject");
+  expect(policy("dmarc=fail policy.dmarc=none policy.dmarc=reject")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail (p=none p=reject sp=none sp=reject)")).toBe(
+    "reject",
+  );
+  expect(policy("dmarc=fail (p=none p=reject sp=none)")).toBe("none");
+});
+
+test("nothing in a quoted string can read as a property", () => {
+  const read = (dmarc: string) =>
+    parseAuthenticationResults(`mx.cloudflare.net; ${dmarc}`);
+  expect(
+    read('dmarc=fail (p=reject) header.from="a.example; policy.dmarc=none"')
+      ?.dmarcPolicy,
+  ).toBe("reject");
+  expect(
+    read('dmarc=fail (p=reject) x="y policy.dmarc=none" header.from=a.example')
+      ?.dmarcPolicy,
+  ).toBe("reject");
+  expect(
+    read('dmarc=fail "x policy.dmarc=none" policy.dmarc=reject')?.dmarcPolicy,
+  ).toBe("reject");
+  expect(read('dmarc=fail policy.dmarc="reject"')?.dmarcPolicy).toBe("reject");
+  expect(
+    read('dmarc=pass x="y header.from=victim.example"')?.dmarcDomain,
+  ).toBeUndefined();
+  expect(read('dmarc=pass header.from="a.example"')?.dmarcDomain).toBe(
+    "a.example",
+  );
+  expect(
+    read('dkim=pass x="y header.d=victim.example" header.d=evil.example')
+      ?.dkimPassDomains,
+  ).toEqual(["evil.example"]);
+  expect(
+    read('dkim=pass x="y \\" header.d=victim.example"')?.dkimPassDomains,
+  ).toBeUndefined();
+});
+
 test("a policy can't be read from anywhere but the DMARC result's own comment", () => {
   const policy = (header: string) =>
     parseAuthenticationResults(header)?.dmarcPolicy;

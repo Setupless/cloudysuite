@@ -2,19 +2,21 @@ import { readableText } from "../parse";
 import type { SqlDriver } from "../sql";
 import type { AuthResults, Folder, MessageId, NewMessage } from "../types";
 import {
+  acceptedLinksIn,
   addressShownInName,
   dmarcEnforced,
   domainOf,
   forgeryEvidence,
+  isAccepted,
   isShouting,
   provedDomain,
   replyDomainElsewhere,
   runnableFilename,
-  sitesIn,
 } from "./signals";
 import { SCAN_CHARS, tokensOf } from "./tokens";
 import {
   MAX_SENDER_ENTRIES,
+  type MisleadingLink,
   parseStoredVerdict,
   REASON_POINTS,
   type SenderEntry,
@@ -67,7 +69,8 @@ const MAX_TRAINED_PER_MOVE = 200;
 
 const MAX_HTML_FOR_TOKENS = 8 * SCAN_CHARS;
 const MAX_PARENT_DOMAINS = 10;
-const MAX_ACCEPTED_SITES = 20;
+const MAX_ACCEPTED_PER_SENDER = 20;
+export const MAX_ACCEPTED_LINKS = 2000;
 
 // From the end, so a long run of subdomains can't push the real domain out.
 function domainAndParents(domain: string): string[] {
@@ -154,7 +157,7 @@ type TrainingRow = {
   spam_training: SpamTraining | null;
 };
 
-type ContactRow = { vouched: number; accepted_sites: string };
+type ContactRow = { vouched: number };
 
 export class SpamStore {
   readonly #db: SqlDriver;
@@ -232,11 +235,21 @@ export class SpamStore {
   #contact(address: string): ContactRow | null {
     const [row] = this.#db
       .exec<ContactRow>(
-        "SELECT vouched, accepted_sites FROM spam_contacts WHERE address = ?",
+        "SELECT vouched FROM spam_contacts WHERE address = ?",
         address,
       )
       .toArray();
     return row ?? null;
+  }
+
+  #acceptedLinks(address: string | null): MisleadingLink[] {
+    if (address === null) return [];
+    return this.#db
+      .exec<MisleadingLink>(
+        "SELECT shown, actual FROM spam_accepted_links WHERE address = ?",
+        address,
+      )
+      .toArray();
   }
 
   // Only a Message-ID this mailbox wrote counts, not one it only received, because
@@ -306,6 +319,8 @@ export class SpamStore {
     const contact = address ? this.#contact(address) : null;
 
     const reasons: SpamReason[] = [];
+    const links = spamFacts?.misleadingLinks ?? [];
+    let accepted: MisleadingLink[] = [];
     let forged = false;
     if (narrowest?.list !== "block") {
       // A signature by an allowed domain is that domain's word, whatever From says,
@@ -327,9 +342,7 @@ export class SpamStore {
             ? { kind: "allowNotProved", entry: listEntry.pattern }
             : null;
       if (trusted) {
-        const accepted = JSON.parse(
-          contact?.accepted_sites ?? "[]",
-        ) as string[];
+        accepted = this.#acceptedLinks(address);
         const evidence = forgeryEvidence(message, accepted);
         if (evidence === null) return CLEAN;
         forged = evidence === "strong";
@@ -368,8 +381,16 @@ export class SpamStore {
     if (from && !known) reasons.push({ kind: "firstContact" });
     const filename = runnableFilename(message.attachments);
     if (filename) reasons.push({ kind: "runnableAttachment", filename });
-    if (spamFacts?.misleadingLink) {
-      reasons.push({ kind: "linkShowsOtherSite", ...spamFacts.misleadingLink });
+    // The reason names a link no one accepted, if there is one, because that is what
+    // a person reading it needs to see.
+    const lead = links.find((link) => !isAccepted(link, accepted)) ?? links[0];
+    if (lead) {
+      const others = links.filter((link) => link !== lead);
+      reasons.push({
+        kind: "linkShowsOtherSite",
+        ...lead,
+        ...(others.length > 0 ? { others } : {}),
+      });
     }
     if (isShouting(message.subject)) reasons.push({ kind: "shouting" });
     if (spamFacts?.opinion?.spam) {
@@ -429,19 +450,46 @@ export class SpamStore {
     );
   }
 
-  // Someone took this sender's mail out of Spam. Whatever that message's link and name
+  // Someone took this sender's mail out of Spam. Whatever that message's links and name
   // pointed at is then the sender's own habit, so the next copy doesn't count as forged
-  // for it, or every issue of that sender's newsletter would land back in Spam.
-  #vouchFor(address: string, verdict: string | null): void {
+  // for it, or every issue of that sender's newsletter would land back in Spam. Each row
+  // names the message it came from, so undoing that move takes away exactly what the
+  // move added, and moving a message twice adds nothing new.
+  #vouchFor(address: string, id: number, verdict: string | null): void {
     const lower = address.toLowerCase();
     this.#rememberContact(lower, Date.now());
-    const reasons = parseStoredVerdict(verdict)?.reasons ?? [];
-    const before = JSON.parse(this.#contact(lower)!.accepted_sites) as string[];
-    const sites = [...new Set([...before, ...sitesIn(reasons)])];
     this.#db.exec(
-      "UPDATE spam_contacts SET vouched = 1, accepted_sites = ? WHERE address = ?",
-      JSON.stringify(sites.slice(-MAX_ACCEPTED_SITES)),
+      "UPDATE spam_contacts SET vouched = 1 WHERE address = ?",
       lower,
+    );
+    const reasons = parseStoredVerdict(verdict)?.reasons ?? [];
+    const now = Date.now();
+    for (const { shown, actual } of acceptedLinksIn(reasons, lower)) {
+      this.#db.exec(
+        `INSERT OR IGNORE INTO spam_accepted_links
+           (address, shown, actual, message_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        lower,
+        shown,
+        actual,
+        id,
+        now,
+      );
+    }
+    this.#db.exec(
+      `DELETE FROM spam_accepted_links WHERE address = ?1 AND message_id NOT IN (
+         SELECT message_id FROM spam_accepted_links WHERE address = ?1
+         ORDER BY created_at DESC, message_id DESC LIMIT ?2
+       )`,
+      lower,
+      MAX_ACCEPTED_PER_SENDER,
+    );
+    this.#db.exec(
+      `DELETE FROM spam_accepted_links WHERE message_id NOT IN (
+         SELECT message_id FROM spam_accepted_links
+         ORDER BY created_at DESC, message_id DESC LIMIT ?
+       )`,
+      MAX_ACCEPTED_LINKS,
     );
   }
 
@@ -570,9 +618,13 @@ export class SpamStore {
       // the trust back as well.
       if (row.from_address && to === "spam" && isLive(from)) {
         this.#forgetContact(row.from_address);
+        this.#db.exec(
+          "DELETE FROM spam_accepted_links WHERE message_id = ?",
+          id,
+        );
       }
       if (row.from_address && from === "spam" && isLive(to)) {
-        this.#vouchFor(row.from_address, row.spam_verdict);
+        this.#vouchFor(row.from_address, id, row.spam_verdict);
       }
       trained = true;
     }

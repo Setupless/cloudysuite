@@ -22,12 +22,13 @@ import {
 import type { Folder, MessageDetail, MessageId, ThreadId } from "../types";
 import { whyInSpam } from "./explain";
 import {
-  findMisleadingLink,
+  findMisleadingLinks,
   listDomainOf,
   provedDomain,
   runnableFilename,
 } from "./signals";
 import {
+  MAX_ACCEPTED_LINKS,
   MAX_CONTACTS,
   MAX_MODEL_TOKENS,
   MIN_SPAM_SAMPLES,
@@ -39,6 +40,9 @@ import {
   parseSenderPattern,
   parseStoredVerdict,
 } from "./types";
+
+const findMisleadingLink = (html: string | null) =>
+  findMisleadingLinks(html)[0] ?? null;
 
 let env: Env;
 let db: SqlDriver;
@@ -638,6 +642,181 @@ test("not spam on a newsletter with broken checks keeps its next issue out of Sp
   expect(whyInSpam(detail(forged.threadId, forged.messageId))).toContain(
     "was marked as not spam",
   );
+});
+
+const FAILED_CHECKS = cloudflare(
+  "spf=softfail; dkim=fail; dmarc=fail (p=none)",
+);
+const WILLOW = "Willow <news@willow-press.example>";
+const TRACKED_LINK =
+  '<a href="https://click.mailservice.example/t/1">www.willow-press.example</a>';
+const TRACKED_PHISH =
+  '<a href="https://click.mailservice.example/t/2">https://www.paypal.com/login</a>';
+const newsletter = (body = TRACKED_LINK, from = WILLOW) =>
+  deliver({
+    from,
+    headers: [
+      "Content-Type: text/html",
+      FAILED_CHECKS,
+      "Reply-To: Help <help@helpdesk.example>",
+    ],
+    body,
+  });
+const trackedPhish = (from: string, body = TRACKED_PHISH) =>
+  deliver({
+    from,
+    headers: ["Content-Type: text/html", FAILED_CHECKS],
+    body,
+  });
+const rescue = async (body?: string) => {
+  const filed = await newsletter(body);
+  expect(filed.folder).toBe("spam");
+  store.restore({ messageIds: [filed.messageId] });
+  return filed;
+};
+const acceptedLinks = () =>
+  db
+    .exec<{ address: string; shown: string; actual: string }>(
+      "SELECT address, shown, actual FROM spam_accepted_links",
+    )
+    .toArray();
+
+test("not spam on a tracked newsletter doesn't excuse a phish through the same tracking host", async () => {
+  await rescue();
+  expect(acceptedLinks()).toEqual([
+    {
+      address: "news@willow-press.example",
+      shown: "willow-press.example",
+      actual: "mailservice.example",
+    },
+  ]);
+  const repeat = await newsletter();
+  expect(repeat.folder).toBe("inbox");
+  const forged = await trackedPhish(WILLOW);
+  expect(forged.folder).toBe("spam");
+  expect(whyInSpam(detail(forged.threadId, forged.messageId))).toContain(
+    "paypal.com",
+  );
+  for (const from of [
+    "Billing <billing@willow-press.example>",
+    "PayPal <service@other-sender.example>",
+  ]) {
+    expect((await trackedPhish(from)).folder).toBe("spam");
+    expect((await trackedPhish(from, TRACKED_LINK)).folder).toBe("spam");
+  }
+});
+
+test("an accepted link can't hide a phish behind it", async () => {
+  await rescue();
+  const forged = await trackedPhish(WILLOW, `${TRACKED_LINK}${TRACKED_PHISH}`);
+  expect(forged.folder).toBe("spam");
+  expect(whyInSpam(detail(forged.threadId, forged.messageId))).toContain(
+    "paypal.com",
+  );
+  const newSite = await trackedPhish(
+    WILLOW,
+    `${TRACKED_LINK}<a href="http://steal.example/x">www.bank.com</a>`,
+  );
+  expect(newSite.folder).toBe("spam");
+});
+
+test("not spam accepts every link that message had", async () => {
+  const second =
+    '<a href="https://click.mailservice.example/t/3">www.partner.example</a>';
+  await rescue(`${TRACKED_LINK}${second}`);
+  expect((await newsletter(`${TRACKED_LINK}${second}`)).folder).toBe("inbox");
+  expect((await newsletter(second)).folder).toBe("inbox");
+});
+
+test("a name a person accepted counts only for that sender and that name", async () => {
+  const send = (from: string) =>
+    deliver({
+      from,
+      headers: [FAILED_CHECKS, "Reply-To: Help <help@helpdesk.example>"],
+    });
+  const filed = await send('"desk@paypal.com" <news@willow-press.example>');
+  expect(filed.folder).toBe("spam");
+  store.restore({ messageIds: [filed.messageId] });
+  expect(
+    (await send('"desk@paypal.com" <news@willow-press.example>')).folder,
+  ).toBe("inbox");
+  expect(
+    (await send('"desk@bank.com" <news@willow-press.example>')).folder,
+  ).toBe("spam");
+  expect(
+    (await send('"desk@paypal.com" <other@willow-press.example>')).folder,
+  ).toBe("spam");
+});
+
+test("undoing not spam takes away what it accepted, and moving twice counts once", async () => {
+  const filed = await rescue();
+  const { messageId } = filed;
+  store.moveToFolder({ messageIds: [messageId] }, "spam");
+  store.restore({ messageIds: [messageId] });
+  expect(acceptedLinks()).toHaveLength(1);
+  store.moveToFolder({ messageIds: [messageId] }, "spam");
+  expect(acceptedLinks()).toEqual([]);
+  expect((await newsletter()).folder).toBe("spam");
+});
+
+test("undoing not spam on one message leaves what another message accepted", async () => {
+  const first = await rescue();
+  const second = await newsletter(
+    '<a href="https://click.mailservice.example/t/4">www.partner.example</a>',
+  );
+  expect(second.folder).toBe("spam");
+  store.restore({ messageIds: [second.messageId] });
+  expect(acceptedLinks()).toHaveLength(2);
+  store.moveToFolder({ messageIds: [second.messageId] }, "spam");
+  expect(acceptedLinks().map(({ shown }) => shown)).toEqual([
+    "willow-press.example",
+  ]);
+  store.moveToFolder({ messageIds: [first.messageId] }, "spam");
+  expect(acceptedLinks()).toEqual([]);
+});
+
+test("undoing a mark on a later message puts the accepted link back in force", async () => {
+  await rescue();
+  const later = await newsletter();
+  expect(later.folder).toBe("inbox");
+  store.moveToFolder({ messageIds: [later.messageId] }, "spam");
+  expect((await newsletter()).folder).toBe("spam");
+  store.moveToFolder({ messageIds: [later.messageId] }, "inbox");
+  expect((await newsletter()).folder).toBe("inbox");
+});
+
+test("accepted links stay within their limits", async () => {
+  for (let index = 0; index < 25; index += 1) {
+    await rescue(
+      `<a href="https://click.mailservice.example/t/1">www.partner-${index}.example</a>`,
+    );
+  }
+  const shown = acceptedLinks().map((link) => link.shown);
+  expect(shown).toHaveLength(20);
+  expect(shown).toContain("partner-24.example");
+  expect(shown).not.toContain("partner-0.example");
+  db.exec(
+    `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+     INSERT INTO spam_accepted_links (address, shown, actual, message_id, created_at)
+     SELECT 'other' || i || '@example.org', 'a.example', 'b.example', 1000000 + i, 1 FROM n`,
+    MAX_ACCEPTED_LINKS,
+  );
+  await rescue();
+  expect(acceptedLinks().length).toBeLessThanOrEqual(MAX_ACCEPTED_LINKS);
+  expect(acceptedLinks().map((link) => link.shown)).toContain(
+    "willow-press.example",
+  );
+});
+
+test("the scan stops at a bounded number of distinct misleading links", () => {
+  const html = Array.from(
+    { length: 50 },
+    (_, index) =>
+      `<a href="http://evil-${index}.example">www.bank-${index}.com</a><a href="http://evil-${index}.example/2">www.bank-${index}.com</a>`,
+  ).join("");
+  const found = findMisleadingLinks(html);
+  expect(found).toHaveLength(8);
+  expect(new Set(found.map(({ shown }) => shown)).size).toBe(8);
 });
 
 const PHISH_LINK = '<a href="http://evil.example/x">www.bank.com</a>';

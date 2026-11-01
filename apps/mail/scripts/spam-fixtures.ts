@@ -108,6 +108,8 @@ const PROGRAM = {
   filename: "invoice-2041.pdf.exe",
   type: "application/octet-stream",
 };
+const PHISH_ON_TRACKER =
+  '<p><a href="https://click.mailservice.example/t/9">https://www.paypal.com/login</a></p>';
 const TRACKED = (shown: string) =>
   `<html><body><h1>Five ideas for your garden</h1><p>Read them at <a href="https://click.mailservice.example/t/8841">www.${shown}</a>.</p><p><a href="https://click.mailservice.example/u">Unsubscribe</a></p></body></html>`;
 const LIST_HEADERS = (list: string, domain: string) => [
@@ -748,6 +750,48 @@ export const SPAM_FIXTURES: SpamFixture[] = [
       html: '<p>Please look.</p><a href="http://steal.example/x">www.willow-books.example</a>',
     },
   },
+
+  ...(
+    [
+      {
+        id: "forged-not-spam-sender-same-host-other-text",
+        site: "rowan-books.example",
+        from: "Rowan Books <news@rowan-books.example>",
+        html: PHISH_ON_TRACKER,
+      },
+      {
+        id: "forged-not-spam-sender-accepted-link-hides-phish",
+        site: "hazel-books.example",
+        from: "Hazel Books <news@hazel-books.example>",
+        html: TRACKED("hazel-books.example") + PHISH_ON_TRACKER,
+      },
+      {
+        id: "other-sender-same-host-as-a-rescued-newsletter",
+        site: "alder-books.example",
+        from: "PayPal <service@copperleaf-mail.example>",
+        html: PHISH_ON_TRACKER,
+      },
+    ] as const
+  ).map(({ id, site, from, html }): SpamFixture => ({
+    id,
+    real: false,
+    folder: "spam",
+    before: {
+      notSpam: {
+        from: `Books <news@${site}>`,
+        subject: "New in this month",
+        auth: `${spf("softfail", site)}; dkim=fail; dmarc=fail (p=none) header.from=${site}`,
+        headers: ["Reply-To: Help <help@helpdesk.mailservice.example>"],
+        html: TRACKED(site),
+      },
+    },
+    shape: {
+      from,
+      subject: "Your account needs attention",
+      auth: `${spf("softfail", site)}; dkim=fail; dmarc=fail (p=none) header.from=${addressOf(from).split("@")[1]}`,
+      html,
+    },
+  })),
 
   // Forgeries that reach the Inbox, because real mail in Spam is the worse mistake.
   {
