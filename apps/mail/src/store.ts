@@ -37,6 +37,7 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 const MAX_SENDERS_IN_VIEW = 5;
 const MAX_SUBJECT_CANDIDATES = 100;
+export const DELETION_SETTLE_MS = 5 * 60 * 1000;
 
 type RefRow = SqlRow & { id: number; thread_id: number; folder: Folder };
 
@@ -632,23 +633,44 @@ export class MailboxStore {
   }
 
   // A prefix in this queue is never written or referenced again, so the sweep can
-  // take its time: nothing that arrives later can share these objects.
-  queueDeletion(prefix: string): void {
+  // take its time: nothing that arrives later can share these objects. The delay
+  // outlasts any write still in flight from an abandoned upload.
+  queueDeletion(prefix: string, delayMs = DELETION_SETTLE_MS): void {
+    const now = Date.now();
     this.#db.exec(
-      "INSERT OR IGNORE INTO r2_deletions (prefix, queued_at) VALUES (?, ?)",
+      "INSERT OR IGNORE INTO r2_deletions (prefix, queued_at, not_before) VALUES (?, ?, ?)",
       prefix,
-      Date.now(),
+      now,
+      now + delayMs,
     );
   }
 
-  pendingDeletions(limit: number): string[] {
+  pendingDeletions(limit: number, dueBy = Number.MAX_SAFE_INTEGER): string[] {
     return this.#db
       .exec<{ prefix: string }>(
-        "SELECT prefix FROM r2_deletions ORDER BY queued_at LIMIT ?",
+        "SELECT prefix FROM r2_deletions WHERE not_before <= ? ORDER BY queued_at LIMIT ?",
+        dueBy,
         limit,
       )
       .toArray()
       .map((row) => row.prefix);
+  }
+
+  postponeDeletions(dueBy: number, until: number): void {
+    this.#db.exec(
+      "UPDATE r2_deletions SET not_before = ? WHERE not_before <= ?",
+      until,
+      dueBy,
+    );
+  }
+
+  nextDeletionAt(): number | null {
+    const [row] = this.#db
+      .exec<{ next: number | null }>(
+        "SELECT MIN(not_before) AS next FROM r2_deletions",
+      )
+      .toArray();
+    return row?.next ?? null;
   }
 
   finishDeletion(prefix: string): void {
@@ -706,8 +728,9 @@ const R2_DELETE_BATCH = 1000;
 export async function sweepDeletions(
   store: MailboxStore,
   bucket: Pick<R2Bucket, "list" | "delete">,
+  now = Date.now(),
 ): Promise<boolean> {
-  for (const prefix of store.pendingDeletions(DELETIONS_PER_SWEEP)) {
+  for (const prefix of store.pendingDeletions(DELETIONS_PER_SWEEP, now)) {
     let cursor: string | undefined;
     do {
       const page = await bucket.list({
@@ -722,5 +745,5 @@ export async function sweepDeletions(
     } while (cursor);
     store.finishDeletion(prefix);
   }
-  return store.pendingDeletions(1).length > 0;
+  return store.pendingDeletions(1, now).length > 0;
 }

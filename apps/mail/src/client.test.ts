@@ -166,7 +166,7 @@ test("trash, then delete for good, removes every object and can repeat", async (
   expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
 
   bucket.failDeletes = false;
-  await instanceOf(MAILBOX_A).object.alarm();
+  await instanceOf(MAILBOX_A).fireAlarm();
   expect(bucket.keys()).toEqual([]);
   expect(instanceOf(MAILBOX_A).alarm).toBeNull();
 

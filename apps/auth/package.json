@@ -9,6 +9,7 @@
     "./admin": "./src/admin/functions.ts",
     "./guard": "./src/guard.ts",
     "./handler": "./src/handler.ts",
+    "./origins": "./src/origins.ts",
     "./session": "./src/session.ts",
     "./shell": "./src/shell.tsx",
     "./welcome": "./src/welcome/functions.ts",

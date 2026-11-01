@@ -1,4 +1,5 @@
 import type { MailboxGrant } from "@cloudysuite/access";
+import { createMailboxImports, type MailboxImports } from "./import/uploads";
 import { rawKey } from "./r2-keys";
 import { mailboxStub } from "./stub";
 import type {
@@ -101,4 +102,18 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       return (await env.BUCKET.get(rawKey(prefix)))?.body ?? null;
     },
   };
+}
+
+// Importing is the one mailbox action a member may not take. Null is a refusal, so
+// no caller can reach an import without facing it.
+export function openMailboxImports(
+  env: Env,
+  grant: MailboxGrant,
+): MailboxImports | null {
+  if (grant.role !== "manager") return null;
+  return createMailboxImports(
+    env.BUCKET,
+    mailboxStub(env, grant.mailboxId),
+    grant.mailboxId,
+  );
 }

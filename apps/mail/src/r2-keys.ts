@@ -15,3 +15,19 @@ export const bodyKey = (prefix: string, kind: BodyKind) =>
 
 export const attachmentKey = (prefix: string, position: number) =>
   `${prefix}attachments/${position}`;
+
+export const importFilePrefix = (mailboxId: MailboxId, jobId: string) =>
+  `mailboxes/${mailboxId}/imports/${jobId}/`;
+
+export const importFileKey = (mailboxId: MailboxId, jobId: string) =>
+  `${importFilePrefix(mailboxId, jobId)}file.mbox`;
+
+// Every message in one import batch shares this start, so one queued deletion can
+// clear what a batch left behind when it died. Only a batch that never committed
+// is ever queued this way. The `/` that ends a message's own prefix keeps message
+// 1 and message 10 apart when one of them is deleted later.
+export const importAttemptPrefix = (mailboxId: MailboxId, attempt: string) =>
+  `mailboxes/${mailboxId}/messages/${attempt}-`;
+
+export const importMessagePrefix = (attemptPrefix: string, index: number) =>
+  `${attemptPrefix}${index}/`;

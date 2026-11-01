@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { createTestDatabase } from "../../../src/db/test-database";
 import { ingest, type IngestInput, receiveInbound } from "./ingest";
 import {
@@ -8,7 +8,7 @@ import {
   MAILBOX_B,
   toArrayBuffer,
 } from "./test-support";
-import { MAX_MESSAGE_BYTES, type ThreadId } from "./types";
+import { MAX_MESSAGE_BYTES, type NewMessage, type ThreadId } from "./types";
 
 const envelope = { from: "a@example.org", to: "b@example.com" };
 
@@ -57,45 +57,69 @@ test("delivering the same bytes twice stores one message", async () => {
   expect(db.exec("SELECT id FROM messages").toArray()).toHaveLength(1);
 });
 
-test("deliveries that overlap store one message and keep one set of objects", async () => {
-  const { env, bucket, instanceOf } = createTestEnv();
-  const { object, db } = instanceOf(MAILBOX_A);
-  const findByHash = object.findByHash.bind(object);
-  let arrived = 0;
-  let allArrived!: () => void;
-  const everyoneChecked = new Promise<void>((resolve) => {
-    allArrived = resolve;
-  });
-  object.findByHash = (async (rawHash: string) => {
-    const found = findByHash(rawHash);
-    arrived += 1;
-    if (arrived === 3) allArrived();
-    await everyoneChecked;
-    return found;
-  }) as never;
+// Each loser's cleanup comes due from the moment its commit lands, and one alarm
+// removes only what is due by then, so a gap between commits means another alarm.
+test.each([
+  { commits: "in the same millisecond", gapMs: 0, keysAfterEachAlarm: [1] },
+  { commits: "a millisecond apart", gapMs: 1, keysAfterEachAlarm: [2, 1] },
+])(
+  "deliveries that overlap store one message and keep one set of objects, with commits $commits",
+  async ({ gapMs, keysAfterEachAlarm }) => {
+    const { env, bucket, instanceOf } = createTestEnv();
+    const { object, db } = instanceOf(MAILBOX_A);
+    const findByHash = object.findByHash.bind(object);
+    let arrived = 0;
+    let allArrived!: () => void;
+    const everyoneChecked = new Promise<void>((resolve) => {
+      allArrived = resolve;
+    });
+    object.findByHash = (async (rawHash: string) => {
+      const found = findByHash(rawHash);
+      arrived += 1;
+      if (arrived === 3) allArrived();
+      await everyoneChecked;
+      return found;
+    }) as never;
 
-  const raw = eml({ messageId: "one@x" });
-  const results = await Promise.all([
-    ingest(env, inbound(raw)),
-    ingest(env, inbound(raw)),
-    ingest(env, inbound(raw)),
-  ]);
-  expect(results.map((result) => result.status).sort()).toEqual([
-    "duplicate",
-    "duplicate",
-    "stored",
-  ]);
-  expect(db.exec("SELECT id FROM messages").toArray()).toHaveLength(1);
-  expect(bucket.keys()).toHaveLength(3);
-  expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
+    const commit = object.commit.bind(object);
+    let clock = Date.parse("2026-11-02T10:00:00Z");
+    object.commit = ((message: NewMessage) => {
+      setSystemTime(new Date(clock));
+      clock += gapMs;
+      return commit(message);
+    }) as never;
 
-  await object.alarm();
-  const [winner] = db
-    .exec<{ r2_prefix: string }>("SELECT r2_prefix FROM messages")
-    .toArray();
-  expect(bucket.keys()).toEqual([`${winner!.r2_prefix}raw.eml`]);
-  expect(instanceOf(MAILBOX_A).alarm).toBeNull();
-});
+    try {
+      const raw = eml({ messageId: "one@x" });
+      const results = await Promise.all([
+        ingest(env, inbound(raw)),
+        ingest(env, inbound(raw)),
+        ingest(env, inbound(raw)),
+      ]);
+      expect(results.map((result) => result.status).sort()).toEqual([
+        "duplicate",
+        "duplicate",
+        "stored",
+      ]);
+      expect(db.exec("SELECT id FROM messages").toArray()).toHaveLength(1);
+      expect(bucket.keys()).toHaveLength(3);
+
+      const [winner] = db
+        .exec<{ r2_prefix: string }>("SELECT r2_prefix FROM messages")
+        .toArray();
+      const winnerKey = `${winner!.r2_prefix}raw.eml`;
+      for (const keys of keysAfterEachAlarm) {
+        expect(instanceOf(MAILBOX_A).alarm).not.toBeNull();
+        await instanceOf(MAILBOX_A).fireAlarm();
+        expect(bucket.keys()).toHaveLength(keys);
+        expect(bucket.objects.get(winnerKey)).toEqual(new Uint8Array(raw));
+      }
+      expect(instanceOf(MAILBOX_A).alarm).toBeNull();
+    } finally {
+      setSystemTime();
+    }
+  },
+);
 
 test("the same message in two mailboxes is stored separately in each", async () => {
   const { env, bucket, instanceOf } = createTestEnv();
@@ -159,7 +183,7 @@ test("a failed write leaves no objects behind once swept, and a retry stores the
     bucket.failPutsMatching = null;
     const retry = await ingest(env, inbound(withAttachment));
     expect(retry.status).toBe("stored");
-    await object.alarm();
+    await instanceOf(MAILBOX_A).fireAlarm();
     expect(bucket.keys()).toHaveLength(2);
     expect(db.exec("SELECT id FROM attachments").toArray()).toHaveLength(1);
     expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);

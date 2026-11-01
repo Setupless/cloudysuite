@@ -52,6 +52,7 @@
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
+        "@tanstack/react-start": "1.169.4",
         "drizzle-orm": "1.0.0-rc.5",
         "postal-mime": "4.2.0",
         "react": "19.3.1",
