@@ -33,6 +33,7 @@ Every deployment contains every released app. An admin can turn each app off for
 - The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
+- The only other exception is a `GET` of `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Auth cannot be turned off, because admins use it to turn the other apps back on.
 
 D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
@@ -146,6 +147,7 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - Admins can reset a member's sign-in and require 2FA for the organisation.
 - Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
 - Resetting a sign-in removes the member's passkeys, authenticator app, password, and sessions, then gives the admin a one-time link to hand over. CloudySuite never emails it, because the member's only address may be a mailbox they cannot open.
+- A session lasts 60 days and renews when it is used, at most once a day, so each session costs at most one database write a day. Someone who opens Mail now and then stays signed in and keeps getting notifications, which need a live session. Renewal happens on any request that reads the session, including Mail's, and someone unused for 60 days signs in again. A tab nobody is looking at makes no requests, so it can't keep a session alive. The session cookie cache stays off, so a sign-out or reset takes effect at once.
 - A person's sign-in address is their new mailbox address when the invite creates one, and otherwise the address the invite went to.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
@@ -183,6 +185,57 @@ How sending behaves, and why:
 - **Attachments can add up to about 18 MB.** The 25 MiB limit counts the encoded message, and files grow by about a third in email.
 
 Scheduled send and snooze are not in the first release. Native mail apps such as Apple Mail and Outlook are not supported, because they need IMAP and SMTP servers that run outside Workers.
+
+### The installable app
+
+Mail installs from its own host as a PWA. The **App and notifications** page in Mail's menu holds the install button, and on Apple devices, which have no install prompt, the steps in words.
+
+**The rule that shapes everything: no person's mail is in Cache Storage.** The service worker saves only the public build and one anonymous page, `/offline-shell`, which renders nothing on the server. Pages that hold mail are never saved. Every saved message is in one IndexedDB database, so clearing a device means deleting that database, and there is nothing else to track.
+
+- **Pages** go to the network first. With no connection, the service worker serves the anonymous page at the address asked for, and the client loads that address's routes itself. A new deployment therefore cannot leave stale HTML linking a dead stylesheet.
+- **Everything else** that is not a hashed build file or a listed public file passes straight through, including sign-in, server functions, and downloads.
+- **Updates.** `sw.js` lists the build's exact file names, so any change to them changes it. A new worker installs, takes over, and deletes the old files. A plain file serves it, outside the Worker, so a fixed worker reaches a browser even when an old one answers every request with an error. The browser checks `sw.js` itself on each page load, with no page code involved.
+
+**What is saved:** for each mailbox, up to 300 inbox, 100 sent, and 100 archived conversations, each body up to 256 KB, and up to 50 MB in total. Attachments, Spam, Trash, Drafts, and labels are not saved. Search, label lists, and rules need a connection, and say so when there is none. Bodies come through the same `renderBody` as reading online, so only sanitized HTML is ever stored, and it shows in the same sandboxed frame.
+
+**Why a small hand-written store.** TanStack DB's browser persistence needs `@journeyapps/wa-sqlite`, a dependency outside this stack, and uses SQLite rather than IndexedDB. Query's persister rewrites one blob holding everything on each save, 15.7 MB in our test against one record here. The speed gap was small, 14 ms against under 1 ms. What decided it is safety: here, the check of who owns the device and the write share one transaction, so a tab finishing a refresh cannot put the last person's mail back after a sign-out cleared it.
+
+**While offline, actions are refused** in plain words, never queued. Someone who archives a message on a train should not be surprised by what runs when the train arrives. Opening a message offline leaves it unread.
+
+**A device is cleared when:**
+
+| What happened                         | What notices                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| Signing out                           | The sign-out page sends the browser through Mail's `/device-cleared`            |
+| A session ending elsewhere            | The service worker asks who is signed in on each page load, with no page code   |
+| A tab left open when a session ends   | Its next call gets a 401, once someone is looking at the tab                    |
+| Someone else signing in               | The same check, and the page, comparing against the device's owner              |
+| 59 days with no check from the server | Offline, saved mail stops opening, because the session could have ended by then |
+
+Sign-out happens on Account's host, which cannot reach Mail's storage, so it has to pass through Mail's. `/device-cleared` is a plain file, so this also works while Mail is off.
+
+Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 59 days, which is a session's 60 days less the day a renewal can lag. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
+
+Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because a `GET` of `/pwa/session` is the one Mail request that gets an answer while Mail is off. It returns a person's id or a 401, and no mail.
+
+**A tab nobody is looking at makes no requests.** Each request renews the session, so a forgotten background tab would otherwise keep someone signed in forever. Timed refreshes, saving mail for offline, and reconnecting all wait until the tab is visible again, then catch up at once. A visible tab counts as use, even with nobody at the screen.
+
+**Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A draft already open stays on screen and saves when the connection returns, but it is never sent then. A message already handed to CloudySuite still goes, and Undo comes back with the connection. Drafts are not saved on the device.
+
+[Privacy](#privacy) says what saved mail means for a lost device.
+
+### Notifications
+
+A person turns notifications on for each device and can turn off any mailbox they share. A notification goes out for inbound mail that lands in the inbox, and never for imported mail, sent mail, or Spam. It carries the sender and subject, encrypted so that the push service cannot read them.
+
+- **Web push is hand-written** with WebCrypto: RFC 8291 to encrypt and RFC 8292 to sign. A test checks it against RFC 8291's published message, byte for byte. The organisation's signing keys are made once, on first use.
+- **Only known push services.** A browser supplies its own endpoint and the Worker later sends a request to it, so an open list would let anyone signed in aim the Worker at any URL. `apps/mail/src/push/endpoint.ts` lists the hosts. Chromium handed out `jmt17.google.com` on 2026-11-01, which Google's documents do not name, so a browser could start using a host this list lacks. It then shows a plain failure, and the fix is one line.
+- **Access is checked when sending,** not when queuing, through the one access check. A person also needs a live session somewhere, so someone who signed out everywhere or was reset hears nothing, and neither does someone who has not used CloudySuite on any device for 60 days, because their session has ended.
+- **A flood stays small.** A device gets at most one notification every 30 seconds. The first message after a quiet spell goes at once, and the rest become one summary with no sender or subject. An alarm sends at most 50, and a device only ever owes its newest notice, so the queue cannot grow.
+- **Hostile text.** The service worker treats the decrypted message as hostile. A click opens a path built only from checked ids, on Mail's own host.
+- **Mail turned off** still stores inbound mail but tells nobody, then or later.
+
+**Not tested on Safari or an iPhone.** iPhone web push needs the app installed on the Home Screen first, and a real-device check is owed before release.
 
 ### Spam filtering
 
@@ -254,6 +307,7 @@ Every colour lives in [`src/styles/theme.css`](src/styles/theme.css) as a role, 
 
 1. Edit the values in `src/styles/theme.css`. For a new accent colour, change `--color-accent`, `--color-on-accent`, and `--color-selected`.
 2. Run `bun scripts/check-theme.mjs`.
+3. If the accent changed, run `bun scripts/generate-app-icons.mjs`. Mail's app icons are images, so a test fails until they match the theme. The manifest's colours are read from the theme when the build writes it.
 
 The script fails if a text and background pair is below the WCAG AA contrast ratio of 4.5, if a role is missing, or if a file in `src`, `apps`, or `packages` contains a colour value outside the theme file. It does not catch a misspelled class: `bg-acent` builds without an error and renders no colour.
 
@@ -264,6 +318,12 @@ Import `src/styles/app.css` in the root route with `import "../styles/app.css"`.
 ## Privacy
 
 CloudySuite relies on Cloudflare's encryption at rest. Cloudflare and the organisation's admins are inside the trust boundary, and CloudySuite is not end-to-end encrypted. In exchange, server-side search and rules work without extra steps.
+
+**Saved mail on a device is not encrypted by CloudySuite.** So people can read offline, Mail keeps up to 50 MB of recent mail in the browser. Anyone who can get into that device and read the browser's files can read it.
+
+**A device kept offline can show its saved mail for up to 59 days,** even after the person signed out on another device or an admin removed their access. It can't find out until it next connects, and then it clears itself. After 59 days with no connection, it stops showing saved mail.
+
+**If a device is lost,** an admin should reset that person's sign-in straight away, which protects everything on the server. An admin can't erase the device remotely until it next comes online and opens Mail, so until then only the device's own lock protects the saved mail. Ask people to keep a passcode or password on any device they use for Mail.
 
 ## Cloudflare limits and costs
 

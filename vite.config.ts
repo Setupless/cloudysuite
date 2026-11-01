@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { mailPwa } from "./apps/mail/src/pwa/build-plugin";
 
 export default defineConfig({
   plugins: [
@@ -10,5 +11,6 @@ export default defineConfig({
     tailwindcss(),
     tanstackStart(),
     viteReact(),
+    mailPwa(),
   ],
 });

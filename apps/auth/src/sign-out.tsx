@@ -3,6 +3,9 @@ import { IconLogout } from "@tabler/icons-react";
 import { useState } from "react";
 import { authClient } from "./client";
 
+const mailDeviceCleared = () =>
+  `${window.location.origin.replace("//auth.", "//mail.")}/device-cleared`;
+
 // The only place that signs out, so every app links here. Better Auth's route
 // exists on this hostname alone, and the session cookie covers every app. The
 // page only asks: a link in an email must not be able to sign anyone out.
@@ -14,7 +17,8 @@ export function SignOut() {
     try {
       const { error } = await authClient.signOut();
       if (error) setState("failed");
-      else window.location.assign("/sign-in");
+      // Mail's host removes what it saved on this device, then comes back to sign-in.
+      else window.location.assign(mailDeviceCleared());
     } catch {
       setState("failed");
     }

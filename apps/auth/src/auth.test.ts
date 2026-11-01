@@ -100,6 +100,50 @@ test("a user whose ban has expired stays signed in", async () => {
   expect(session?.user.email).toBe("a@example.com");
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The session was last used `daysAgo` days ago, which for a 60 day session is when
+// it was last renewed.
+function ageSession(daysAgo: number) {
+  const renewed = Date.now() - daysAgo * DAY_MS;
+  sqlite.run("UPDATE session SET updated_at = ?, expires_at = ?", [
+    renewed,
+    renewed + 60 * DAY_MS,
+  ]);
+}
+
+function sessionEnd(): number {
+  return (
+    sqlite.query("SELECT expires_at FROM session").get() as {
+      expires_at: number;
+    }
+  ).expires_at;
+}
+
+test("a session used on day 50 is still valid and is renewed for 60 more days", async () => {
+  const headers = await signedInHeaders("a@example.com");
+  ageSession(50);
+  expect(sessionEnd()).toBeLessThan(Date.now() + 11 * DAY_MS);
+  const before = Date.now();
+  expect(await getActiveSession(auth, headers)).not.toBeNull();
+  expect(sessionEnd()).toBeGreaterThanOrEqual(before + 60 * DAY_MS);
+});
+
+test("a session used again within a day is not written again", async () => {
+  const headers = await signedInHeaders("a@example.com");
+  ageSession(0.5);
+  const end = sessionEnd();
+  expect(await getActiveSession(auth, headers)).not.toBeNull();
+  expect(sessionEnd()).toBe(end);
+});
+
+test("a session unused for 61 days is over", async () => {
+  const headers = await signedInHeaders("a@example.com");
+  ageSession(61);
+  expect(await getActiveSession(auth, headers)).toBeNull();
+  expect((await readViewer(auth, database, headers)).status).toBe("signed-out");
+});
+
 test("a banned user cannot start a new session", async () => {
   await auth.api.createUser({
     body: { email: "a@example.com", password, name: "A" },

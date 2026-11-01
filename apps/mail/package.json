@@ -9,6 +9,7 @@
     "./import": "./src/import/index.ts",
     "./import-api": "./src/import/api.ts",
     "./compose-api": "./src/compose/api.ts",
+    "./device-session": "./src/pwa/session-route.ts",
     "./download": "./src/download.ts",
     "./ingest": "./src/ingest.ts",
     "./mailbox": "./src/mailbox.ts"

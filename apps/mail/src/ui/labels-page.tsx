@@ -4,7 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { deleteLabel, updateLabel } from "../functions";
 import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "../labels/store";
-import { asMailFailure, call, mailKeys, rulesQuery } from "../queries";
+import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
+import { asMailFailure, callAction, mailKeys, rulesQuery } from "../queries";
 import {
   LABEL_COLOURS,
   type LabelColour,
@@ -111,7 +112,7 @@ function LabelRow({
   const attempt = async (run: () => Promise<unknown>) => {
     onProblem(null);
     try {
-      await call(run);
+      await callAction(run);
       refresh();
       return true;
     } catch (thrown) {
@@ -168,7 +169,8 @@ function LabelRow({
         aria-label={`Delete the label ${label.name}`}
         title="Delete label"
         onClick={async () => {
-          onProblem(null);
+          onProblem(isOffline() ? OFFLINE_ACTION_REFUSED : null);
+          if (isOffline()) return;
           try {
             const { rules } = await queryClient.fetchQuery(
               rulesQuery(mailboxId),

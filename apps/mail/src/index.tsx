@@ -13,3 +13,6 @@ export {
   prefetchThreads,
 } from "./queries";
 export { redirectToFirstMailbox } from "./redirect";
+export { DevicePage } from "./pwa/device-page";
+export { mailHead } from "./pwa/head";
+export { MailRouteError } from "./pwa/offline-notice";

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>CloudySuite</title>
+    <!--stylesheets-->
+    <script type="module" src="/device-cleared.js"></script>
+  </head>
+  <body class="bg-page text-text">
+    <main class="flex min-h-dvh items-center justify-center p-6 text-center">
+      <div class="flex max-w-sm flex-col gap-3">
+        <div id="working">
+          <h1 class="text-2xl font-semibold">Checking this device</h1>
+          <p class="mt-3 text-secondary">This only takes a moment.</p>
+        </div>
+        <div id="kept" hidden>
+          <h1 class="text-2xl font-semibold">We couldn't reach CloudySuite</h1>
+          <p class="mt-3 text-secondary">
+            You can't sign out right now, and nothing was removed. If other
+            people use this computer, remove your mail from it now, then connect
+            to the internet and sign out.
+          </p>
+          <div class="mt-5 flex flex-col gap-2">
+            <button
+              id="remove"
+              type="button"
+              class="w-full cursor-pointer rounded bg-accent px-4 py-2.5 font-medium text-on-accent outline-accent focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Remove my mail from this device
+            </button>
+            <a
+              href="/"
+              class="rounded border border-line bg-panel px-4 py-2.5 font-medium text-text outline-accent focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Back to my mail
+            </a>
+          </div>
+        </div>
+        <div id="cleared" hidden>
+          <h1 class="text-2xl font-semibold">Your mail is off this device</h1>
+          <p class="mt-3 text-secondary">
+            We couldn't reach CloudySuite, so you may still be signed in.
+            Connect to the internet and open CloudySuite to sign out or sign in
+            again.
+          </p>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

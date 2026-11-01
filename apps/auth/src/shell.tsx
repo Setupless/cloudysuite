@@ -16,12 +16,15 @@ export function SuiteShell({
   user,
   navigationLabel,
   navigation,
+  signOutHref,
   children,
 }: {
   app: AppId;
   user: SignedIn;
   navigationLabel?: string;
   navigation?: ReactNode;
+  // Mail's offline stand-in, because Account can't load without a connection.
+  signOutHref?: string;
   children: ReactNode;
 }) {
   const apps: ShellApp[] = [];
@@ -37,7 +40,7 @@ export function SuiteShell({
       apps={apps}
       person={user}
       accountHref={account}
-      signOutHref={new URL("/sign-out", account).href}
+      signOutHref={signOutHref ?? new URL("/sign-out", account).href}
       navigationLabel={navigationLabel}
       navigation={navigation}
     >

@@ -58,17 +58,31 @@ export function isGatePath(pathname: string): boolean {
   return pathname === "/off" || isSetupPath(pathname);
 }
 
-export function gate(route: HostRoute, pathname: string): Gate {
+// Outside every app's prefix because it must render with no signed-in person. Only
+// Mail's service worker asks for it.
+export const OFFLINE_SHELL_PATH = "/offline-shell";
+
+// Answered while Mail is off, with an id or a 401 and no mail. Sign-out and a session
+// ending elsewhere must still clear a device then, and only this answer may clear it.
+// Only GET has a handler. Any other method would fall through to a rendered page, and
+// that page carries the signed-in person's details.
+export const DEVICE_SESSION_PATH = "/pwa/session";
+
+export function gate(route: HostRoute, pathname: string, method: string): Gate {
   switch (route.kind) {
     case "setup":
       return isSetupPath(pathname)
         ? { action: "pass" }
         : { action: "redirect", to: "/setup" };
     case "off":
-      return pathname === "/off"
+      return pathname === "/off" ||
+        (pathname === DEVICE_SESSION_PATH && method === "GET")
         ? { action: "pass" }
         : { action: "redirect", to: "/off" };
     case "app":
+      if (pathname === OFFLINE_SHELL_PATH && route.app !== "mail") {
+        return { action: "notFound" };
+      }
       return isGatePath(pathname)
         ? { action: "redirect", to: "/" }
         : { action: "pass" };

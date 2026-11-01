@@ -8,6 +8,7 @@ import {
   setFlags,
 } from "../functions";
 import { type MailListing, MOVE_DISPLAY, type MoveId } from "../model";
+import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
 import { asMailFailure, call, isRefusal, mailKeys } from "../queries";
 import {
   patchFlagsInDetail,
@@ -218,6 +219,7 @@ export function useThreadCommands(mailboxId: MailboxId, listing: MailListing) {
         action: {
           label: "Undo",
           run: () => {
+            if (refuseIfOffline()) return;
             queryClient.setQueryData(listKey, context.before.list);
             queryClient.setQueryData(
               mailKeys.mailboxes,
@@ -232,13 +234,27 @@ export function useThreadCommands(mailboxId: MailboxId, listing: MailListing) {
     onSettled: refreshUnlessBusy,
   });
 
+  // Refused here, before the list changes, and never queued: a person who archived
+  // something on a train should not be surprised by what runs when the train arrives.
+  const refuseIfOffline = (): boolean => {
+    if (!isOffline()) return false;
+    toast({ tone: "danger", message: OFFLINE_ACTION_REFUSED });
+    return true;
+  };
+  const run = (input: Command): boolean => {
+    if (refuseIfOffline()) return false;
+    command.mutate(input);
+    return true;
+  };
+
   return {
+    refuseIfOffline,
     setRead: (threadId: ThreadId, read: boolean) =>
-      command.mutate({ kind: "flags", threadId, flags: { read } }),
+      run({ kind: "flags", threadId, flags: { read } }),
     setStarred: (threadId: ThreadId, starred: boolean) =>
-      command.mutate({ kind: "flags", threadId, flags: { starred } }),
+      run({ kind: "flags", threadId, flags: { starred } }),
     move: (threadId: ThreadId, move: MoveId) =>
-      command.mutate({ kind: "move", threadId, move }),
+      run({ kind: "move", threadId, move }),
   };
 }
 

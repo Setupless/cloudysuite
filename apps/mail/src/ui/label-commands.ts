@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createLabel, type MailboxEntry, setLabel } from "../functions";
 import type { MailListing } from "../model";
-import { asMailFailure, call, mailKeys } from "../queries";
+import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
+import { asMailFailure, call, callAction, mailKeys } from "../queries";
 import {
   patchLabelInDetail,
   patchLabelInPages,
@@ -23,7 +24,7 @@ export function useCreateLabel(mailboxId: MailboxId) {
   const toast = useToast();
   return async (name: string, colour: LabelColour = "secondary") => {
     try {
-      const label = await call(() =>
+      const label = await callAction(() =>
         createLabel({ data: { mailboxId, name, colour } }),
       );
       queryClient.setQueryData<MailboxEntry[]>(mailKeys.mailboxes, (entries) =>
@@ -116,8 +117,11 @@ export function useLabelCommands(mailboxId: MailboxId, listing: MailListing) {
   });
 
   return {
-    setApplied: (threadId: ThreadId, labelId: LabelId, applied: boolean) =>
-      toggle.mutate({ threadId, labelId, applied }),
+    setApplied: (threadId: ThreadId, labelId: LabelId, applied: boolean) => {
+      if (isOffline())
+        toast({ tone: "danger", message: OFFLINE_ACTION_REFUSED });
+      else toggle.mutate({ threadId, labelId, applied });
+    },
     create: useCreateLabel(mailboxId),
   };
 }

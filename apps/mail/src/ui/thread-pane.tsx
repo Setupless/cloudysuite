@@ -17,6 +17,7 @@ import {
   parseThreadParam,
   viewParam,
 } from "../model";
+import { isOffline } from "../pwa/saved-mail";
 import {
   isRefusal,
   mailKeys,
@@ -194,7 +195,8 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
   useEffect(() => {
     if (!detail || markedRead.current) return;
     markedRead.current = true;
-    if (hasUnread) commands.setRead(threadId, true);
+    // Reading on a train stays unread: nothing here can tell the server until later.
+    if (hasUnread && !isOffline()) commands.setRead(threadId, true);
   }, [detail, hasUnread, commands, threadId]);
 
   const [overrides, setOverrides] = useState<ReadonlyMap<MessageId, boolean>>(
@@ -242,8 +244,8 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
         <ReadButton
           unread={hasUnread}
           onToggle={() => {
-            commands.setRead(threadId, hasUnread);
-            if (!hasUnread) closeThread();
+            const accepted = commands.setRead(threadId, hasUnread);
+            if (accepted && !hasUnread) closeThread();
           }}
         />
         <StarButton

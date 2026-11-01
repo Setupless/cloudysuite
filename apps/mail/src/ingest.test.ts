@@ -183,7 +183,11 @@ test("a failed write leaves no objects behind once swept, and a retry stores the
     bucket.failPutsMatching = null;
     const retry = await ingest(env, inbound(withAttachment));
     expect(retry.status).toBe("stored");
-    await instanceOf(MAILBOX_A).fireAlarm();
+    // The stored message's notification job wakes the alarm before the sweep is due.
+    const queued = () => db.exec("SELECT prefix FROM r2_deletions").toArray();
+    for (let i = 0; i < 20 && queued().length > 0; i += 1) {
+      await instanceOf(MAILBOX_A).fireAlarm();
+    }
     expect(bucket.keys()).toHaveLength(2);
     expect(db.exec("SELECT id FROM attachments").toArray()).toHaveLength(1);
     expect(db.exec("SELECT prefix FROM r2_deletions").toArray()).toEqual([]);
