@@ -17,6 +17,7 @@ export type ClaimFailure =
   | "other-account"
   | "too-many-workers"
   | "read-only"
+  | "settings-unreadable"
   | "version-unknown";
 
 export type ClaimOutcome =
@@ -75,6 +76,10 @@ const FAILURES: Record<ClaimFailure, Omit<SetupError, "code">> = {
       "Create the token again from the link on this page, keep Workers Scripts set to Edit, and paste the new token.",
     ),
   },
+  "settings-unreadable": {
+    message:
+      "Cloudflare didn't send back this Worker's settings, so we couldn't check that your token can change it. Nothing was changed. Wait a moment and try again.",
+  },
   "version-unknown": {
     message:
       "This copy of CloudySuite can't tell which version is running, so it can't check your token. Deploy it again from the Deploy button.",
@@ -85,12 +90,17 @@ export function claimError(reason: ClaimFailure): SetupError {
   return { code: "claim-failed", ...FAILURES[reason] };
 }
 
-async function canEdit(api: Cloudflare, accountId: string, scriptName: string) {
+async function editProblem(
+  api: Cloudflare,
+  accountId: string,
+  scriptName: string,
+): Promise<ClaimFailure | null> {
   try {
-    await api.rewriteScriptSettings(accountId, scriptName);
-    return true;
+    return (await api.rewriteScriptSettings(accountId, scriptName))
+      ? null
+      : "settings-unreadable";
   } catch (error) {
-    if (error instanceof CloudflareError && error.denied) return false;
+    if (error instanceof CloudflareError && error.denied) return "read-only";
     throw error;
   }
 }
@@ -155,9 +165,8 @@ export async function claimWorker(
         break;
       }
       if (!found) continue;
-      if (!(await canEdit(api, accountId, scriptName))) {
-        return { ok: false, reason: "read-only" };
-      }
+      const problem = await editProblem(api, accountId, scriptName);
+      if (problem) return { ok: false, reason: problem };
       return {
         ok: true,
         worker: { accountId, accountName, scriptName },
@@ -185,9 +194,7 @@ export async function proveClaim(
       versionId,
     );
     if (!found) return "other-account";
-    return (await canEdit(api, claim.accountId, claim.scriptName))
-      ? null
-      : "read-only";
+    return await editProblem(api, claim.accountId, claim.scriptName);
   } catch (error) {
     if (isDeniedError(error)) return "other-account";
     throw error;

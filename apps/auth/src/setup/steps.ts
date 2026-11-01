@@ -135,19 +135,23 @@ function catchAllGuide({ plan, scriptName }: StepContext): ManualGuide {
   };
 }
 
-function describeAction({ type, value = [] }: CatchAll["actions"][number]) {
+function describeAction(action: CatchAll["actions"][number]) {
+  const { type, value = [] } = action;
   const targets = value.join(" and ");
   if (type === "forward") return `is forwarded to ${targets}`;
   if (type === "worker") return `goes to another Worker, ${targets}`;
   if (type === "drop") return "is deleted";
-  return "is handled by a rule CloudySuite doesn't recognise";
+  // The person confirms this exact sentence, so two different rules must not
+  // read the same.
+  return `is handled by a rule CloudySuite doesn't recognise: ${JSON.stringify(action)}`;
 }
 
 function describeCatchAll(rule: CatchAll, emailDomain: string) {
-  const actions = rule.actions.length > 0 ? rule.actions : [{ type: "" }];
-  return `Right now, mail to any address at ${emailDomain} that has no rule of its own ${actions
-    .map(describeAction)
-    .join(" and ")}.`;
+  const handling =
+    rule.actions.length > 0
+      ? rule.actions.map(describeAction).join(" and ")
+      : "is handled by a rule with no action";
+  return `Right now, mail to any address at ${emailDomain} that has no rule of its own ${handling}.`;
 }
 
 export const SETUP_STEPS: readonly SetupStep[] = [

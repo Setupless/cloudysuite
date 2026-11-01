@@ -625,6 +625,40 @@ test("creating the first admin after setup finished changes nothing", async () =
   expect(dump()).toEqual(before);
 });
 
+test("the first admin's rows have ids in Better Auth's own format", async () => {
+  await runEverything({ secret: SECRET });
+  const { status } = await post(
+    { action: "finish", claim, choice, admin },
+    { secret: SECRET },
+  );
+  expect(status).toBe(200);
+  const auth = createAuth({
+    database: d1,
+    secret: SECRET,
+    primaryDomain: "example.com",
+    origins: appOrigins(
+      "example.com",
+      new Request("https://auth.example.com/"),
+    ),
+  });
+  await auth.api.createUser({
+    body: {
+      email: "second@other.example.net",
+      password: "correct horse battery",
+      name: "Second",
+      role: "user",
+    },
+  });
+  const users = sqlite.query("SELECT id FROM user").all() as { id: string }[];
+  const accounts = sqlite.query("SELECT id FROM account").all() as {
+    id: string;
+  }[];
+  expect(users.length).toBe(2);
+  expect(accounts.length).toBe(2);
+  for (const { id } of [...users, ...accounts])
+    expect(id).toMatch(/^[a-zA-Z0-9]{32}$/);
+});
+
 test("an address sign-in would refuse is refused at setup", async () => {
   await runEverything({ secret: SECRET });
   const { status } = await post(
@@ -977,6 +1011,25 @@ test.each([
   },
 );
 
+test("a confirmation for one unrecognised rule does not cover another", async () => {
+  const zone = fake.state.zones.get(ZONE);
+  const first = { enabled: true, actions: [{ type: "archive", value: ["a"] }] };
+  const second = {
+    enabled: true,
+    actions: [{ type: "archive", value: ["b"] }],
+  };
+  if (zone) zone.catchAll = first;
+  const seen = await runStep("catch-all", "check");
+  if (seen.state !== "needs-confirmation") throw new Error(seen.state);
+  expect(seen.current).toContain('{"type":"archive","value":["a"]}');
+
+  if (zone) zone.catchAll = second;
+  const { body } = await post(stepBody({ confirmReplace: seen.current }));
+  expect(body.result.state).toBe("needs-confirmation");
+  expect(body.result.current).toContain('{"type":"archive","value":["b"]}');
+  expect(catchAll()).toEqual(second);
+});
+
 test("a confirmation does not cover a rule that changed since the person saw it", async () => {
   const zone = fake.state.zones.get(ZONE);
   if (zone) zone.catchAll = FORWARD;
@@ -1165,23 +1218,35 @@ test("default settings with nothing set write back cleanly", async () => {
 });
 
 test.each([
-  ["reading", "GET"],
-  ["writing", "PATCH"],
+  ["no result", null],
+  ["an empty result", {}],
+  ["only unset settings", { logpush: null, tags: null }],
+  ["only settings we don't know", { something_new: true }],
 ])(
-  "settings with no result when %s prove nothing, and nothing is written blind",
-  async (_name, method) => {
+  "a settings read with %s refuses the proof and writes nothing",
+  async (_name, result) => {
     const original = fake.fetch;
     deps.fetch = async (url, init) =>
-      url.endsWith("/script-settings") && init.method === method
-        ? Response.json({ success: true, result: null })
+      url.endsWith("/script-settings") && init.method === "GET"
+        ? Response.json({ success: true, result })
         : original(url, init);
     const { status, body } = await post({
       action: "claim",
       token: OWNER_TOKEN,
     });
-    expect(status).toBe(502);
-    expect(body.error.message).toContain("couldn't check your token");
-    if (method === "GET")
-      expect(fake.calls.filter((call) => call.method === "PATCH")).toEqual([]);
+    expect(status).toBe(403);
+    expect(body.error.message).toContain("Nothing was changed");
+    expect(fake.calls.filter((call) => call.method === "PATCH")).toEqual([]);
   },
 );
+
+test("a settings write with no result proves nothing", async () => {
+  const original = fake.fetch;
+  deps.fetch = async (url, init) =>
+    url.endsWith("/script-settings") && init.method === "PATCH"
+      ? Response.json({ success: true, result: null })
+      : original(url, init);
+  const { status, body } = await post({ action: "claim", token: OWNER_TOKEN });
+  expect(status).toBe(502);
+  expect(body.error.message).toContain("couldn't check your token");
+});

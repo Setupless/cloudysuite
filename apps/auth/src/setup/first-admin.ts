@@ -29,12 +29,12 @@ export async function createFirstAdmin({
   plan: DomainPlan;
   admin: FirstAdminInput;
 }): Promise<boolean> {
-  const { password } = await auth.$context;
+  const { password, generateId } = await auth.$context;
   const passwordHash = await password.hash(admin.password);
 
   const db = drizzle(database);
   const now = new Date();
-  const userId = crypto.randomUUID() as UserId;
+  const userId = generateId({ model: "user" }) as UserId;
   const mailboxId = crypto.randomUUID() as MailboxId;
   const domainRows =
     plan.appDomain === plan.emailDomain
@@ -56,7 +56,7 @@ export async function createFirstAdmin({
         updatedAt: now,
       }),
       db.insert(account).values({
-        id: crypto.randomUUID(),
+        id: generateId({ model: "account" }) as string,
         accountId: userId,
         providerId: "credential",
         userId,
