@@ -30,7 +30,9 @@ function createMailQueryClient() {
       mutations: { networkMode: "always" },
       queries: {
         networkMode: "always",
-        staleTime: 20_000,
+        // Only long enough that the mail in the first HTML isn't fetched again as the
+        // page wakes up. Opening a folder or a conversation after that asks the server.
+        staleTime: 2_000,
         retry: retryUnlessRefused,
         refetchOnWindowFocus: true,
         // Query only stops its timed refresh while hidden. A request from a tab nobody

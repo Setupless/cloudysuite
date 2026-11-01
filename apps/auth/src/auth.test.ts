@@ -152,6 +152,26 @@ test("a banned user cannot start a new session", async () => {
   expect((await signIn("a@example.com")).status).toBe(403);
 });
 
+test("only the right password learns that an account is suspended", async () => {
+  await auth.api.createUser({
+    body: { email: "a@example.com", password, name: "A" },
+  });
+  const attempt = async (tried: string) => {
+    const response = await auth.handler(
+      new Request(`${AUTH}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: AUTH },
+        body: JSON.stringify({ email: "a@example.com", password: tried }),
+      }),
+    );
+    return (await response.json()) as { code?: string };
+  };
+  const wrong = await attempt("not the right password");
+  sqlite.run("UPDATE user SET banned = 1");
+  expect(await attempt("not the right password")).toEqual(wrong);
+  expect((await attempt(password)).code).toBe("BANNED_USER");
+});
+
 function addPasskey(email: string) {
   sqlite.run(
     `INSERT INTO passkey (id, public_key, user_id, credential_id, counter, device_type, backed_up)

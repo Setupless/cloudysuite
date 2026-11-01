@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { readDrafts } from "../../pwa/saved-mail";
-import { call, mailKeys, REFRESH_MS } from "../../queries";
+import { call, mailKeys } from "../../queries";
 import type { MailboxId } from "../../types";
 import {
   getComposeContext,
@@ -10,6 +10,8 @@ import {
 import type { OutgoingAttachment, OutgoingId, OutgoingSummary } from "../types";
 
 const ACTIVE_REFRESH_MS = 1_500;
+// Nothing here is new mail. Someone's own sends use the faster rate above.
+const IDLE_REFRESH_MS = 60_000;
 
 const composeKey = (mailboxId: MailboxId) =>
   [...mailKeys.all(mailboxId), "compose"] as const;
@@ -43,7 +45,7 @@ export const outgoingQuery = (mailboxId: MailboxId) =>
     queryFn: () =>
       call(() => readDrafts(() => listOutgoing({ data: { mailboxId } }))),
     refetchInterval: (query) =>
-      query.state.data?.some(isOnItsWay) ? ACTIVE_REFRESH_MS : REFRESH_MS,
+      query.state.data?.some(isOnItsWay) ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
 

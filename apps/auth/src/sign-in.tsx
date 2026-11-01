@@ -9,7 +9,7 @@ type Failure = { status: number; code?: string } | null;
 
 const TOO_MANY_TRIES = "That's too many tries. Wait a minute, then try again.";
 
-const SUSPENDED =
+export const SUSPENDED =
   "Your account has been suspended. Ask your admin if you think this is a mistake.";
 const USE_PASSKEY =
   "Your organisation asks you to sign in with your passkey, because this account has no authenticator app.";

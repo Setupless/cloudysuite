@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.tsx",
     "./account": "./src/account/functions.ts",
+    "./account-address": "./src/account-address.ts",
     "./admin": "./src/admin/functions.ts",
     "./guard": "./src/guard.ts",
     "./handler": "./src/handler.ts",

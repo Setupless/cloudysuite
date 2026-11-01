@@ -137,3 +137,15 @@ test("a wrong, used, or expired link is refused without hashing a password", asy
   expect(await countHashes(kit, () => finish(token))).toBe(1);
   expect(await countHashes(kit, () => finish(token))).toBe(0);
 });
+
+test("a suspended person keeps the new password, and it works once they are back", async () => {
+  kit.sqlite.run("UPDATE user SET banned = 1 WHERE id = ?", [member]);
+  const token = await issueResetLink(kit.database, member);
+  expect((await readResetLink(kit.database, token)).valid).toBe(true);
+  expect((await finish(token)).ok).toBe(true);
+
+  expect((await signIn(kit, "m@example.com", NEW_PASSWORD)).status).toBe(403);
+
+  kit.sqlite.run("UPDATE user SET banned = 0 WHERE id = ?", [member]);
+  expect((await signIn(kit, "m@example.com", NEW_PASSWORD)).status).toBe(200);
+});
