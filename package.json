@@ -21,6 +21,7 @@
   "dependencies": {
     "@cloudysuite/auth": "workspace:*",
     "@cloudysuite/mail": "workspace:*",
+    "@cloudysuite/storage": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",
     "@tanstack/react-router": "1.170.46",
