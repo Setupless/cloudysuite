@@ -164,6 +164,16 @@ The repository is a Bun workspace monorepo that builds into the one Worker:
 
 The Deploy button treats a subdirectory as [the root of the new repository](https://developers.cloudflare.com/workers/platform/deploy-buttons/), and the app inside must be fully isolated. A Worker in `apps/worker` would lose its workspace siblings, so the Worker stays at the root and the button points at the root. The first scaffold must prove this layout with a real Deploy button run.
 
+### Local development
+
+One Worker routes every app by hostname, and agents run in parallel worktrees. Each checkout needs its own stable app hostnames, without port numbers. [portless](https://github.com/vercel-labs/portless) provides them.
+
+The first `bun run dev` asks for `sudo` to bind port 443 and trust a local certificate. It starts the proxy with wildcard routing, because `auth` and `mail` share one Vite server.
+
+A proxy that is already running without wildcard routing returns a portless 404 for both apps. Run `bunx portless proxy stop`, then start again.
+
+`bunx vite dev` skips portless and serves the same hostnames on port 5173.
+
 ## Git and CI
 
 `main` is what the Deploy button copies, so it must always be deployable. We use one long-lived branch, `main`, and short-lived branches that merge through a PR. A `develop` branch would add a second state to keep healthy, and deployers would never see it.
@@ -185,6 +195,7 @@ We build around the TanStack libraries, so that the product is fast for end user
 - Bun as the package manager, workspace manager, script runner, test runner (`bun test`), and formatter (`bun fmt`)
 - oxc for linting
 - Tabler icons
+- portless for named local development URLs. It needs Node 24 or later and is a development tool only.
 
 Bun is a development tool here. Production code runs on the Workers runtime, so it cannot use Bun-specific APIs. `bun test` also runs on Bun, so a passing test does not prove behaviour that depends on the Workers runtime, such as Durable Objects or the `email()` handler. Run that behaviour on the Workers runtime as well.
 

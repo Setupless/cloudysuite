@@ -6,10 +6,10 @@
 
 - `bun fmt` formats the code.
 - `bun run check` runs every CI check except the PR format check, including the production build and `tsc`.
-- `bun run dev` serves `http://auth.localhost:5173` and `http://mail.localhost:5173` through Vite.
-- `bun run build && bunx wrangler dev` serves the production build on the Workers runtime.
+- `bun run dev` serves `https://auth.cloudysuite.localhost` and `https://mail.cloudysuite.localhost` through portless and Vite. In a linked worktree, the branch name goes before `cloudysuite`, such as `https://auth.my-branch.cloudysuite.localhost`.
+- `bun run build && bunx wrangler dev` serves the production build on the Workers runtime. It uses those same hostnames on port 8787 over `http`, such as `http://auth.cloudysuite.localhost:8787`.
 - `curl -X POST --data-binary @message.eml 'http://localhost:8787/cdn-cgi/handler/email?from=a@example.org&to=b@localhost'` sends inbound mail to `wrangler dev`.
-- `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores `localhost` as the primary domain.
+- `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores this checkout's portless hostname as the primary domain. Run it again after a worktree's branch changes name.
 - `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
 - `bun test` runs the tests on Bun, not on the Workers runtime.
 - `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
