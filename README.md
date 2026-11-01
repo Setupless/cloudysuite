@@ -29,7 +29,7 @@ Later ideas include a password manager, docs, and sheets.
 
 Every deployment contains every released app. An admin can turn each app off for the whole organisation, for example when the organisation keeps another mail provider.
 
-- A person who opens a turned-off app sees a page that says an admin turned it off. The app also leaves the app switcher.
+- A person who opens a turned-off app sees a page that says an admin turned it off, with a link to Account. The app also leaves the app switcher.
 - The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
@@ -219,6 +219,8 @@ Anyone can link to `/device-cleared`, so opening it never clears anything for a 
 Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because a `GET` of `/pwa/session` is the one Mail request that gets an answer while Mail is off. It returns a person's id or a 401, and no mail.
 
 **A tab nobody is looking at makes no requests.** Each request renews the session, so a forgotten background tab would otherwise keep someone signed in forever. Timed refreshes, saving mail for offline, and reconnecting all wait until the tab is visible again, then catch up at once. A visible tab counts as use, even with nobody at the screen.
+
+**An open tab refreshes every 30 seconds, with no websockets.** That covers the list, the sidebar's counts, and the open conversation, which is three requests every 30 seconds, plus one a minute for drafts and sends in progress: 7 requests a minute for each visible tab, and about 3,400 in an 8-hour day. A list scrolled past its first page costs one more request a page. Opening a folder or a conversation asks the server straight away, so what it shows is fresh even if the timer hasn't fired. The same refresh is how a tab finds out that its session has ended: its next request gets a 401, the device clears, and the browser goes to Sign in.
 
 **Writing needs a connection.** Offline, Write, Reply, and Forward say so and open nothing, and Send is refused and never queued. A draft already open stays on screen and saves when the connection returns, but it is never sent then. A message already handed to CloudySuite still goes, and Undo comes back with the connection. Drafts are not saved on the device.
 

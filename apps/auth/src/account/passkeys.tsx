@@ -1,4 +1,11 @@
-import { Button, Modal, Notice, Section, TextField } from "@cloudysuite/ui";
+import {
+  Button,
+  Modal,
+  Notice,
+  Section,
+  TextField,
+  useHydrated,
+} from "@cloudysuite/ui";
 import { IconKey, IconPlus } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -62,6 +69,15 @@ export function AddPasskeyForm({
       </div>
       {error && <Notice tone="danger">{error}</Notice>}
     </form>
+  );
+}
+
+function AddedDate({ date }: { date: Date }) {
+  const hydrated = useHydrated();
+  return (
+    <p className={`text-sm text-secondary ${hydrated ? "" : "invisible"}`}>
+      Added {hydrated ? date.toLocaleDateString() : ""}
+    </p>
   );
 }
 
@@ -141,11 +157,7 @@ function PasskeyRow({
           />
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{name}</p>
-            {passkey.addedAt && (
-              <p className="text-sm text-secondary">
-                Added {passkey.addedAt.toLocaleDateString()}
-              </p>
-            )}
+            {passkey.addedAt && <AddedDate date={passkey.addedAt} />}
           </div>
           <Button variant="quiet" onClick={() => setMode("rename")}>
             Rename

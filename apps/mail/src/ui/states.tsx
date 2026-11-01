@@ -1,18 +1,11 @@
-import { Button } from "@cloudysuite/ui";
+import { Button, useHydrated } from "@cloudysuite/ui";
 import { IconAlertCircle } from "@tabler/icons-react";
-import { useSyncExternalStore } from "react";
 import { formatFullDate, formatListDate } from "./format";
 
-const noSubscription = () => () => {};
-
-// The server does not know the reader's time zone, so a date stays blank until the
-// browser can write it, instead of flashing a time that then changes.
+// A date stays blank until the browser can write it, instead of flashing a time that
+// then changes.
 export function ThreadDate({ timestamp }: { timestamp: number }) {
-  const hydrated = useSyncExternalStore(
-    noSubscription,
-    () => true,
-    () => false,
-  );
+  const hydrated = useHydrated();
   return (
     <time
       dateTime={new Date(timestamp).toISOString()}

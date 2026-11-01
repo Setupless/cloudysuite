@@ -29,7 +29,7 @@ import type { SearchPage } from "./search/store";
 import { getSenderLists } from "./spam/functions";
 import type { MailboxId, MessageId, ThreadId } from "./types";
 
-export const REFRESH_MS = 60_000;
+export const REFRESH_MS = 30_000;
 
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";

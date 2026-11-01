@@ -1,10 +1,11 @@
 import { Button, Page, TextField } from "@cloudysuite/ui";
-import { IconKey, IconLink } from "@tabler/icons-react";
-import type { FormEvent } from "react";
+import { IconKey, IconLink, IconLock } from "@tabler/icons-react";
+import { type FormEvent, useState } from "react";
 import { PASSWORD_HINT } from "../account/password";
 import { useAction } from "../account/use-action";
 import type { ResetView } from "../admin/reset";
 import { authClient } from "../client";
+import { SUSPENDED } from "../sign-in";
 import { finishReset } from "./functions";
 
 export function ResetPage({
@@ -15,11 +16,20 @@ export function ResetPage({
   reset: ResetView;
 }) {
   const { pending, error, run } = useAction();
+  const [suspended, setSuspended] = useState(false);
 
   if (!reset.valid) {
     return (
       <Page icon={IconLink} title="This link doesn't work any more">
         It has already been used or has expired. Ask your admin for a new one.
+      </Page>
+    );
+  }
+
+  if (suspended) {
+    return (
+      <Page icon={IconLock} title="Your new password is saved">
+        {SUSPENDED}
       </Page>
     );
   }
@@ -34,7 +44,8 @@ export function ResetPage({
         email: outcome.email,
         password,
       });
-      window.location.assign(failure ? "/sign-in" : "/");
+      if (failure?.code === "BANNED_USER") setSuspended(true);
+      else window.location.assign(failure ? "/sign-in" : "/");
     });
   }
 

@@ -6,9 +6,22 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 export * from "./shell";
+
+const noSubscription = () => () => {};
+
+// The server knows neither the reader's time zone nor their language. Anything written
+// for them waits until this is true, so the first HTML and the browser's first render
+// say the same thing.
+export const useHydrated = (): boolean =>
+  useSyncExternalStore(
+    noSubscription,
+    () => true,
+    () => false,
+  );
 
 export function Page({
   icon: PageIcon,
