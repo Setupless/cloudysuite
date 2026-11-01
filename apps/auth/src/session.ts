@@ -2,9 +2,10 @@ import { env } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { APPS, type AppId, isAppId } from "../../../src/routing";
+import { APPS, type AppId } from "../../../src/routing";
 import { getActiveSession, readViewer, type SessionUser } from "./auth";
 import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
+import { parsePath, parsePlace } from "./place";
 import { getAuth } from "./server";
 
 export type { SessionUser };
@@ -13,11 +14,6 @@ export type SignedIn = SessionUser & {
   // Address of every app this person can open. A turned-off app has no entry.
   apps: Partial<Record<AppId, string>>;
 };
-
-function parsePlace(input: { app: string; path: string }) {
-  if (!isAppId(input.app)) throw new Error("Unknown app.");
-  return { app: input.app, path: input.path };
-}
 
 async function readSignedIn({ app, path }: { app: AppId; path: string }) {
   const request = getRequest();
@@ -51,7 +47,7 @@ export function requireUser(
 }
 
 const requireAdminOnServer = createServerFn({ method: "GET" })
-  .validator((input: { path: string }) => input)
+  .validator(parsePath)
   .handler(async ({ data }): Promise<SignedIn> => {
     const signedIn = await readSignedIn({ app: "auth", path: data.path });
     if (signedIn.role !== "admin") throw redirect({ href: "/" });
