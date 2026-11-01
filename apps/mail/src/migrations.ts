@@ -307,6 +307,15 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
     )`,
     `CREATE TABLE push_muted_users (user_id TEXT PRIMARY KEY) WITHOUT ROWID`,
   ],
+  // A delivery that has asked Jev and not yet stored its message. A retry that finds
+  // one spends nothing, so an answer is paid for at most once. The commit removes it,
+  // and from then on the stored message's hash stops any repeat.
+  [
+    `CREATE TABLE jev_claims (
+      raw_hash TEXT PRIMARY KEY,
+      claimed_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 export function applyMigrations(

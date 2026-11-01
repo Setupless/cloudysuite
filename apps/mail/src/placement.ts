@@ -1,12 +1,13 @@
 import {
   applyRules,
+  descriptionsToAsk,
   factsOf,
   NO_OUTCOME,
   type RuleOutcome,
 } from "./rules/evaluate";
 import { RuleStore } from "./rules/store";
 import { RULE_MOVED, SpamStore } from "./spam/store";
-import type { SpamVerdict } from "./spam/types";
+import { opinionCouldDecide, type SpamVerdict } from "./spam/types";
 import type { SqlDriver } from "./sql";
 import type { Folder, LabelId, NewMessage } from "./types";
 
@@ -58,6 +59,25 @@ export function triageInbound(message: NewMessage, db: SqlDriver): Placement {
   const folder = move ?? "inbox";
   const spam = folder === "spam" ? RULE_MOVED : null;
   return { folder, read, starred, labelIds, spam };
+}
+
+export type JevPlan = { askSpam: boolean; descriptions: string[] };
+
+export const NOTHING_TO_ASK: JevPlan = { askSpam: false, descriptions: [] };
+
+// What the optional check could still change for this message. Mail the filter already
+// files is not sent to a third party, even to label it, and a label it misses is added
+// by no one: "Not spam" brings such a message back without that rule's label.
+export function jevPlanFor(message: NewMessage, db: SqlDriver): JevPlan {
+  const verdict = new SpamStore(db).judge(message);
+  if (verdict.spam) return NOTHING_TO_ASK;
+  return {
+    askSpam: opinionCouldDecide(verdict),
+    descriptions: descriptionsToAsk(
+      new RuleStore(db).enabled(),
+      factsOf(message),
+    ),
+  };
 }
 
 // Imported and sent mail never reaches triage, so rules and spam skip it.

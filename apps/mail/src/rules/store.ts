@@ -1,7 +1,9 @@
 import type { SqlDriver, SqlRow } from "../sql";
 import type { LabelId } from "../types";
 import {
+  descriptionsIn,
   hasAction,
+  MAX_DESCRIPTIONS,
   MAX_RULES,
   parseRuleDraft,
   type Rule,
@@ -71,6 +73,15 @@ export class RuleStore {
     return this.#read("WHERE enabled = 1");
   }
 
+  #tooManyDescriptions(draft: RuleDraft, replacing: RuleId | null): boolean {
+    const added = descriptionsIn(draft.conditions);
+    if (added.length === 0) return false;
+    const others = this.list()
+      .filter((rule) => rule.id !== replacing)
+      .flatMap((rule) => descriptionsIn(rule.conditions));
+    return new Set([...others, ...added]).size > MAX_DESCRIPTIONS;
+  }
+
   #labelIsGone(draft: RuleDraft): boolean {
     const { labelId } = draft.actions;
     if (labelId === null) return false;
@@ -98,6 +109,7 @@ export class RuleStore {
         };
       }
       if (this.#labelIsGone(draft)) return labelGone();
+      if (this.#tooManyDescriptions(draft, null)) return tooManyDescriptions();
       const [row] = this.#db
         .exec<{ id: number }>(
           `INSERT INTO rules (name, position, enabled, conditions, actions, created_at)
@@ -117,6 +129,7 @@ export class RuleStore {
   update(id: RuleId, draft: RuleDraft): RuleWrite {
     return this.#db.transaction(() => {
       if (this.#labelIsGone(draft)) return labelGone();
+      if (this.#tooManyDescriptions(draft, id)) return tooManyDescriptions();
       const [row] = this.#db
         .exec<{ id: number }>(
           `UPDATE rules SET name = ?, enabled = ?, conditions = ?, actions = ?
@@ -176,4 +189,10 @@ const labelGone = (): RuleWrite => ({
   ok: false,
   status: 409,
   message: "That label isn't here anymore. Choose another one.",
+});
+
+const tooManyDescriptions = (): RuleWrite => ({
+  ok: false,
+  status: 409,
+  message: `A mailbox can have up to ${MAX_DESCRIPTIONS} different descriptions across its rules. Take one out of another rule, then try again.`,
 });

@@ -103,6 +103,10 @@ export type NewMessage = {
   authResults: AuthResults | null;
   // Only inbound mail is scored, so only inbound mail has these.
   spamFacts?: SpamFacts | undefined;
+  // The rule descriptions the optional Jev check said this message fits. Absent means
+  // there is no key, so rules that use descriptions are paused. A failed check is an
+  // empty list: nothing fits, and the rules still run.
+  fits?: readonly string[] | undefined;
   searchBody: string;
   bodies: NewBody[];
   attachments: NewAttachment[];

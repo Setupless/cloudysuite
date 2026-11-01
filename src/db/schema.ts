@@ -275,6 +275,15 @@ export const orgSettings = sqliteTable(
   (table) => [check("org_settings_one_row", sql`${table.id} = 1`)],
 );
 
+// One row a month across the organisation, so the admin screen reads one row rather
+// than waking every mailbox.
+export const jevUsage = sqliteTable("jev_usage", {
+  month: text().primaryKey(),
+  checks: integer().notNull().default(0),
+  failed: integer().notNull().default(0),
+  inputTokens: integer("input_tokens").notNull().default(0),
+});
+
 export const pushSubscriptions = sqliteTable(
   "push_subscriptions",
   {

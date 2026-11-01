@@ -10,6 +10,7 @@ import {
   snippetOf,
   truncateUtf8,
 } from "./parse";
+import { consultJev, noteJevUsage } from "./jev";
 import { attachmentKey, bodyKey, newMessagePrefix, rawKey } from "./r2-keys";
 import { findMisleadingLinks, listDomainOf } from "./spam/signals";
 import { mailboxStub } from "./stub";
@@ -187,11 +188,24 @@ export async function ingest(
     throw error;
   }
 
-  const message = describeMessage(input, raw, rawHash, prefix, parsed, objects);
-  return (await stub.commit(
+  const described = describeMessage(
+    input,
+    raw,
+    rawHash,
+    prefix,
+    parsed,
+    objects,
+  );
+  const { message, answers } =
+    input.source === "inbound"
+      ? await consultJev(env, stub, described)
+      : { message: described, answers: null };
+  const result = (await stub.commit(
     message,
     input.source === "inbound" && !input.quiet ? mailboxId : null,
   )) as IngestResult;
+  await noteJevUsage(env, answers);
+  return result;
 }
 
 export type PreparedImport =

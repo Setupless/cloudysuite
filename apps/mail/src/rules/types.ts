@@ -4,6 +4,9 @@ export const MAX_RULES = 100;
 export const MAX_CONDITIONS = 5;
 export const MAX_CONDITION_LENGTH = 200;
 export const MAX_RULE_NAME_LENGTH = 100;
+// Across a mailbox's rules, so one message can cost at most this many questions. The
+// same words in two rules count once, because they are asked once.
+export const MAX_DESCRIPTIONS = 5;
 
 export type RuleId = number & { readonly __brand: "RuleId" };
 
@@ -16,12 +19,24 @@ export const RULE_TEXT_FIELDS = [
 ] as const;
 export type RuleTextField = (typeof RULE_TEXT_FIELDS)[number];
 
-// Add a later signal, such as a spam verdict or a Jev answer, as a new variant here.
-// CONDITION_TESTS in evaluate.ts then won't compile until it says how to test it.
+// Add a later signal as a new variant here. CONDITION_TESTS in evaluate.ts then won't
+// compile until it says how to test it.
 export type RuleCondition =
   | { kind: "contains"; field: RuleTextField; text: string }
   | { kind: "hasAttachment" }
-  | { kind: "sentToAlias"; address: string };
+  | { kind: "sentToAlias"; address: string }
+  // Words a manager wrote, such as "an invoice", that the optional Jev check judges.
+  | { kind: "looksLike"; text: string };
+
+export const descriptionsIn = (
+  conditions: readonly RuleCondition[],
+): string[] =>
+  conditions.flatMap((one) => (one.kind === "looksLike" ? [one.text] : []));
+
+// Without a key, a rule with a description is paused as a whole. It must not keep
+// running on its other conditions, because they were written to work together.
+export const needsJev = ({ conditions }: { conditions: RuleCondition[] }) =>
+  descriptionsIn(conditions).length > 0;
 
 export type RuleMatch = "all" | "any";
 
@@ -84,6 +99,14 @@ function parseCondition(raw: unknown): RuleCondition | string {
         return `Keep each condition under ${MAX_CONDITION_LENGTH} characters.`;
       }
       return { kind: "contains", field, text };
+    }
+    case "looksLike": {
+      const text = typeof raw.text === "string" ? cleanText(raw.text) : "";
+      if (text === "") return "Describe what the message should look like.";
+      if (text.length > MAX_CONDITION_LENGTH) {
+        return `Keep each condition under ${MAX_CONDITION_LENGTH} characters.`;
+      }
+      return { kind: "looksLike", text };
     }
     default:
       return "We couldn't read one of the conditions.";

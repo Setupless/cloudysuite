@@ -1,3 +1,4 @@
+import { createTestDatabase } from "../../../src/db/test-database";
 import { Database } from "bun:sqlite";
 import { mock, setSystemTime } from "bun:test";
 import type { MailboxId } from "@cloudysuite/access";
@@ -173,12 +174,14 @@ type Instance = {
 
 // The real Durable Object class on bun:sqlite. This proves the logic and the SQL.
 // It does not prove the Workers runtime, so run that behaviour there as well.
+let emptyDirectory: D1Database | undefined;
+
 export function createTestEnv(database?: D1Database) {
   const bucket = new FakeBucket();
   const email = new FakeEmail();
   const instances = new Map<string, Instance>();
   const env = {
-    DB: database,
+    DB: database ?? (emptyDirectory ??= createTestDatabase().d1),
     BUCKET: bucket,
     EMAIL: email,
     MAILBOX: {

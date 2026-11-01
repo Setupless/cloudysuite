@@ -1,4 +1,10 @@
-import { type Placement, placementFor } from "./placement";
+import {
+  type JevPlan,
+  jevPlanFor,
+  NOTHING_TO_ASK,
+  type Placement,
+  placementFor,
+} from "./placement";
 import { SpamStore } from "./spam/store";
 import { parseStoredVerdict, type SpamTraining } from "./spam/types";
 import type { SqlDriver, SqlRow } from "./sql";
@@ -42,6 +48,9 @@ const MAX_PAGE_SIZE = 100;
 const MAX_SENDERS_IN_VIEW = 5;
 const MAX_SUBJECT_CANDIDATES = 100;
 export const DELETION_SETTLE_MS = 5 * 60 * 1000;
+
+// Long enough to outlast any redelivery of the same attempt.
+const JEV_CLAIM_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 
 type RefRow = SqlRow & {
   id: number;
@@ -255,8 +264,41 @@ export class MailboxStore {
     return row ? toRef(row) : null;
   }
 
+  // Takes the claim in the transaction that reads the plan, so two copies of a message
+  // arriving together can't both ask. A claim left by a dead attempt means that attempt
+  // may have been billed, so its retry goes without.
+  planJevCheck(message: NewMessage): JevPlan {
+    return this.#db.transaction(() => {
+      if (this.findByHash(message.rawHash)) return NOTHING_TO_ASK;
+      const plan = jevPlanFor(message, this.#db);
+      if (!plan.askSpam && plan.descriptions.length === 0) {
+        return NOTHING_TO_ASK;
+      }
+      const now = Date.now();
+      this.#db.exec(
+        "DELETE FROM jev_claims WHERE claimed_at < ?",
+        now - JEV_CLAIM_KEPT_MS,
+      );
+      const [claimed] = this.#db
+        .exec(
+          `INSERT INTO jev_claims (raw_hash, claimed_at) VALUES (?, ?)
+           ON CONFLICT (raw_hash) DO NOTHING RETURNING raw_hash`,
+          message.rawHash,
+          now,
+        )
+        .toArray();
+      return claimed ? plan : NOTHING_TO_ASK;
+    });
+  }
+
   commit(message: NewMessage): CommitResult {
     return this.#db.transaction(() => {
+      if (message.source === "inbound") {
+        this.#db.exec(
+          "DELETE FROM jev_claims WHERE raw_hash = ?",
+          message.rawHash,
+        );
+      }
       const existing = this.findByHash(message.rawHash);
       if (existing) {
         // The losing copy's objects are its own, unless this is the winner's

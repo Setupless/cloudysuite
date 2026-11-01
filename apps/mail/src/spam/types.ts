@@ -24,7 +24,7 @@ export type SpamReason =
   | { kind: "allowNotProved"; entry: string }
   | { kind: "markedRealNotProved"; address: string }
   | { kind: "movedByRule" }
-  | { kind: "opinion"; why: string };
+  | { kind: "opinion" };
 
 export type SpamVerdict = {
   spam: boolean;
@@ -70,15 +70,36 @@ export const REASON_POINTS: Record<SpamReason["kind"], number> = {
   allowNotProved: 0,
   markedRealNotProved: 0,
   movedByRule: 0,
+  // Less than the threshold, so the model's word alone never files a message.
   opinion: 6,
 };
+
+// A person's decision, or mail this mailbox asked for. A model's guess must not put
+// these in Spam, because real mail in Spam is the worst mistake this filter can make.
+const OPINION_CANNOT_OUTWEIGH: ReadonlySet<SpamReason["kind"]> = new Set([
+  "allowNotProved",
+  "markedRealNotProved",
+  "replyToSent",
+  "learnedReal",
+]);
+
+export const opinionCanCount = (reasons: readonly SpamReason[]) =>
+  !reasons.some((reason) => OPINION_CANNOT_OUTWEIGH.has(reason.kind));
+
+// Mail it can't change is already decided, so it spends no tokens and leaves nothing
+// with a third party.
+export const opinionCouldDecide = ({ spam, score, reasons }: SpamVerdict) =>
+  !spam &&
+  score + REASON_POINTS.opinion >= SPAM_THRESHOLD &&
+  opinionCanCount(reasons);
 
 // What the Worker works out before the commit, because the transaction can't read a
 // large body from R2 or wait on the network.
 export type MisleadingLink = { shown: string; actual: string };
 
-// How the optional Jev check will give its answer. Nothing fills it without a key.
-export type SpamOpinion = { spam: boolean; why: string };
+// How the optional Jev check gives its answer. Nothing fills it without a key. It has
+// no words of its own, so nothing the model says can reach a person's screen.
+export type SpamOpinion = { spam: boolean };
 
 export type SpamFacts = {
   misleadingLinks: MisleadingLink[];

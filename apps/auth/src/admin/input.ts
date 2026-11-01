@@ -31,6 +31,20 @@ export function readFlag(input: unknown, key: string): boolean {
   return value;
 }
 
+// The form can't send this without the box ticked, so this is someone going around it.
+export function readJevAcknowledgement(input: unknown): true {
+  if ((input as { acknowledged?: unknown } | null)?.acknowledged !== true) {
+    throw new Response(
+      JSON.stringify({
+        message:
+          "Confirm that you understand message content goes to Jev before you save a key.",
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  return true;
+}
+
 export const readUserId = (input: unknown): UserId =>
   readText(input, "userId") as UserId;
 

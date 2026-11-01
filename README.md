@@ -251,6 +251,7 @@ Some details of how this works:
 - A failed DMARC check decides alone only when the sender's domain says failing mail isn't theirs, with a policy of `quarantine` or `reject`. This includes a mailing list that breaks such a domain's check, so some real mail lands in Spam this way. With `p=none` or no stated policy it is one small sign, because half-set records and mailing lists fail this way all the time and Cloudflare turns mail away only when the policy says to. Cloudflare's first `Authentication-Results` header is the only one read, because anything below it is the sender's to forge.
 - Every other signal is something real mail also does, so it takes several together: a name showing another address, replies going to another site, a link whose text names another site, a program file from a stranger, a subject in capitals, and a broken SPF or DKIM result. Only a pass for the `From` domain cancels a failed SPF result. A signature for some other domain says nothing, because anyone can sign for their own domain.
 - A reply to mail this mailbox sent counts strongly for a message, going by a `Message-ID` this mailbox wrote in its `In-Reply-To` or `References`. It outweighs several odd signs. It doesn't outweigh the block list or an enforcing DMARC policy, because a `Message-ID` can leak.
+- With an optional Jev key, the built-in score can get one more signal for mail it's unsure about. See [Optional Jev integration](#optional-jev-integration).
 - Spam shows why a message is there, in plain words, from the reasons stored when it was filed.
 - Rules run first, so their labels and stars still apply, and the verdict has the last word on the folder. Imported and sent mail skip the filter and teach it nothing, unless a person marks that mail themselves.
 - An allow list entry and "Not spam" both mean a person trusts a sender, so that sender's later mail stays out of Spam unless the message shows clear signs of forgery. A message that proves its sender always stays out: DMARC passed, which means aligned with the `From` domain by definition, or DKIM passed for that domain or a parent of it. A message that can't prove its sender goes to Spam only with one of these:
@@ -287,13 +288,46 @@ New import sources add only a reader that yields raw messages. IMAP is the likel
 
 ### Optional Jev integration
 
-An admin can add a [Jev](https://docs.typesafe.ai/introduction) API key to enable better spam scoring and advanced rule conditions. Mail, spam filtering, and rules all work without a key. The first release has no other AI features.
+An admin can add a [Jev](https://docs.typesafe.ai/introduction) API key to improve spam filtering and let a rule match a description, such as "looks like an invoice". Mail, spam filtering, and rules all work without a key, and with no key nothing goes to Jev. The first release has no other AI features.
 
-Jev is a third-party service. When an admin enables it, CloudySuite sends message content to that service, and the admin screen must say so before the key is saved.
+Jev is a third-party service. When an admin adds a key, CloudySuite sends message content to that service. The Organisation page says so before the key can be saved, and the server refuses a save without the admin's acknowledgement.
 
-- CloudySuite calls `POST https://api.typesafe.ai/v1/systemone` with a plain `fetch` and the admin's key as a bearer token. It adds no SDK.
-- Jev charges $0.042 per million input tokens, as of November 2026.
-- Jev has no fixed retention period. Zero retention is for enterprise customers only. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you enable it.
+- Jev keeps data for as long as it considers necessary, with no fixed period, and offers zero retention to enterprise customers. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you enable it.
+- Jev charges $0.042 per million input tokens, as of November 2026. The Organisation page shows how many messages were checked this month, the tokens used, and how many checks couldn't finish.
+- CloudySuite calls `POST https://api.typesafe.ai/v1/systemone` with a plain `fetch` and the admin's key as a bearer token, using the `jev-latest` alias and `noul` questions. It adds no SDK. An alias, because a copy of CloudySuite never updates itself and a retired version would quietly end every check.
+- Saving a key checks it with `GET /v1/models`, which spends no tokens. A key Jev rejects isn't saved. A key that can't be checked right now is saved, and the screen says so. The key is stored in D1 and never returned to any browser. The screen only says that one is set.
+
+**What is sent.** For one inbound message, one request, holding exactly this:
+
+- `state`: the sender's name (200 characters at most), the sender's address (320), the subject (500), and the first 6,000 characters of the readable text.
+- `questions`: CloudySuite's fixed spam question, if it's being asked, and the words of each rule description being asked.
+
+Attachments, recipients, other headers, and the rest of the text are never sent. Imported and sent mail is never sent. Jev reads no images, because a request has no `assets`.
+
+**When it is sent.** The check runs in `ingest` before the commit, with a 2-second limit that also covers reading the answer. It runs there because a person then sees a message land once, in the place it stays. A check afterwards would show mail in the Inbox and take it away, and it would have to reapply rules that have already run. Jev's docs say most calls take about 100 ms. Any failure, including a timeout, a `429`, a `529`, or a response that fails the strict parser, leaves the message as the built-in filter would judge it, and the message is stored. Failures are not retried, because a delivery can't wait.
+
+A question is asked only when its answer could change something:
+
+- The spam question goes only for mail with a score of 4 to 9, where the answer's 6 points could reach the threshold of 10.
+- Mail the filter has already filed in Spam isn't sent at all, even for a rule, so "Not spam" brings it back without a label that rule might have added.
+- A rule's description is asked only if the rule's other conditions leave it open. So in a mailbox with a rule that has only a description, every new message that isn't already in Spam goes to Jev.
+
+**How far the answer counts.** An answer is one number, a probability, and a yes needs 0.9 for spam and 0.8 for a description. Those bars haven't been tuned on real answers yet.
+
+- A yes adds 6 points and never subtracts any, so the model alone never files a message and can never take one out of Spam. Spam reasons say only "The optional message check flagged this as likely spam." No words from the model reach a screen.
+- It never counts for a sender on the allow list or marked "Not spam", for a reply to mail this mailbox sent, or for a message the mailbox's marks say looks real. Real mail in Spam is the worst mistake this filter can make.
+- A description that fits does only what its rule already does, and the spam verdict still has the last word on the folder. A rule can't forward mail or delete it permanently.
+
+**What it can't defend against.** A message is hostile, so its text only ever goes in `state`, and the questions are the same whatever a message says. That doesn't stop a model from being talked into an answer, and CloudySuite can't tell when it has been. What limits the damage is what an answer can do:
+
+- A sender who talks the model into "not spam" gets the built-in result, the same as with no key.
+- One who talks it into "spam" only files their own message.
+- One who talks it into "fits" can make their own message take a rule's action. They can get it archived, labelled, or starred, or moved to Trash if the rule does that. So avoid rules that hide mail on a description alone if that would matter.
+- A sender can also spend the organisation's tokens, because each message they send to a mailbox with a description is a check. Each check is bounded and a flood has no monthly cap, so set a spending limit in the Jev account if Jev offers one.
+
+**Safe to repeat.** A redelivered message is found by its hash before anything is asked, so it makes no call and can't change where a person put it. A delivery that asked and then died leaves a claim in the mailbox. Its retry spends nothing and files the message on the built-in result, because the paid answer went with the attempt. Two copies arriving together ask once.
+
+**Rule descriptions.** Only a mailbox's managers can write them. A mailbox can have 5 different descriptions across its rules, of up to 200 characters each, and one message makes one call however many it needs. Without a key, a rule with a description is paused as a whole, even if it matches on "any" condition, because its conditions were written to work together. The Rules page says so, the option is offered only while a key is set, and removing the description or adding a key brings the rule back. While a key is set but a check fails, a description doesn't match and the rule's other conditions still count.
 
 ## Design
 
@@ -324,6 +358,8 @@ CloudySuite relies on Cloudflare's encryption at rest. Cloudflare and the organi
 **A device kept offline can show its saved mail for up to 59 days,** even after the person signed out on another device or an admin removed their access. It can't find out until it next connects, and then it clears itself. After 59 days with no connection, it stops showing saved mail.
 
 **If a device is lost,** an admin should reset that person's sign-in straight away, which protects everything on the server. An admin can't erase the device remotely until it next comes online and opens Mail, so until then only the device's own lock protects the saved mail. Ask people to keep a passcode or password on any device they use for Mail.
+
+Jev is outside that boundary. With no key, no message content leaves Cloudflare for it. With a key, what is sent and when is listed in [Optional Jev integration](#optional-jev-integration).
 
 ## Cloudflare limits and costs
 
@@ -373,6 +409,8 @@ To try the setup wizard without a Cloudflare account, use the fake API in `apps/
 4. When the wizard waits for its new secret, restart `wrangler dev`. A real Worker restarts by itself.
 
 The wizard ignores that variable unless it names a loopback address, so it cannot send a token elsewhere. It comes from the environment, so a request cannot set it.
+
+To try the Jev check without a key, add `CLOUDYSUITE_LOCAL_JEV_API=http://localhost:9911` to `.dev.vars`, run `bun apps/mail/scripts/fake-jev.mjs`, then save any key on the Organisation page. The script says how to make it fail. Like the wizard's variable, this one is ignored unless it names a loopback address.
 
 Sign-in needs a secret. Run `cp dev.vars.local.example .dev.vars` once in each checkout, then `bun run db:migrate:local`, `bun run db:seed:local`, and `bun run db:seed:user:local <email> <password>` to get an account. A deployment does not use this file: the setup wizard generates its secret.
 

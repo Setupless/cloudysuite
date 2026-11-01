@@ -37,6 +37,7 @@ import {
   MAX_CONDITIONS,
   MAX_RULE_NAME_LENGTH,
   MAX_RULES,
+  needsJev,
   type Rule,
   type RuleCondition,
   type RuleDraft,
@@ -63,7 +64,8 @@ const MOVE_NAMES: Record<RuleFolder, string> = {
   trash: "Move to Trash",
 };
 
-type ConditionChoice = RuleTextField | "hasAttachment" | "sentToAlias";
+type ConditionChoice =
+  RuleTextField | "hasAttachment" | "sentToAlias" | "looksLike";
 
 const choiceOf = (condition: RuleCondition): ConditionChoice =>
   condition.kind === "contains" ? condition.field : condition.kind;
@@ -74,6 +76,7 @@ function conditionFor(
   addresses: string[],
 ): RuleCondition {
   if (choice === "hasAttachment") return { kind: "hasAttachment" };
+  if (choice === "looksLike") return { kind: "looksLike", text: "" };
   if (choice === "sentToAlias") {
     return { kind: "sentToAlias", address: addresses[0] ?? "" };
   }
@@ -92,6 +95,8 @@ function describeCondition(condition: RuleCondition): string {
       return "Has a file attached";
     case "sentToAlias":
       return `Sent to ${condition.address}`;
+    case "looksLike":
+      return `Looks like "${condition.text}"`;
   }
 }
 
@@ -152,11 +157,13 @@ const NEW_RULE: RuleDraft = {
 function ConditionRow({
   condition,
   addresses,
+  jevIsSet,
   onChange,
   onRemove,
 }: {
   condition: RuleCondition;
   addresses: string[];
+  jevIsSet: boolean;
   onChange: (next: RuleCondition) => void;
   onRemove?: () => void;
 }) {
@@ -183,11 +190,26 @@ function ConditionRow({
         ))}
         <option value="hasAttachment">Has a file attached</option>
         <option value="sentToAlias">Sent to this address</option>
+        {(jevIsSet || condition.kind === "looksLike") && (
+          <option value="looksLike">Looks like</option>
+        )}
       </select>
       {condition.kind === "contains" && (
         <input
           aria-label="Contains"
           placeholder="contains…"
+          value={condition.text}
+          maxLength={MAX_CONDITION_LENGTH}
+          onChange={(event) =>
+            onChange({ ...condition, text: event.target.value })
+          }
+          className="min-w-0 flex-1 rounded border border-line bg-field px-2.5 py-2 text-text outline-accent placeholder:text-secondary focus-visible:outline-2 max-lg:text-base lg:text-sm"
+        />
+      )}
+      {condition.kind === "looksLike" && (
+        <input
+          aria-label="Looks like"
+          placeholder="an invoice"
           value={condition.text}
           maxLength={MAX_CONDITION_LENGTH}
           onChange={(event) =>
@@ -228,6 +250,7 @@ function RuleEditor({
   initial,
   labels,
   addresses,
+  jevIsSet,
   onCancel,
   onSave,
 }: {
@@ -235,6 +258,7 @@ function RuleEditor({
   initial: RuleDraft;
   labels: LabelSummary[];
   addresses: string[];
+  jevIsSet: boolean;
   onCancel: () => void;
   onSave: (draft: RuleDraft) => Promise<string | null>;
 }) {
@@ -292,6 +316,7 @@ function RuleEditor({
               key={index}
               condition={condition}
               addresses={addresses}
+              jevIsSet={jevIsSet}
               onChange={(next) => setCondition(index, next)}
               onRemove={
                 draft.conditions.length > 1
@@ -306,6 +331,13 @@ function RuleEditor({
               }
             />
           ))}
+          {needsJev(draft) && (
+            <p className="text-sm text-secondary">
+              New mail this rule needs to check goes to Jev, a third-party
+              service, and the answer can be wrong. If Jev can't answer in time,
+              the description doesn't match and the message arrives as usual.
+            </p>
+          )}
           {draft.conditions.length < MAX_CONDITIONS && (
             <div>
               <Button
@@ -401,6 +433,7 @@ function RuleCard({
   rule,
   labels,
   canEdit,
+  paused,
   first,
   last,
   onEdit,
@@ -411,6 +444,7 @@ function RuleCard({
   rule: Rule;
   labels: LabelSummary[];
   canEdit: boolean;
+  paused: boolean;
   first: boolean;
   last: boolean;
   onEdit: () => void;
@@ -425,6 +459,9 @@ function RuleCard({
           {rule.name}
         </h2>
         {!rule.enabled && <span className="text-xs text-secondary">Off</span>}
+        {rule.enabled && paused && (
+          <span className="text-xs text-secondary">Paused</span>
+        )}
         {canEdit && (
           <div className="flex flex-none items-center">
             <label
@@ -466,6 +503,13 @@ function RuleCard({
         )}
       </div>
       <RuleSummary rule={rule} labels={labels} />
+      {rule.enabled && paused && (
+        <Notice tone="info">
+          This rule is paused because it uses a description, and your admin
+          removed the Jev key. It will start again if a key is added. To use it
+          now, take that condition out.
+        </Notice>
+      )}
     </li>
   );
 }
@@ -511,6 +555,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
 
   const rules = rulesData.data?.rules ?? [];
   const addresses = rulesData.data?.addresses ?? [];
+  const jevIsSet = rulesData.data?.jevIsSet ?? false;
 
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: mailKeys.rules(mailboxId) });
@@ -594,6 +639,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
             rule={rule}
             labels={labels}
             canEdit={canEdit}
+            paused={!jevIsSet && needsJev(rule)}
             first={index === 0}
             last={index === rules.length - 1}
             onEdit={() => setEditing({ kind: "existing", rule })}
@@ -665,6 +711,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
           initial={editing.kind === "new" ? NEW_RULE : draftOf(editing.rule)}
           labels={labels}
           addresses={addresses}
+          jevIsSet={jevIsSet}
           onCancel={() => setEditing(null)}
           onSave={save}
         />

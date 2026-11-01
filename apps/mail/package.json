@@ -17,6 +17,7 @@
   "dependencies": {
     "@cloudysuite/access": "workspace:*",
     "@cloudysuite/auth": "workspace:*",
+    "@cloudysuite/jev": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",
     "@tanstack/react-hotkeys": "0.20.1",
