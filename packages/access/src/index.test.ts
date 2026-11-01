@@ -100,6 +100,42 @@ test("a grant cannot be built by hand or copied with other values", async () => 
   expect(grant.role).toBe("member");
 });
 
+test("the grant class cannot mint a grant without the access check", async () => {
+  const access = await checkMailboxAccess(d1, alice, sales);
+  if (!access.allowed) throw new Error("expected access");
+  const Grant = access.grant.constructor as new (
+    ...values: unknown[]
+  ) => MailboxGrant;
+
+  expect(() => new Grant(alice, support, "manager")).toThrow();
+  expect(() => new Grant(Symbol(), alice, support, "manager")).toThrow();
+  expect(() => Reflect.construct(Grant, [alice, support, "manager"])).toThrow();
+  class Subclass extends Grant {}
+  expect(() => new Subclass(alice, support, "manager")).toThrow();
+});
+
+const banAlice = (expires: number | null) =>
+  sqlite.run("UPDATE user SET banned = 1, ban_expires = ? WHERE id = ?", [
+    expires,
+    alice,
+  ]);
+
+test("a banned user is denied, with or without an end date in the future", async () => {
+  for (const expires of [null, Date.now() + 60_000]) {
+    banAlice(expires);
+    expect(await checkMailboxAccess(d1, alice, support)).toEqual({
+      allowed: false,
+    });
+  }
+});
+
+test("a user whose ban has expired is allowed", async () => {
+  banAlice(Date.now() - 60_000);
+  const access = await checkMailboxAccess(d1, alice, support);
+  if (!access.allowed) throw new Error("expected access");
+  expect(access.grant.role).toBe("manager");
+});
+
 test.each([
   ["6f1d2c1e-8a0b-4d7e-9c55-0a1b2c3d4e5f", true],
   ["../other", false],

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import { createTestDatabase } from "../../../src/db/test-database";
-import { createAuth } from "./auth";
+import { createAuth, getActiveSession } from "./auth";
 import { appOrigins } from "./origins";
 
 const AUTH = "https://auth.example.com";
@@ -67,4 +67,41 @@ test("on a real domain the session cookie is secure and shared across apps", asy
   expect(session).toContain("HttpOnly");
   expect(session).toContain("SameSite=Lax");
   expect(cookies.some((cookie) => cookie.includes("session_data"))).toBe(false);
+});
+
+async function signedInHeaders(email: string) {
+  await auth.api.createUser({ body: { email, password, name: "A" } });
+  const cookies = (await signIn(email)).headers.getSetCookie();
+  const cookie = cookies.map((value) => value.split(";")[0]).join("; ");
+  return new Headers({ cookie, origin: AUTH });
+}
+
+test("a banned user with a live session counts as signed out", async () => {
+  const headers = await signedInHeaders("a@example.com");
+  expect(await getActiveSession(auth, headers)).not.toBeNull();
+
+  for (const expires of [null, Date.now() + 60_000]) {
+    sqlite.run("UPDATE user SET banned = 1, ban_expires = ?", [expires]);
+    expect(await getActiveSession(auth, headers)).toBeNull();
+  }
+  expect(sqlite.query("SELECT count(*) AS n FROM session").get()).toEqual({
+    n: 1,
+  });
+});
+
+test("a user whose ban has expired stays signed in", async () => {
+  const headers = await signedInHeaders("a@example.com");
+  sqlite.run("UPDATE user SET banned = 1, ban_expires = ?", [
+    Date.now() - 60_000,
+  ]);
+  const session = await getActiveSession(auth, headers);
+  expect(session?.user.email).toBe("a@example.com");
+});
+
+test("a banned user cannot start a new session", async () => {
+  await auth.api.createUser({
+    body: { email: "a@example.com", password, name: "A" },
+  });
+  sqlite.run("UPDATE user SET banned = 1");
+  expect((await signIn("a@example.com")).status).toBe(403);
 });

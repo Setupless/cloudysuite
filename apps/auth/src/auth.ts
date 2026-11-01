@@ -1,4 +1,5 @@
 import { passkey } from "@better-auth/passkey";
+import { isBanned } from "@cloudysuite/access";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin, twoFactor } from "better-auth/plugins";
@@ -50,4 +51,14 @@ export function createAuth({
       tanstackStartCookies(),
     ],
   });
+}
+
+// Better Auth checks a ban only when it creates a session, so a session from
+// before the ban would otherwise stay valid.
+export async function getActiveSession(
+  auth: ReturnType<typeof createAuth>,
+  headers: Headers,
+) {
+  const session = await auth.api.getSession({ headers });
+  return session && !isBanned(session.user) ? session : null;
 }
