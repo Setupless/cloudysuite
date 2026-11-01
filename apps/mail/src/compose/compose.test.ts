@@ -638,6 +638,29 @@ test("discarding a draft removes its row and queues its files; a message on its 
   expect(stateOf(going)).toBe("scheduled");
 });
 
+test("an untouched reply gives way when a colleague has started on it", async () => {
+  const { mailbox, stateOf } = await setUp();
+  const id = newId();
+  const { revision } = (await mailbox.outgoing.save({
+    id,
+    baseRevision: 0,
+    content: content(),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  })) as { revision: number };
+  await mailbox.outgoing.save({
+    id,
+    baseRevision: revision,
+    content: content({ html: "<p>A colleague's words</p>" }),
+    editor: { id: SAM, name: "Sam" },
+    ownDomain: DOMAIN,
+  });
+  expect(await mailbox.outgoing.discard(id, revision)).toBe(false);
+  expect(stateOf(id)).toBe("draft");
+  expect(await mailbox.outgoing.discard(id, revision + 1)).toBe(true);
+  expect(stateOf(id)).toBeUndefined();
+});
+
 async function parentOf(kit: Awaited<ReturnType<typeof setUp>>) {
   const result = await kit.deliver(
     eml({

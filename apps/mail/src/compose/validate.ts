@@ -156,7 +156,11 @@ export function refusalToSend(input: {
       "This message is empty. Write something or attach a file.",
     );
   }
-  if (!fitsSendLimit({ bodyBytes, quoteBytes, attachmentSizes })) {
+  const longerPart = Math.max(
+    bodyBytes,
+    new TextEncoder().encode(plainText).byteLength,
+  );
+  if (!fitsSendLimit({ bodyBytes: longerPart, quoteBytes, attachmentSizes })) {
     return refuse(413, TOO_LARGE_TEXT);
   }
   return null;

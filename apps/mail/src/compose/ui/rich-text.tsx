@@ -133,10 +133,10 @@ export function RichText({
       selection.addRange(savedRange.current);
     }
     if (!selection || selection.isCollapsed) {
-      run(
-        "insertHTML",
-        `<a href="${target.replaceAll('"', "%22")}">${target.replaceAll("<", "&lt;")}</a>`,
-      );
+      const link = document.createElement("a");
+      link.setAttribute("href", target);
+      link.textContent = target;
+      run("insertHTML", link.outerHTML);
     } else {
       run("createLink", target);
     }
@@ -174,6 +174,8 @@ export function RichText({
               setLinkError(false);
             }}
             onKeyDown={(event) => {
+              // These keys belong to the input method while a word is being composed.
+              if (event.nativeEvent.isComposing) return;
               if (event.key === "Enter") {
                 event.preventDefault();
                 applyLink();

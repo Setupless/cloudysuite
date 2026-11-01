@@ -10,7 +10,9 @@ import { buildQuote, htmlToPlainText } from "./body";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
 import { replyRecipients, composeSubject, defaultFromAddress } from "./reply";
 import { judgeSendError } from "./send-outcome";
+import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
+import { fitsSendLimit, type OutgoingId, writtenBytes } from "./types";
 import { isValidAddress, parseAddressList } from "./validate";
 
 const person = (address: string, name = "") => ({ name, address });
@@ -246,6 +248,65 @@ test("the plain-text part keeps lists, links, and line breaks", () => {
     "Hello & welcome\nsecond\nPara\n- one\n- two\n1. first\nsite (https://x.org/) a@x.org",
   );
   expect(htmlToPlainText("")).toBe("");
+});
+
+test("a link nobody closed keeps all the text after it", () => {
+  expect(
+    htmlToPlainText(
+      '<p>Before <a href="https://x.org/">the link<p>Second paragraph<p>Third paragraph',
+    ),
+  ).toBe("Before the link (https://x.org/)\nSecond paragraph\nThird paragraph");
+  expect(htmlToPlainText('Read <a href="https://x.org/">this and more')).toBe(
+    "Read this and more (https://x.org/)",
+  );
+});
+
+test("a link opened inside another keeps both links' text", () => {
+  expect(
+    htmlToPlainText(
+      '<a href="https://one.org/">first<a href="https://two.org/">second</a> after',
+    ),
+  ).toBe("first (https://one.org/)second (https://two.org/) after");
+});
+
+test("a link around one block still reads as one link", () => {
+  expect(htmlToPlainText('<a href="https://x.org/"><div>Open</div></a>')).toBe(
+    "Open (https://x.org/)",
+  );
+});
+
+test("a message that is only an attachment still has a body for the service", () => {
+  const message = {
+    id: "00000000-0000-4000-8000-000000000001" as OutgoingId,
+    from: person("a@example.com"),
+    to: [person("b@example.org")],
+    cc: [],
+    bcc: [],
+    subject: "Files",
+    parent: null,
+    files: [
+      { filename: "a.txt", mimeType: "text/plain", bytes: new Uint8Array(1) },
+    ],
+  };
+  const empty = toEmailBuilder({ ...message, html: "", text: "" });
+  expect(empty.html).toBe("<br>");
+  expect(empty.text).toBeUndefined();
+  const written = toEmailBuilder({ ...message, html: "<p>Hi</p>", text: "Hi" });
+  expect(written.html).toBe("<p>Hi</p>");
+  expect(written.text).toBe("Hi");
+});
+
+test("the size limit counts a quote's plain text and a long plain-text part", () => {
+  const near = 18 * 1024 * 1024;
+  const fits = (bodyBytes: number, quoteBytes: number) =>
+    fitsSendLimit({ bodyBytes, quoteBytes, attachmentSizes: [near] });
+  expect(fits(0, 0)).toBe(true);
+  // A small HTML part beside 2 MB of plain text in the original.
+  expect(fits(0, 2 * 1024 * 1024)).toBe(false);
+  const deepList = `${"<ul>".repeat(400)}${"<li>".repeat(4000)}`;
+  const text = htmlToPlainText(deepList);
+  expect(text.length).toBeGreaterThan(deepList.length);
+  expect(writtenBytes(deepList, text)).toBe(text.length);
 });
 
 test("a recipient's chip can't hide the real address behind a name that looks like one", () => {

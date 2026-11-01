@@ -307,8 +307,11 @@ export class Mailbox extends DurableObject<Env> {
     return this.#outgoing.reopen(id);
   }
 
-  async discardOutgoing(id: OutgoingId): Promise<boolean> {
-    const discarded = this.#outgoing.discard(id);
+  async discardOutgoing(
+    id: OutgoingId,
+    onlyAtRevision?: number,
+  ): Promise<boolean> {
+    const discarded = this.#outgoing.discard(id, onlyAtRevision);
     await this.#scheduleNextWakeUp();
     return discarded;
   }

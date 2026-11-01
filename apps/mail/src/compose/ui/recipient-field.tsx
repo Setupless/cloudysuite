@@ -90,6 +90,8 @@ export function RecipientField({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // These keys belong to the input method while a word is being composed.
+    if (event.nativeEvent.isComposing) return;
     if (event.metaKey || event.ctrlKey) {
       // Send reads the fields next, so what was just typed has to be in them by then.
       if (event.key === "Enter") flushSync(commitText);

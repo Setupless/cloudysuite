@@ -146,18 +146,28 @@ const MESSAGE_ENVELOPE_BYTES = 64 * 1024;
 export const encodedBytes = (bytes: number) =>
   Math.ceil(Math.ceil(bytes / 3) * 4 * (78 / 76));
 
+// Deep lists can make the plain text longer than the HTML it comes from.
+export const writtenBytes = (html: string, text: string) => {
+  const encoder = new TextEncoder();
+  return Math.max(
+    encoder.encode(html).byteLength,
+    encoder.encode(text).byteLength,
+  );
+};
+
 // An upper bound on the finished message, so a message that passes always fits both
-// the 25 MiB send limit and `ingest`'s limit for our stored copy.
+// the 25 MiB send limit and `ingest`'s limit for our stored copy. `bodyBytes` is the
+// larger of the written parts, and `quoteBytes` already counts both quote parts, which
+// come from the original separately and can be any size next to each other.
 export function estimatedMessageBytes(parts: {
   bodyBytes: number;
   quoteBytes: number;
   attachmentSizes: number[];
 }): number {
-  const body = encodedBytes(parts.bodyBytes + parts.quoteBytes);
   return (
     MESSAGE_ENVELOPE_BYTES +
-    // The plain-text part is never longer than the HTML it comes from.
-    2 * body +
+    2 * encodedBytes(parts.bodyBytes) +
+    encodedBytes(parts.quoteBytes) +
     parts.attachmentSizes.reduce(
       (total, size) => total + encodedBytes(size) + ATTACHMENT_ENVELOPE_BYTES,
       0,

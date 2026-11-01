@@ -92,6 +92,16 @@ export const parseOutgoingInput = (raw: unknown) => {
   };
 };
 
+export const parseDiscardInput = (raw: unknown) => {
+  const { onlyAtRevision } = record(raw);
+  return {
+    ...parseOutgoingInput(raw),
+    ...(onlyAtRevision === undefined
+      ? {}
+      : { onlyAtRevision: requireRevision(onlyAtRevision) }),
+  };
+};
+
 export const parseStartInput = (raw: unknown) => {
   const input = record(raw);
   const mode = input.mode as ComposeMode;

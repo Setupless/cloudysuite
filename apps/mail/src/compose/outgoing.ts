@@ -83,7 +83,7 @@ export type MailboxOutgoing = {
   }): Promise<ScheduleResult | { status: "refused"; refusal: SendRefusal }>;
   undo(id: OutgoingId): Promise<boolean>;
   reopen(id: OutgoingId): Promise<boolean>;
-  discard(id: OutgoingId): Promise<boolean>;
+  discard(id: OutgoingId, onlyAtRevision?: number): Promise<boolean>;
   upload(input: {
     id: OutgoingId;
     fileName: string;
@@ -190,7 +190,10 @@ export function createMailboxOutgoing(
           includeQuote: true,
         },
         r2Prefix: prefix,
-        quote: { bytes: byteLength(quote.html), designed: quote.designed },
+        quote: {
+          bytes: byteLength(quote.html) + byteLength(quote.text),
+          designed: quote.designed,
+        },
         attachments,
         editor,
       };
@@ -247,7 +250,7 @@ export function createMailboxOutgoing(
 
     undo: (id) => stub.undoOutgoing(id),
     reopen: (id) => stub.reopenOutgoing(id),
-    discard: (id) => stub.discardOutgoing(id),
+    discard: (id, onlyAtRevision) => stub.discardOutgoing(id, onlyAtRevision),
 
     async upload({ id, fileName, mimeType, body, fromAddress, editor }) {
       if (body.declaredBytes === null) {

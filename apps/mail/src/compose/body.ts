@@ -102,6 +102,18 @@ export function htmlToPlainText(html: string): string {
   const breakLine = () => {
     if (output && !output.endsWith("\n")) output += "\n";
   };
+  const closeLink = () => {
+    if (openLink === null) return;
+    const target = openLink.replace(/^mailto:/i, "");
+    const label = linkText.trim();
+    output += !target
+      ? linkText
+      : label && label !== target
+        ? `${linkText} (${target})`
+        : target;
+    openLink = null;
+    linkText = "";
+  };
 
   TAG.lastIndex = 0;
   for (let match = TAG.exec(html); match !== null; match = TAG.exec(html)) {
@@ -113,21 +125,15 @@ export function htmlToPlainText(html: string): string {
     if (tag === "br") {
       addText("\n");
     } else if (tag === "a") {
+      closeLink();
       if (!closing) {
         const href = HREF.exec(match[3] ?? "");
         openLink = decodeEntities(href?.[1] ?? href?.[2] ?? "");
-        linkText = "";
-      } else if (openLink !== null) {
-        const target = openLink.replace(/^mailto:/i, "");
-        const label = linkText.trim();
-        output += !target
-          ? linkText
-          : label && label !== target
-            ? `${linkText} (${target})`
-            : target;
-        openLink = null;
       }
     } else if (BLOCK_TAGS.has(tag)) {
+      // A link nobody closed must not swallow the paragraphs after it. A link around
+      // one block, as newsletters write them, still has no text at this point.
+      if (linkText.trim()) closeLink();
       breakLine();
       if (tag === "ul" || tag === "ol") {
         if (closing) lists.pop();
@@ -140,6 +146,7 @@ export function htmlToPlainText(html: string): string {
     }
   }
   addText(decodeEntities(html.slice(position)));
+  closeLink();
   return output
     .split("\n")
     .map((line) => line.trimEnd())

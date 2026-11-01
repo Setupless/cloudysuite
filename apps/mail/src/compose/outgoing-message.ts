@@ -43,7 +43,8 @@ const people = (list: Address[]) => list.map(person);
 
 // Empty lists stay out, because the API wants at least one recipient field and treats
 // an empty one as a mistake. Each attachment goes as base64 text. That is the form both
-// the real service and the local one accept.
+// the real service and the local one accept. The service wants text or HTML even when
+// a message is only its attachments, and HTML can't be trimmed away to nothing.
 export function toEmailBuilder(message: OutgoingMessage): EmailMessageBuilder {
   const recipients = {
     ...(message.to.length ? { to: people(message.to) } : {}),
@@ -56,6 +57,7 @@ export function toEmailBuilder(message: OutgoingMessage): EmailMessageBuilder {
     subject: cleanSubject(message.subject),
     ...(message.text ? { text: message.text } : {}),
     ...(message.html ? { html: message.html } : {}),
+    ...(message.text || message.html.trim() ? {} : { html: "<br>" }),
     headers: headersFor(message),
     ...(message.files.length
       ? {

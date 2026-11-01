@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import {
   fitsSendLimit,
+  writtenBytes,
   MAX_ATTACHMENTS,
   TOO_LARGE_TEXT,
   TOO_MANY_ATTACHMENTS_TEXT,
@@ -442,10 +443,15 @@ export class OutgoingStore {
 
   // Drafts never become rows in `messages`, so a discarded one has no Trash or restore
   // path to get wrong: its row goes now, and its files follow through the queue.
-  discard(id: OutgoingId): boolean {
+  // `onlyAtRevision` is for a draft nobody here wrote in, which a colleague may have
+  // opened from Drafts and started on in the meantime.
+  discard(id: OutgoingId, onlyAtRevision?: number): boolean {
     return this.#db.transaction(() => {
       const row = this.#row(id);
       if (!row || !["draft", "failed", "unknown"].includes(row.state)) {
+        return false;
+      }
+      if (onlyAtRevision !== undefined && row.revision !== onlyAtRevision) {
         return false;
       }
       this.#db.exec("DELETE FROM outgoing WHERE id = ?", id);
@@ -513,7 +519,7 @@ export class OutgoingStore {
         };
       }
       const fits = fitsSendLimit({
-        bodyBytes: new TextEncoder().encode(row.html).byteLength,
+        bodyBytes: writtenBytes(row.html, row.body_text),
         quoteBytes: row.quote_bytes ?? 0,
         attachmentSizes: [...existing.map((file) => file.size), size],
       });

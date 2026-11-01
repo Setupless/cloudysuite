@@ -19,7 +19,7 @@ import {
 import { safeFileName } from "../../attachment-headers";
 import type { SenderFacts } from "../addresses";
 import { call } from "../../queries";
-import type { Address } from "../../types";
+import type { Address, MailboxId } from "../../types";
 import { EmailFrame } from "../../ui/email-frame";
 import { formatSize } from "../../ui/format";
 import { FailureNotice } from "../../ui/states";
@@ -36,6 +36,7 @@ import {
   type DraftContent,
   fitsSendLimit,
   MAX_ATTACHMENTS,
+  type OutgoingId,
   type OutgoingAttachment,
   type OutgoingDetail,
   TOO_LARGE_TEXT,
@@ -64,6 +65,16 @@ type Loaded = {
 };
 
 const EMPTY: Loaded = { draft: null, quoteHtml: null, notice: null };
+
+// The revision makes this give way if a colleague has started on the draft from Drafts.
+const discardUntouched = (
+  mailboxId: MailboxId,
+  id: OutgoingId,
+  revision: number | undefined,
+) =>
+  call(() =>
+    discardOutgoing({ data: { mailboxId, id, onlyAtRevision: revision } }),
+  ).catch(() => {});
 
 function QuotedOriginal({
   html,
@@ -207,6 +218,7 @@ function EditorForm({
   const [uploading, setUploading] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(loaded.notice);
   const [problem, setProblem] = useState<string | null>(null);
+  const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [locked, setLocked] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -218,6 +230,8 @@ function EditorForm({
   const fileInput = useRef<HTMLInputElement>(null);
   const revision = useRef(loaded.draft?.revision ?? 0);
   const dirty = useRef(false);
+  const lastSaveError = useRef("");
+  const lockedNow = useRef(false);
   const everSaved = useRef(loaded.draft !== null && session.kind === "open");
   const saving = useRef<Promise<void>>(Promise.resolve());
   // Moving to another list or conversation takes the editor away without a word.
@@ -265,7 +279,9 @@ function EditorForm({
             },
           }),
         );
+        setSaveProblem(null);
         if (result.status === "locked") {
+          lockedNow.current = true;
           setLocked(true);
           setNotice(LOCKED_NOTICE);
           return;
@@ -278,8 +294,9 @@ function EditorForm({
             `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
           );
         }
-      } catch {
+      } catch (error) {
         dirty.current = true;
+        lastSaveError.current = (error as Error).message;
       }
     });
     return saving.current;
@@ -303,25 +320,6 @@ function EditorForm({
     touched();
   }, [from, to, cc, bcc, subject, includeQuote, touched]);
 
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === "hidden") void flush();
-    };
-    document.addEventListener("visibilitychange", onHide);
-    return () => {
-      document.removeEventListener("visibilitychange", onHide);
-      clearTimeout(timer.current);
-      const hadSomething = dirty.current || everSaved.current;
-      void flush();
-      if (leftUnasked.current && hadSomething) {
-        toast({
-          message: "Saved to Drafts.",
-          action: { label: "Open", run: () => openDraft(session.id) },
-        });
-      }
-    };
-  }, [flush]);
-
   const refreshList = () =>
     void queryClient.invalidateQueries({
       queryKey: composeKeys.outgoing(mailboxId),
@@ -331,21 +329,67 @@ function EditorForm({
     session.kind === "start" &&
     !everSaved.current &&
     !dirty.current &&
+    uploading.length === 0 &&
     attachments.length === (loaded.draft?.attachments.length ?? 0);
+  // The unmount below would otherwise see the first render's files.
+  const untouchedNow = useRef(isUntouchedReply);
+  untouchedNow.current = isUntouchedReply;
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") void flush();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      clearTimeout(timer.current);
+      if (leftUnasked.current && untouchedNow.current()) {
+        void discardUntouched(
+          mailboxId,
+          session.id,
+          loaded.draft?.revision,
+        ).then(refreshList);
+        return;
+      }
+      const hadSomething = dirty.current || everSaved.current;
+      void flush().then(() => {
+        if (!leftUnasked.current) return;
+        if (dirty.current) {
+          toast({
+            tone: "danger",
+            message:
+              "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
+          });
+        } else if (hadSomething && !lockedNow.current) {
+          toast({
+            message: "Saved to Drafts.",
+            action: { label: "Open", run: () => openDraft(session.id) },
+          });
+        }
+      });
+    };
+  }, [flush]);
 
   const closeEditor = async () => {
     if (isUntouchedReply()) {
-      await call(() =>
-        discardOutgoing({ data: { mailboxId, id: session.id } }),
-      ).catch(() => {});
+      await discardUntouched(mailboxId, session.id, loaded.draft?.revision);
       close();
       return;
     }
     const hadSomething =
       dirty.current || everSaved.current || attachments.length > 0;
+    const lockedBefore = lockedNow.current;
     await flush();
+    if (dirty.current) {
+      setSaveProblem(
+        `We couldn't save this draft, so it's still open here. ${lastSaveError.current}`,
+      );
+      return;
+    }
+    // The notice saying the changes weren't saved has only just appeared.
+    if (lockedNow.current && !lockedBefore) return;
     close();
-    if (hadSomething && session.kind !== "open")
+    if (hadSomething && session.kind !== "open" && !lockedNow.current)
       toast({ message: "Saved to Drafts." });
   };
 
@@ -372,6 +416,8 @@ function EditorForm({
     }
     setProblem(null);
     setSending(true);
+    // Moving away mid-send must not count this as a reply nobody wrote.
+    everSaved.current = true;
     clearTimeout(timer.current);
     dirty.current = false;
     await saving.current;
@@ -464,6 +510,7 @@ function EditorForm({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (event.nativeEvent.isComposing) return;
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       void send();
@@ -648,6 +695,7 @@ function EditorForm({
         )}
       </div>
 
+      {saveProblem && <Notice tone="danger">{saveProblem}</Notice>}
       {problem && <Notice tone="danger">{problem}</Notice>}
       <footer className="flex flex-none flex-wrap items-center gap-2 pt-2">
         <Button
@@ -748,6 +796,9 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     load
       .then((result) => {
         if (!ignore) setLoaded(result);
+        // The person moved away before the reply even appeared.
+        else if (session.kind === "start")
+          void discardUntouched(mailboxId, session.id, result.draft.revision);
       })
       .catch((error: Error) => {
         if (!ignore) setFailed(error.message);

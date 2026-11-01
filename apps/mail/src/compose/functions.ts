@@ -8,6 +8,7 @@ import type { MailboxId, MessageDetail, MessageId } from "../types";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
 import type { Editor, OutgoingId, SaveResult } from "./types";
 import {
+  parseDiscardInput,
   parseOutgoingInput,
   parseRemoveAttachmentInput,
   parseSaveInput,
@@ -180,10 +181,12 @@ export const reopenOutgoing = createServerFn({ method: "POST" })
   });
 
 export const discardOutgoing = createServerFn({ method: "POST" })
-  .validator(parseOutgoingInput)
+  .validator(parseDiscardInput)
   .handler(async ({ data }) => {
     const { mailbox } = await open(data.mailboxId);
-    return { discarded: await mailbox.outgoing.discard(data.id) };
+    return {
+      discarded: await mailbox.outgoing.discard(data.id, data.onlyAtRevision),
+    };
   });
 
 export const removeOutgoingAttachment = createServerFn({ method: "POST" })
