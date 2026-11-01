@@ -9,6 +9,8 @@
     "./mailbox": "./src/mailbox.ts"
   },
   "dependencies": {
+    "@cloudysuite/access": "workspace:*",
+    "@cloudysuite/auth": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",
     "react": "19.3.1"

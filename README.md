@@ -194,6 +194,8 @@ A proxy that is already running without wildcard routing returns a portless 404 
 
 `bunx vite dev` skips portless and serves the same hostnames on port 5173.
 
+Sign-in needs a secret. Run `cp dev.vars.local.example .dev.vars` once in each checkout, then `bun run db:migrate:local`, `bun run db:seed:local`, and `bun run db:seed:user:local <email> <password>` to get an account. A deployment does not use this file: the setup wizard generates its secret.
+
 ## Git and CI
 
 `main` is what the Deploy button copies, so it must always be deployable. We use one long-lived branch, `main`, and short-lived branches that merge through a PR. A `develop` branch would add a second state to keep healthy, and deployers would never see it.
