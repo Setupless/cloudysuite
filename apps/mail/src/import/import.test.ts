@@ -7,7 +7,7 @@ import { ingest } from "../ingest";
 import { createTestEnv, eml, MAILBOX_A } from "../test-support";
 import type { MessageDetail, ThreadId } from "../types";
 import { BATCH_LIMITS } from "./job";
-import type { MailboxImports } from "./uploads";
+import { type MailboxImports, readUpTo } from "./uploads";
 import { type ImportJobView, MAX_FILE_BYTES, PART_BYTES } from "./types";
 
 const alice = "user-alice" as UserId;
@@ -50,9 +50,12 @@ function mustOk<Value>(
   return outcome.value;
 }
 
+const streamOf = (bytes: Uint8Array) =>
+  new Response(bytes.slice()).body as ReadableStream<Uint8Array>;
+
 const partBody = (bytes: Uint8Array) => ({
   declaredBytes: bytes.byteLength,
-  read: async () => bytes.slice().buffer as ArrayBuffer,
+  read: (limit: number) => readUpTo(streamOf(bytes), limit),
 });
 
 async function upload(h: Harness, bytes: Uint8Array): Promise<ImportJobView> {
@@ -444,9 +447,14 @@ test("a part of the wrong size is refused before it reaches storage", async () =
   // A client that declares the right size and sends a different amount.
   const short = await h.imports.putPart(job.id, 2, {
     declaredBytes: 100,
-    read: async () => new ArrayBuffer(99),
+    read: (limit) => readUpTo(streamOf(new Uint8Array(99)), limit),
   });
   expect(short).toMatchObject({ ok: false, status: 400 });
+  const long = await h.imports.putPart(job.id, 2, {
+    declaredBytes: 100,
+    read: (limit) => readUpTo(streamOf(new Uint8Array(101)), limit),
+  });
+  expect(long).toMatchObject({ ok: false, status: 400 });
   expect(await h.imports.putPart(job.id, 3, declared(100))).toMatchObject({
     ok: false,
     status: 400,
@@ -456,6 +464,47 @@ test("a part of the wrong size is refused before it reaches storage", async () =
     status: 400,
   });
   expect([...h.bucket.uploads.values()][0]?.parts.size).toBe(0);
+});
+
+test("a body is read only up to the size it should have", async () => {
+  // Chunks of 4 bytes, so the limit falls inside the last chunk read.
+  const chunked = (total: number, onPull: () => void) => {
+    let sent = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        onPull();
+        const size = Math.min(4, total - sent);
+        if (size === 0) return controller.close();
+        sent += size;
+        controller.enqueue(new Uint8Array(size).fill(7));
+      },
+    });
+  };
+  let pulls = 0;
+  const huge = chunked(1_000_000, () => {
+    pulls += 1;
+  });
+  expect(await readUpTo(huge, 10)).toBeNull();
+  expect(pulls).toBeLessThan(10);
+  expect(huge.locked).toBe(true);
+
+  expect(
+    new Uint8Array(
+      (await readUpTo(
+        chunked(10, () => {}),
+        10,
+      ))!,
+    ),
+  ).toEqual(new Uint8Array(10).fill(7));
+  expect(
+    (
+      await readUpTo(
+        chunked(6, () => {}),
+        10,
+      )
+    )?.byteLength,
+  ).toBe(6);
+  expect((await readUpTo(null, 10))?.byteLength).toBe(0);
 });
 
 test("asking again shows which parts arrived, so an upload resumes", async () => {

@@ -198,6 +198,13 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
     return () => clearInterval(timer);
   }, [active, sending, refresh]);
 
+  // The pickers remount empty when a job starts or ends, so a file chosen before
+  // that must not stay behind to be sent again. An upload already running holds
+  // its own copy of the file.
+  useEffect(() => {
+    setFile(null);
+  }, [active]);
+
   useEffect(() => () => abort.current?.abort(), []);
 
   async function send(current: ImportJobView, picked: File) {

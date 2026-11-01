@@ -42,7 +42,7 @@ export const IMPORT_FAILURES = {
   abandoned:
     "The upload stopped for 3 days, so we removed it. Start again to import this file.",
   storage:
-    "We couldn't read the file from storage after many tries. Messages already imported are safe. Start again to import the rest.",
+    "The import stopped because something went wrong while reading your file, and it kept happening after many tries. Messages already imported are safe. Start the import again to bring in the rest. If it stops at the same place, download the export again and import the new file.",
   fileMissing:
     "The uploaded file is no longer in storage. Messages already imported are safe. Start again to import the rest.",
   sizeMismatch:
