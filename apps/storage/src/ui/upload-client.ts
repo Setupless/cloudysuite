@@ -6,22 +6,26 @@ import {
   transferRequest,
   UploadRefused,
 } from "@cloudysuite/transfer";
-import type { FileItem, UploadView } from "../types";
-import type { SendFile } from "./upload-queue";
+import { FOLDER_BUSY, type FileItem, type UploadView } from "../types";
+import type { SendFile, WaitReason } from "./upload-queue";
 
 // Keeps trying a dropped connection for as long as the tab is open. Only the server's
 // own refusal or the person closing the upload ends it.
 async function untilReached<Value>(
   run: () => Promise<Value>,
   signal: AbortSignal,
-  onWaiting: () => void,
+  onWaiting: (reason: WaitReason) => void,
 ): Promise<Value> {
   for (let tries = 1; ; tries += 1) {
     try {
       return await run();
     } catch (error) {
       if (signal.aborted || error instanceof UploadRefused) throw error;
-      onWaiting();
+      onWaiting(
+        error instanceof Error && error.message === FOLDER_BUSY
+          ? "folderMoving"
+          : "connection",
+      );
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs(tries)));
     }
   }
@@ -63,7 +67,7 @@ export const sendFile: SendFile = async ({
     signal,
     onProgress: ({ partsDone, partCount }) =>
       onSentBytes(partsDone === partCount ? file.size : partsDone * PART_BYTES),
-    onRetrying: onWaiting,
+    onRetrying: () => onWaiting("connection"),
   });
 
   await untilReached(

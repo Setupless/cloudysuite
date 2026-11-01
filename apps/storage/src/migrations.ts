@@ -103,4 +103,15 @@ export const MIGRATIONS: Migrations = [
     // The receiver's record, so a repeat after a crash adds nothing.
     `CREATE TABLE moves_in (id TEXT PRIMARY KEY) WITHOUT ROWID`,
   ],
+  [
+    // The phases are explained in moves.ts. A row in moves_in stays for a while after it
+    // settles, so a late copy of a delivery can't add the rows a second time.
+    `ALTER TABLE moves_out ADD COLUMN phase TEXT NOT NULL DEFAULT 'sending' CHECK (phase IN ('sending', 'confirming', 'abandoning'))`,
+    `ALTER TABLE moves_out ADD COLUMN from_drive_id TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE moves_out ADD COLUMN give_up_at INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE moves_in ADD COLUMN phase TEXT NOT NULL DEFAULT 'locked' CHECK (phase IN ('locked', 'unlocked', 'abandoned'))`,
+    `ALTER TABLE moves_in ADD COLUMN settled_at INTEGER`,
+    // Lets someone still sending hear why the upload stopped, until the sweep removes it.
+    `ALTER TABLE uploads ADD COLUMN folder_gone INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];

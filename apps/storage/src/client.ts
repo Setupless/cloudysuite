@@ -4,8 +4,8 @@ import {
   type DriveId,
   type UserId,
 } from "@cloudysuite/access";
+import type { MoveDelivery, ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
-import type { OutgoingMove, ReceiveResult } from "./store";
 import { driveStub } from "./stub";
 import type {
   DriveItem,
@@ -114,8 +114,8 @@ export function openDrive(env: Env, grant: DriveGrant): DriveClient {
   };
 }
 
-// The one door for changing a drive, whichever part of the code wants to. For now anyone
-// on a drive can change it, and "Can view" will narrow this check.
+// The one door for a person changing a drive. For now anyone on a drive can change it,
+// and "Can view" will narrow this check.
 export async function openDriveToEdit(
   env: Env,
   userId: UserId,
@@ -127,12 +127,17 @@ export async function openDriveToEdit(
 
 // For one drive's object to finish a move into another. The move can outlive the request
 // that checked both drives, and this can only deliver that move, so there is no access
-// to check by then. Stopping would leave the same object in both drives.
+// to check by then. Stopping would leave the bytes without an owner who can delete them.
 export function moveReceiver(env: Env, driveId: DriveId) {
   const stub = driveStub(env, driveId);
   return {
-    receive: async (move: OutgoingMove) =>
-      (await stub.receiveMove(move, driveId)) as ReceiveResult,
-    forget: (moveId: string) => stub.forgetMoveIn(moveId),
+    receive: async (move: MoveDelivery) =>
+      (await stub.receiveMove(move)) as ReceiveResult,
+    confirm: async (moveId: string) => {
+      await stub.confirmMoveIn(moveId);
+    },
+    abandon: async (moveId: string) => {
+      await stub.abandonMoveIn(moveId, driveId);
+    },
   };
 }

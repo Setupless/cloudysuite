@@ -196,6 +196,8 @@ test("an item whose folder is gone returns to the drive's root and says so", asy
   const docs = await folder("Docs");
   const file = await upload("Report.pdf", docs.id);
   await kit.drive.trash(file.id);
+  // Trash sorts newest first, and two deletions in one millisecond have no order.
+  setSystemTime(new Date(Date.now() + 1000));
   await kit.drive.trash(docs.id);
   expect(await kit.drive.trashEntries(10)).toMatchObject([
     { name: "Docs" },

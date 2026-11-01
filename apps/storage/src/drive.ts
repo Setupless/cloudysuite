@@ -4,6 +4,7 @@ import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import { isUploadGone } from "@cloudysuite/transfer";
 import { moveReceiver } from "./client";
 import { MIGRATIONS } from "./migrations";
+import { type MoveDelivery, movedBytes, type ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
 import {
   type CommitResult,
@@ -11,9 +12,8 @@ import {
   DriveStore,
   type FoundUpload,
   type NewUpload,
-  type OutgoingMove,
+  type NewUploadResult,
   type PartPlan,
-  type ReceiveResult,
   USAGE_RETRY_MS,
 } from "./store";
 import type {
@@ -29,7 +29,12 @@ import type {
   TrashResult,
   UploadView,
 } from "./types";
-import { claimDriveSpace, writeDriveUsage } from "./usage";
+import {
+  claimDriveSpace,
+  claimMoveSpace,
+  type NextUsage,
+  writeDriveUsage,
+} from "./usage";
 
 const SWEEP_LIMIT = 50;
 const SWEEP_RETRY_MS = 60 * 60 * 1000;
@@ -38,6 +43,8 @@ const PURGE_BATCH = 100;
 // Anything bigger carries on from the alarm.
 const PURGE_BATCHES_NOW = 5;
 const MOVE_RETRY_MS = 60_000;
+// After this, a drive that still hasn't answered no longer holds the sender's rows locked.
+const MOVE_GIVE_UP_MS = 60 * 60 * 1000;
 const MOVES_PER_WAKE_UP = 5;
 
 export class Drive extends DurableObject<Env> {
@@ -97,7 +104,7 @@ export class Drive extends DurableObject<Env> {
     return upload;
   }
 
-  async createUpload(upload: NewUpload) {
+  async createUpload(upload: NewUpload): Promise<NewUploadResult> {
     const created = this.#store.createUpload(upload, Date.now());
     await this.#scheduleNextWakeUp();
     return created;
@@ -133,8 +140,10 @@ export class Drive extends DurableObject<Env> {
       if (size !== null) {
         this.#store.flagUsageWrite(driveId, Date.now());
         await this.#scheduleNextWakeUp();
-        const used = this.#store.usage()?.usedBytes ?? 0;
-        if (!(await claimDriveSpace(this.env.DB, driveId, used + size))) {
+        if (this.#store.uploadFolderIsLocked(id)) {
+          return { status: "folderBusy" };
+        }
+        if (!(await claimDriveSpace(this.env.DB, driveId, this.#next(size)))) {
           this.#store.closeRefusedUpload(id, Date.now());
           await this.#scheduleNextWakeUp();
           return { status: "overLimit" };
@@ -142,8 +151,16 @@ export class Drive extends DurableObject<Env> {
       }
       return this.#store.commitUpload(id, driveId, Date.now());
     });
-    if (result.status === "committed") await this.#afterChange();
+    if (result.status === "committed" || result.status === "folderBusy") {
+      await this.#afterChange();
+    }
     return result;
+  }
+
+  #next(addedBytes: number): NextUsage {
+    return this.#store.moveInDoubt()
+      ? { added: addedBytes }
+      : { total: (this.#store.usage()?.usedBytes ?? 0) + addedBytes };
   }
 
   async rename(input: {
@@ -173,17 +190,23 @@ export class Drive extends DurableObject<Env> {
     toParentId: ItemId | null;
   }): Promise<MoveResult> {
     const moveId = crypto.randomUUID();
+    const now = Date.now();
     const begun = this.#store.beginMoveOut({
-      ...input,
       moveId,
-      tryAt: Date.now() + MOVE_RETRY_MS,
+      id: input.id,
+      fromDriveId: input.driveId,
+      toDriveId: input.toDriveId,
+      toParentId: input.toParentId,
+      tryAt: now + MOVE_RETRY_MS,
+      giveUpAt: now + MOVE_GIVE_UP_MS,
     });
     if (begun.status !== "begun") return begun;
     await this.#scheduleNextWakeUp();
-    return this.#sendMove(moveId, input.driveId);
+    return this.#runMove(moveId);
   }
 
-  async #sendMove(moveId: string, driveId: DriveId): Promise<MoveResult> {
+  // One step of a move, whichever phase it has reached. See moves.ts.
+  async #runMove(moveId: string): Promise<MoveResult> {
     const move = this.#store.outgoingMove(moveId);
     if (!move) return { status: "pending" };
     if (this.#sendingMoves.has(moveId)) {
@@ -191,46 +214,88 @@ export class Drive extends DurableObject<Env> {
       return { status: "pending" };
     }
     this.#sendingMoves.add(moveId);
+    const receiver = moveReceiver(this.env, move.toDriveId);
     try {
-      const receiver = moveReceiver(this.env, move.toDriveId);
-      const answer = await receiver.receive(move);
-      if (answer.status === "received") {
-        this.#store.finishMoveOut(moveId, driveId, Date.now());
-        await this.#afterChange();
-        // Failing here only leaves a row that nothing reads again.
-        await Promise.resolve(receiver.forget(moveId)).catch((error: unknown) =>
-          console.error("Could not tidy up after a move.", error),
-        );
-        return { status: "moved" };
+      switch (move.phase) {
+        case "sending": {
+          const answer = await receiver.receive(move);
+          if (answer.status !== "received") {
+            this.#store.cancelMoveOut(moveId);
+            await this.#afterChange();
+            return answer;
+          }
+          this.#store.handOverMove({
+            moveId,
+            driveId: move.fromDriveId,
+            now: Date.now(),
+            tryAt: Date.now() + MOVE_RETRY_MS,
+          });
+          await this.#afterChange();
+          await receiver.confirm(moveId);
+          break;
+        }
+        case "confirming":
+          await receiver.confirm(moveId);
+          break;
+        case "abandoning":
+          await receiver.abandon(moveId);
+          break;
       }
-      this.#store.cancelMoveOut(moveId);
+      this.#store.endMoveOut(moveId);
       await this.#scheduleNextWakeUp();
-      return answer;
+      return { status: "moved" };
     } catch (error) {
       console.error("Could not finish a move. Trying again.", error);
-      this.#store.postponeMove(moveId, Date.now() + MOVE_RETRY_MS);
-      await this.#scheduleNextWakeUp();
-      return { status: "pending" };
+      const now = Date.now();
+      if (move.phase === "sending" && now >= move.giveUpAt) {
+        this.#store.giveUpMoveOut(moveId, now);
+        await this.#afterChange();
+      } else {
+        this.#store.postponeMove(moveId, now + MOVE_RETRY_MS);
+        await this.#scheduleNextWakeUp();
+      }
+      // The rows have already left if only the last step failed, and the alarm finishes it.
+      return this.#store.outgoingMove(moveId)?.phase === "confirming"
+        ? { status: "moved" }
+        : { status: "pending" };
     } finally {
       this.#sendingMoves.delete(moveId);
     }
   }
 
-  async receiveMove(
-    move: OutgoingMove,
-    driveId: DriveId,
-  ): Promise<ReceiveResult> {
-    const result = this.#store.receiveMove({
-      ...move,
-      driveId,
-      now: Date.now(),
+  // Claiming in the same turn as adding the rows means nothing can be written to D1 in
+  // between. A refusal after the claim is put right by each drive's next exact total.
+  async receiveMove(move: MoveDelivery): Promise<ReceiveResult> {
+    const driveId = move.toDriveId;
+    const bytes = movedBytes(move.rows);
+    let changed = false;
+    const result = await this.#oneAtATime(async (): Promise<ReceiveResult> => {
+      const answer = this.#store.receiveAnswer(move);
+      if (answer) return answer;
+      changed = true;
+      if (bytes > 0) {
+        this.#store.flagUsageWrite(driveId, Date.now());
+        await this.#scheduleNextWakeUp();
+        const claimed = await claimMoveSpace(
+          this.env.DB,
+          { fromDriveId: move.fromDriveId, toDriveId: driveId, bytes },
+          this.#next(bytes),
+        );
+        if (!claimed) return { status: "overLimit", bytes };
+      }
+      return this.#store.receiveMove(move, Date.now());
     });
-    if (result.status === "received") await this.#afterChange();
+    if (changed) await this.#afterChange();
     return result;
   }
 
-  forgetMoveIn(moveId: string): void {
-    this.#store.forgetMoveIn(moveId);
+  confirmMoveIn(moveId: string): void {
+    this.#store.confirmMoveIn(moveId, Date.now());
+  }
+
+  async abandonMoveIn(moveId: string, driveId: DriveId): Promise<void> {
+    this.#store.abandonMoveIn(moveId, driveId, Date.now());
+    await this.#afterChange();
   }
 
   async trash(input: { driveId: DriveId; id: ItemId }): Promise<TrashResult> {
@@ -286,6 +351,10 @@ export class Drive extends DurableObject<Env> {
     return this.#oneAtATime(async () => {
       const usage = this.#store.usage();
       if (!usage) return;
+      if (this.#store.moveInDoubt()) {
+        this.#store.postponeUsageWrite(Date.now() + USAGE_RETRY_MS);
+        return;
+      }
       try {
         await writeDriveUsage(this.env.DB, usage);
         this.#store.markUsageWritten(usage);
@@ -325,10 +394,8 @@ export class Drive extends DurableObject<Env> {
   }
 
   async #retryMoves(): Promise<void> {
-    const driveId = this.#store.usage()?.driveId;
-    if (!driveId) return;
     for (const moveId of this.#store.dueMoves(Date.now(), MOVES_PER_WAKE_UP)) {
-      await this.#sendMove(moveId, driveId);
+      await this.#runMove(moveId);
     }
   }
 

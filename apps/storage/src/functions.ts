@@ -6,6 +6,7 @@ import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
 import { openDriveAs, openDriveToEdit, requireStorageUser } from "./access";
+import { moveRefusal, readStorageRoom } from "./limits";
 import { ensureMyDrive } from "./my-drive";
 import { parseItemName } from "./names";
 import {
@@ -14,6 +15,7 @@ import {
   type FileItem,
   type FolderItem,
   type FolderListing,
+  FOLDER_BUSY,
   INTO_ITSELF,
   ITEM_BUSY,
   nameTakenMessage,
@@ -245,6 +247,8 @@ export const createFolder = createServerFn({ method: "POST" })
         throw refusal(409, nameTakenMessage(parsed.name));
       case "noParent":
         throw refusal(404, NO_SUCH_FOLDER);
+      case "folderBusy":
+        throw refusal(409, FOLDER_BUSY);
     }
   });
 
@@ -331,6 +335,16 @@ export const moveItem = createServerFn({ method: "POST" })
         throw refusal(409, INTO_ITSELF);
       case "busy":
         throw refusal(409, ITEM_BUSY);
+      case "folderBusy":
+        throw refusal(409, FOLDER_BUSY);
+      case "overLimit":
+        throw refusal(
+          413,
+          moveRefusal(
+            await readStorageRoom(env.DB, data.toDriveId),
+            result.bytes,
+          ),
+        );
       case "tooMany":
         throw refusal(409, TOO_MANY_TO_MOVE);
     }
@@ -395,6 +409,7 @@ export const restoreItem = createServerFn({ method: "POST" })
       const drive = await openDriveToEdit(me.id, data.driveId);
       const result = await drive.restore(data.itemId);
       if (result.status === "gone") throw refusal(404, NO_SUCH_ITEM);
+      if (result.status === "folderBusy") throw refusal(409, FOLDER_BUSY);
       return result;
     },
   );

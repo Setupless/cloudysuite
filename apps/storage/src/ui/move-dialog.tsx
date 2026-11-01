@@ -18,7 +18,7 @@ function Folders({
   driveId: DriveId;
   folderId: ItemId | null;
   movingId: ItemId;
-  onOpen: (folder: FolderItem | null, id: ItemId | null) => void;
+  onOpen: (id: ItemId | null, name: string | null) => void;
 }) {
   const query = useInfiniteQuery(folderQuery(driveId, folderId));
   if (query.isError)
@@ -37,7 +37,12 @@ function Folders({
         <button
           type="button"
           className={FOLDER_ROW}
-          onClick={() => onOpen(null, first.folder?.parentId ?? null)}
+          onClick={() =>
+            onOpen(
+              first.folder?.parentId ?? null,
+              first.ancestors.at(-1)?.name ?? null,
+            )
+          }
         >
           <IconArrowLeft size={18} stroke={1.75} aria-hidden />
           Back
@@ -48,7 +53,7 @@ function Folders({
           key={folder.id}
           type="button"
           className={FOLDER_ROW}
-          onClick={() => onOpen(folder, folder.id)}
+          onClick={() => onOpen(folder.id, folder.name)}
         >
           <span className="flex-none text-accent">
             <IconFolder size={18} stroke={1.75} aria-hidden />
@@ -144,9 +149,9 @@ export function MoveDialog({
           driveId={drive as DriveId}
           folderId={folderId}
           movingId={item.id}
-          onOpen={(folder, id) => {
+          onOpen={(id, name) => {
             setFolderId(id);
-            setOpenName(folder?.name ?? null);
+            setOpenName(name);
           }}
         />
       )}

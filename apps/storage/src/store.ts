@@ -1,6 +1,15 @@
 import type { DriveId, UserId } from "@cloudysuite/access";
 import type { SqlDriver, SqlRow, SqlValue } from "@cloudysuite/object-sql";
 import { partCountFor } from "@cloudysuite/transfer";
+import {
+  type IncomingPhase,
+  type MoveDelivery,
+  type MovedRow,
+  movedBytes,
+  type OutgoingMove,
+  type OutgoingPhase,
+  type ReceiveResult,
+} from "./moves";
 import { nameKeyOf, numberedName, type ParsedName } from "./names";
 import type {
   DriveItem,
@@ -21,6 +30,8 @@ import { MAX_ITEMS_ACROSS_DRIVES, TRASH_MS } from "./types";
 export const UPLOAD_EXPIRY_MS = 3 * 24 * 60 * 60 * 1000;
 export const USAGE_RETRY_MS = 60_000;
 const PAGE_SIZE = 200;
+// Long enough for any late copy of a delivery to have arrived or died.
+const SETTLED_MOVE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type ItemRow = SqlRow & {
   id: string;
@@ -127,6 +138,7 @@ export type FoundUpload = {
 export type PartPlan =
   | { status: "finished" }
   | { status: "unknown" }
+  | { status: "folderGone" }
   | { status: "badPartNumber" }
   | { status: "stored" }
   | {
@@ -139,6 +151,7 @@ export type PartPlan =
 export type CompletionPlan =
   | { status: "finished"; item: FileItem }
   | { status: "unknown" }
+  | { status: "folderGone" }
   | {
       status: "ready";
       size: number;
@@ -150,36 +163,16 @@ export type CompletionPlan =
 export type CommitResult =
   | { status: "committed"; item: FileItem }
   | { status: "unknown" }
+  | { status: "folderGone" }
+  | { status: "folderBusy" }
   | { status: "overLimit" };
 
+export type NewUploadResult =
+  { status: "created" | "lost"; upload: UploadView } | { status: "folderGone" };
+
+type FolderState = "open" | "locked" | "gone";
+
 export type StaleUpload = { id: string; r2Key: string; r2UploadId: string };
-
-// What crosses between two objects. Parents come before their children.
-export type MovedRow = {
-  id: string;
-  parentId: string | null;
-  kind: "folder" | "file";
-  name: string;
-  nameKey: string;
-  size: number | null;
-  mimeType: string | null;
-  r2Key: string | null;
-  createdBy: string;
-  createdAt: number;
-  changedAt: number;
-};
-
-export type OutgoingMove = {
-  moveId: string;
-  toDriveId: DriveId;
-  toParentId: ItemId | null;
-  rows: MovedRow[];
-};
-
-export type ReceiveResult =
-  | { status: "received" }
-  | { status: "nameTaken" }
-  | { status: "noDestination" };
 
 export class DriveStore {
   readonly #db: SqlDriver;
@@ -220,12 +213,13 @@ export class DriveStore {
     return item?.kind === "file" ? item : null;
   }
 
-  #folderToAddTo(id: ItemId): boolean {
+  #folderState(id: ItemId): FolderState {
     const [row] = this.#rows<{ move_id: string | null }>(
       "SELECT move_id FROM items WHERE id = ? AND kind = 'folder' AND trash_id IS NULL",
       id,
     );
-    return row !== undefined && row.move_id === null;
+    if (!row) return "gone";
+    return row.move_id === null ? "open" : "locked";
   }
 
   // Null when the folder doesn't exist, so a bad link can't look like an empty folder.
@@ -330,9 +324,9 @@ export class DriveStore {
   }): NewFolderResult {
     const { driveId, id, parentId, name, createdBy, now } = input;
     return this.#db.transaction((): NewFolderResult => {
-      if (parentId !== null && !this.#folderToAddTo(parentId)) {
-        return { status: "noParent" };
-      }
+      const parent = parentId === null ? "open" : this.#folderState(parentId);
+      if (parent === "gone") return { status: "noParent" };
+      if (parent === "locked") return { status: "folderBusy" };
       if (!this.#nameIsFree(parentId, name.nameKey)) {
         return { status: "nameTaken" };
       }
@@ -391,13 +385,17 @@ export class DriveStore {
 
   // Two tabs can race here. The loser's upload is returned as "lost", for its caller to
   // abort, and both tabs carry on sending to the one that stayed.
-  createUpload(
-    upload: NewUpload,
-    now: number,
-  ): { status: "created" | "lost"; upload: UploadView } {
-    return this.#db.transaction(() => {
+  createUpload(upload: NewUpload, now: number): NewUploadResult {
+    return this.#db.transaction((): NewUploadResult => {
+      if (
+        upload.parentId !== null &&
+        this.#rows("SELECT 1 AS found FROM items WHERE id = ?", upload.parentId)
+          .length === 0
+      ) {
+        return { status: "folderGone" };
+      }
       const existing = this.findUpload(upload, now);
-      if (existing) return { status: "lost" as const, upload: existing };
+      if (existing) return { status: "lost", upload: existing };
       this.#db.exec(
         `INSERT INTO uploads (id, parent_id, name, size, mime_type, fingerprint, r2_key, r2_upload_id, created_by, created_at, touched_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -414,7 +412,7 @@ export class DriveStore {
         now,
       );
       return {
-        status: "created" as const,
+        status: "created",
         upload: {
           id: upload.id,
           name: upload.name,
@@ -432,10 +430,23 @@ export class DriveStore {
     )[0];
   }
 
+  #uploadLostItsFolder(id: ItemId): boolean {
+    return (
+      this.#rows(
+        "SELECT 1 AS found FROM uploads WHERE id = ? AND folder_gone = 1",
+        id,
+      ).length > 0
+    );
+  }
+
   partPlan(id: ItemId, partNumber: number): PartPlan {
     if (this.#finishedFile(id)) return { status: "finished" };
     const row = this.#upload(id);
-    if (!row) return { status: "unknown" };
+    if (!row) {
+      return {
+        status: this.#uploadLostItsFolder(id) ? "folderGone" : "unknown",
+      };
+    }
     if (partNumber < 1 || partNumber > partCountFor(row.size)) {
       return { status: "badPartNumber" };
     }
@@ -471,7 +482,11 @@ export class DriveStore {
     const finished = this.#finishedFile(id);
     if (finished) return { status: "finished", item: finished };
     const row = this.#upload(id);
-    if (!row) return { status: "unknown" };
+    if (!row) {
+      return {
+        status: this.#uploadLostItsFolder(id) ? "folderGone" : "unknown",
+      };
+    }
     return {
       status: "ready",
       size: row.size,
@@ -491,12 +506,18 @@ export class DriveStore {
       const finished = this.#finishedFile(id);
       if (finished) return { status: "committed", item: finished };
       const row = this.#upload(id);
-      if (!row) return { status: "unknown" };
-      // Someone deleted or moved the folder during the upload. The file is still wanted,
-      // so it lands at the drive's root rather than vanishing with the folder.
+      if (!row) {
+        return {
+          status: this.#uploadLostItsFolder(id) ? "folderGone" : "unknown",
+        };
+      }
+      // A folder in Trash can't take the file, which is still wanted, so it lands at the
+      // drive's root rather than vanishing with the folder. A locked folder may be back
+      // in a moment, or gone to another drive, so the sender asks again.
       const wanted = row.parent_id as ItemId | null;
-      const parentId =
-        wanted !== null && this.#folderToAddTo(wanted) ? wanted : null;
+      const folder = wanted === null ? "gone" : this.#folderState(wanted);
+      if (folder === "locked") return { status: "folderBusy" };
+      const parentId = folder === "open" ? wanted : null;
 
       let name = row.name;
       for (
@@ -525,6 +546,11 @@ export class DriveStore {
       this.#noteChange(driveId, row.size, 1, now);
       return { status: "committed", item: this.file(id) as FileItem };
     });
+  }
+
+  uploadFolderIsLocked(id: ItemId): boolean {
+    const parentId = this.#upload(id)?.parent_id as ItemId | null | undefined;
+    return parentId ? this.#folderState(parentId) === "locked" : false;
   }
 
   // Null when there's nothing left to commit: it finished already, or it's gone.
@@ -658,9 +684,9 @@ export class DriveStore {
           id,
         );
         if (inside.length > 0) return { status: "intoItself" };
-        if (!this.#folderToAddTo(toParentId)) {
-          return { status: "noDestination" };
-        }
+        const destination = this.#folderState(toParentId);
+        if (destination === "gone") return { status: "noDestination" };
+        if (destination === "locked") return { status: "folderBusy" };
       }
       if (item.parentId === toParentId) return { status: "moved" };
       if (!this.#nameIsFree(toParentId, nameKeyOf(item.name))) {
@@ -681,11 +707,14 @@ export class DriveStore {
   beginMoveOut(input: {
     moveId: string;
     id: ItemId;
+    fromDriveId: DriveId;
     toDriveId: DriveId;
     toParentId: ItemId | null;
     tryAt: number;
+    giveUpAt: number;
   }): MoveResult | { status: "begun" } {
-    const { moveId, id, toDriveId, toParentId, tryAt } = input;
+    const { moveId, id, fromDriveId, toDriveId, toParentId, tryAt, giveUpAt } =
+      input;
     return this.#db.transaction(() => {
       if (!this.item(id)) return { status: "gone" as const };
       if (this.#treeIsLocked(id)) return { status: "busy" as const };
@@ -702,12 +731,15 @@ export class DriveStore {
         moveId,
       );
       this.#db.exec(
-        "INSERT INTO moves_out (id, top_id, to_drive_id, to_parent_id, try_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO moves_out (id, top_id, from_drive_id, to_drive_id, to_parent_id, try_at, give_up_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         moveId,
         id,
+        fromDriveId,
         toDriveId,
         toParentId,
         tryAt,
+        giveUpAt,
       );
       return { status: "begun" as const };
     });
@@ -715,11 +747,18 @@ export class DriveStore {
 
   outgoingMove(moveId: string): OutgoingMove | null {
     const [move] = this.#rows<{
+      phase: OutgoingPhase;
       top_id: string;
+      from_drive_id: string;
       to_drive_id: string;
       to_parent_id: string | null;
+      give_up_at: number;
     }>("SELECT * FROM moves_out WHERE id = ?", moveId);
     if (!move) return null;
+    const toDriveId = move.to_drive_id as DriveId;
+    if (move.phase !== "sending") {
+      return { phase: move.phase, moveId, toDriveId };
+    }
     const toParentId = move.to_parent_id as ItemId | null;
     const rows = this.#rows<
       ItemRow & { name_key: string; r2_key: string | null }
@@ -740,32 +779,58 @@ export class DriveStore {
       changedAt: row.changed_at,
     }));
     return {
+      phase: "sending",
+      giveUpAt: move.give_up_at,
       moveId,
-      toDriveId: move.to_drive_id as DriveId,
+      fromDriveId: move.from_drive_id as DriveId,
+      toDriveId,
       toParentId,
       rows,
     };
   }
 
-  receiveMove(input: OutgoingMove & { driveId: DriveId; now: number }) {
-    const { moveId, driveId, toParentId, rows, now } = input;
-    return this.#db.transaction((): ReceiveResult => {
-      const repeat = this.#rows(
-        "SELECT 1 AS found FROM moves_in WHERE id = ?",
+  // While a delivery has no answer, D1 may or may not have handed its bytes over to the
+  // other drive, so this drive can't say what its total there should be.
+  moveInDoubt(): boolean {
+    return (
+      this.#rows("SELECT 1 AS found FROM moves_out WHERE phase = 'sending'")
+        .length > 0
+    );
+  }
+
+  #incomingPhase(moveId: string): IncomingPhase | null {
+    return (
+      this.#rows<{ phase: IncomingPhase }>(
+        "SELECT phase FROM moves_in WHERE id = ?",
         moveId,
-      );
-      if (repeat.length > 0) return { status: "received" };
-      if (toParentId !== null && !this.#folderToAddTo(toParentId)) {
-        return { status: "noDestination" };
-      }
-      const top = rows[0];
-      if (top && !this.#nameIsFree(toParentId, top.nameKey)) {
-        return { status: "nameTaken" };
-      }
-      for (const row of rows) {
+      )[0]?.phase ?? null
+    );
+  }
+
+  // Null means the rows can be added.
+  receiveAnswer(move: MoveDelivery): ReceiveResult | null {
+    const phase = this.#incomingPhase(move.moveId);
+    if (phase === "abandoned") return { status: "noDestination" };
+    if (phase !== null) return { status: "received" };
+    if (move.toParentId !== null) {
+      const destination = this.#folderState(move.toParentId);
+      if (destination === "gone") return { status: "noDestination" };
+      if (destination === "locked") return { status: "folderBusy" };
+    }
+    const top = move.rows[0];
+    return top && !this.#nameIsFree(move.toParentId, top.nameKey)
+      ? { status: "nameTaken" }
+      : null;
+  }
+
+  receiveMove(move: MoveDelivery, now: number): ReceiveResult {
+    return this.#db.transaction((): ReceiveResult => {
+      const answer = this.receiveAnswer(move);
+      if (answer) return answer;
+      for (const row of move.rows) {
         this.#db.exec(
-          `INSERT INTO items (id, parent_id, kind, name, name_key, size, mime_type, r2_key, created_by, created_at, changed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO items (id, parent_id, kind, name, name_key, size, mime_type, r2_key, created_by, created_at, changed_at, move_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           row.id,
           row.parentId,
           row.kind,
@@ -777,31 +842,96 @@ export class DriveStore {
           row.createdBy,
           row.createdAt,
           row.changedAt,
+          move.moveId,
         );
       }
-      this.#db.exec("INSERT INTO moves_in (id) VALUES (?)", moveId);
-      const files = rows.filter((row) => row.kind === "file");
-      this.#touchChain(toParentId, now);
+      this.#db.exec("INSERT INTO moves_in (id) VALUES (?)", move.moveId);
+      this.#touchChain(move.toParentId, now);
       this.#noteChange(
-        driveId,
-        files.reduce((total, row) => total + (row.size ?? 0), 0),
-        files.length,
+        move.toDriveId,
+        movedBytes(move.rows),
+        move.rows.filter((row) => row.kind === "file").length,
         now,
       );
       return { status: "received" };
     });
   }
 
-  forgetMoveIn(moveId: string): void {
-    this.#db.exec("DELETE FROM moves_in WHERE id = ?", moveId);
+  #settleMoveIn(moveId: string, phase: IncomingPhase, now: number): void {
+    this.#db.exec(
+      `INSERT INTO moves_in (id, phase, settled_at) VALUES (?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET phase = excluded.phase, settled_at = excluded.settled_at`,
+      moveId,
+      phase,
+      now,
+    );
+    this.#db.exec(
+      "DELETE FROM moves_in WHERE settled_at <= ?",
+      now - SETTLED_MOVE_MS,
+    );
   }
 
-  // The other drive holds the rows now, and the same R2 objects, which stay where they
-  // are. Removing a row queues no R2 deletion.
-  finishMoveOut(moveId: string, driveId: DriveId, now: number): void {
+  // The sender has removed its rows, so these are now the only owner of the bytes.
+  confirmMoveIn(moveId: string, now: number): void {
+    this.#db.transaction(() => {
+      if (this.#incomingPhase(moveId) !== "locked") return;
+      this.#db.exec(
+        "UPDATE items SET move_id = NULL WHERE move_id = ?",
+        moveId,
+      );
+      this.#settleMoveIn(moveId, "unlocked", now);
+    });
+  }
+
+  // The sender kept the bytes, so these rows leave and queue no R2 deletion. A move this
+  // drive never heard of still leaves a record, in case its delivery is on the way.
+  abandonMoveIn(moveId: string, driveId: DriveId, now: number): void {
+    this.#db.transaction(() => {
+      const phase = this.#incomingPhase(moveId);
+      if (phase === "unlocked" || phase === "abandoned") return;
+      if (phase === "locked") this.#removeLockedRows(moveId, driveId, now);
+      this.#settleMoveIn(moveId, "abandoned", now);
+    });
+  }
+
+  #removeLockedRows(moveId: string, driveId: DriveId, now: number): void {
+    // Rows went in parents first and nothing can be added to a locked folder.
+    const rows = this.#rows<{
+      id: string;
+      kind: string;
+      size: number | null;
+      parent_id: string | null;
+    }>(
+      "SELECT id, kind, size, parent_id FROM items WHERE move_id = ? ORDER BY rowid DESC",
+      moveId,
+    );
+    let bytes = 0;
+    let files = 0;
+    for (const row of rows) {
+      this.#closeUploadsIn(row.id);
+      this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
+      if (row.kind === "file") {
+        bytes += row.size ?? 0;
+        files += 1;
+      }
+    }
+    this.#touchChain((rows.at(-1)?.parent_id ?? null) as ItemId | null, now);
+    this.#noteChange(driveId, -bytes, -files, now);
+  }
+
+  // The other drive holds locked rows now, and the same R2 objects, which stay where they
+  // are. Removing a row queues no R2 deletion. The record stays until the other drive has
+  // unlocked its rows.
+  handOverMove(input: {
+    moveId: string;
+    driveId: DriveId;
+    now: number;
+    tryAt: number;
+  }): void {
+    const { moveId, driveId, now, tryAt } = input;
     this.#db.transaction(() => {
       const [move] = this.#rows<{ top_id: string }>(
-        "SELECT top_id FROM moves_out WHERE id = ?",
+        "SELECT top_id FROM moves_out WHERE id = ? AND phase = 'sending'",
         moveId,
       );
       if (!move) return;
@@ -828,19 +958,42 @@ export class DriveStore {
           files += 1;
         }
       }
-      this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
+      this.#db.exec(
+        "UPDATE moves_out SET phase = 'confirming', try_at = ? WHERE id = ?",
+        tryAt,
+        moveId,
+      );
       this.#touchChain((top?.parent_id ?? null) as ItemId | null, now);
       this.#noteChange(driveId, -bytes, -files, now);
     });
   }
 
+  endMoveOut(moveId: string): void {
+    this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
+  }
+
+  #unlock(moveId: string): void {
+    this.#db.exec("UPDATE items SET move_id = NULL WHERE move_id = ?", moveId);
+  }
+
+  // The other drive refused, so it holds nothing.
   cancelMoveOut(moveId: string): void {
     this.#db.transaction(() => {
+      this.#unlock(moveId);
+      this.endMoveOut(moveId);
+    });
+  }
+
+  // The other drive never answered, so it may hold locked rows. Those can't delete
+  // anything, so these rows are safe to free now, and the alarm keeps telling it.
+  giveUpMoveOut(moveId: string, tryAt: number): void {
+    this.#db.transaction(() => {
+      this.#unlock(moveId);
       this.#db.exec(
-        "UPDATE items SET move_id = NULL WHERE move_id = ?",
+        "UPDATE moves_out SET phase = 'abandoning', try_at = ? WHERE id = ? AND phase = 'sending'",
+        tryAt,
         moveId,
       );
-      this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
     });
   }
 
@@ -950,7 +1103,9 @@ export class DriveStore {
       );
       if (!top) return { status: "gone" };
       const from = top.trashed_from as ItemId | null;
-      const folderGone = from !== null && !this.#folderToAddTo(from);
+      const folder = from === null ? "open" : this.#folderState(from);
+      if (folder === "locked") return { status: "folderBusy" };
+      const folderGone = folder === "gone";
       const parentId = folderGone ? null : from;
 
       let name = top.name;
@@ -1051,7 +1206,7 @@ export class DriveStore {
   // more tells the person it stopped.
   #closeUploadsIn(folderId: string): void {
     this.#db.exec(
-      "UPDATE uploads SET closing = 1, parent_id = NULL WHERE parent_id = ?",
+      "UPDATE uploads SET closing = 1, folder_gone = 1, parent_id = NULL WHERE parent_id = ?",
       folderId,
     );
   }

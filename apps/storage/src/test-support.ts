@@ -140,6 +140,12 @@ export async function createStorageTest() {
     drive: open(await grantFor(ALICE, DRIVE_A)),
     driveB: open(await grantFor(ALICE, DRIVE_B)),
     instance: (driveId: DriveId = DRIVE_A) => instanceOf(driveId),
+    // A new object on the same stored data, as after a crash.
+    restart(driveId: DriveId = DRIVE_A) {
+      const instance = instanceOf(driveId);
+      instance.object = construct(instance);
+      return instance.object;
+    },
     // Moves the clock to the alarm's time, as the runtime would, and runs it.
     async fireAlarm(driveId: DriveId = DRIVE_A) {
       const instance = instanceOf(driveId);

@@ -72,7 +72,7 @@ test("a refused file says why and doesn't stop the others", async () => {
 });
 
 test("while a connection is out the batch waits, and carries on when bytes move", async () => {
-  let wait!: () => void;
+  let wait!: Parameters<SendFile>[0]["onWaiting"];
   let move!: (bytes: number) => void;
   let finish!: () => void;
   const { queue } = kit(
@@ -85,10 +85,12 @@ test("while a connection is out the batch waits, and carries on when bytes move"
   );
   queue.add(place, [fileOf("a", 100)]);
   await settled();
-  wait();
-  expect(queue.snapshot()[0]?.waiting).toBe(true);
+  wait("connection");
+  expect(queue.snapshot()[0]?.waiting).toBe("connection");
+  wait("folderMoving");
+  expect(queue.snapshot()[0]?.waiting).toBe("folderMoving");
   move(50);
-  expect(queue.snapshot()[0]?.waiting).toBe(false);
+  expect(queue.snapshot()[0]?.waiting).toBeNull();
   expect(batchProgress(queue.snapshot()[0]!).sentBytes).toBe(50);
   finish();
   await settled();
