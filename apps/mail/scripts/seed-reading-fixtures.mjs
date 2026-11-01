@@ -213,6 +213,81 @@ await deliver("evil@example.net", to, [
   ...html(readFileSync(join(FIXTURES, "hostile-links.txt"), "utf8")),
 ]);
 
+await deliver("evil@example.net", to, [
+  ...headers({
+    from: "Hidden Loads <loads@example.net>",
+    to,
+    subject: "Hostile loads",
+    minutesAgo: 8,
+  }),
+  ...html(
+    readFileSync(join(FIXTURES, "hostile-loads.txt"), "utf8")
+      .replaceAll("__DOMAIN_UPPER__", domain.toUpperCase())
+      .replaceAll("__DOMAIN__", domain),
+  ),
+]);
+
+// Each stands alone, so the "Show images" button can only be there because of it.
+for (const [subject, body] of [
+  [
+    "Remote CSS import",
+    `<style>@import "http://canary.localhost:9911/only-import.css";</style><p>Import only.</p>`,
+  ],
+  [
+    "Remote CSS image set",
+    `<style>p { background-image: image-set("http://canary.localhost:9911/only-image-set.png" 1x); }</style><p>Image set only.</p>`,
+  ],
+  [
+    "Remote CSS escape",
+    `<style>p { background: \\75 rl(http://canary.localhost:9911/only-escaped.png); }</style><p>Escaped only.</p>`,
+  ],
+  [
+    "Unfinished image tag",
+    `<p>Before the tag.</p><img src=http://canary.localhost:9911/unfinished-img.png onerror="fetch('http://canary.localhost:9911/unfinished-onerror')"`,
+  ],
+  [
+    "Unfinished meta tag",
+    `<p>Before the tag.</p><meta http-equiv=refresh content="0;url=http://canary.localhost:9911/unfinished-meta"`,
+  ],
+  [
+    "Unfinished frame tag",
+    `<p>Before the tag.</p><iframe src="http://canary.localhost:9911/unfinished-iframe`,
+  ],
+]) {
+  await deliver("evil@example.net", to, [
+    ...headers({
+      from: "Hidden Loads <loads@example.net>",
+      to,
+      subject,
+      minutesAgo: 9,
+    }),
+    ...html(body),
+  ]);
+}
+
+await deliver("evil@example.net", to, [
+  ...headers({
+    from: "Lying Picture <liar@example.net>",
+    to,
+    subject: "A picture that is not one",
+    minutesAgo: 10,
+  }),
+  'Content-Type: multipart/related; boundary="b"',
+  "",
+  "--b",
+  "Content-Type: text/html; charset=utf-8",
+  "",
+  '<p>This inline file says it is a PNG.</p><img src="cid:liar@x" alt="Not a picture">',
+  "--b",
+  "Content-Type: image/png",
+  "Content-Transfer-Encoding: base64",
+  "Content-ID: <liar@x>",
+  'Content-Disposition: inline; filename="liar.png"',
+  "",
+  btoa("<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>"),
+  "--b--",
+]);
+
 const toSupport = address("support");
 for (const [index, subject] of [
   "I can't sign in",

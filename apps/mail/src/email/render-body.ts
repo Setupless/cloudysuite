@@ -8,13 +8,24 @@ const MAX_RENDERED_CHARACTERS = 2_000_000;
 const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024;
 
-// Formats a browser only ever decodes as a picture. SVG can carry script.
-const INLINE_IMAGE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
+const startsWith = (bytes: Uint8Array, ...signature: number[]) =>
+  signature.every((value, index) => bytes[index] === value);
+
+// Formats a browser only ever decodes as a picture. SVG can carry script. The
+// declared type comes from the sender, so the file's first bytes have to agree.
+const INLINE_IMAGE_SIGNATURES: Record<string, (bytes: Uint8Array) => boolean> =
+  {
+    "image/png": (bytes) =>
+      startsWith(bytes, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+    "image/jpeg": (bytes) => startsWith(bytes, 0xff, 0xd8, 0xff),
+    "image/gif": (bytes) =>
+      startsWith(bytes, 0x47, 0x49, 0x46, 0x38) &&
+      (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+      bytes[5] === 0x61,
+    "image/webp": (bytes) =>
+      startsWith(bytes, 0x52, 0x49, 0x46, 0x46) &&
+      startsWith(bytes.subarray(8), 0x57, 0x45, 0x42, 0x50),
+  };
 
 export type RenderedBody =
   | {
@@ -38,9 +49,13 @@ async function readInlineImages(
   let total = 0;
   for (const info of await mailbox.inlineAttachments(messageId)) {
     const contentId = info.contentId as string;
+    const type = info.mimeType.toLowerCase();
+    const matchesType = Object.hasOwn(INLINE_IMAGE_SIGNATURES, type)
+      ? INLINE_IMAGE_SIGNATURES[type]
+      : undefined;
     if (
       !wanted.has(contentId) ||
-      !INLINE_IMAGE_TYPES.has(info.mimeType.toLowerCase()) ||
+      !matchesType ||
       info.size > MAX_INLINE_IMAGE_BYTES ||
       total + info.size > MAX_INLINE_TOTAL_BYTES
     ) {
@@ -48,11 +63,14 @@ async function readInlineImages(
     }
     const download = await mailbox.getAttachment(messageId, info.id);
     if (!download) continue;
-    const bytes = await new Response(download.body).arrayBuffer();
+    const bytes = new Uint8Array(
+      await new Response(download.body).arrayBuffer(),
+    );
+    if (!matchesType(bytes)) continue;
     total += info.size;
     images.set(
       contentId,
-      `data:${info.mimeType.toLowerCase()};base64,${Buffer.from(bytes).toString("base64")}`,
+      `data:${type};base64,${Buffer.from(bytes).toString("base64")}`,
     );
     attachmentByContentId.set(contentId, info);
   }
@@ -69,6 +87,7 @@ const textBody = (text: string | null): RenderedBody => {
 export async function renderBody(
   mailbox: MailboxClient,
   messageId: MessageId,
+  ownDomain: string,
 ): Promise<RenderedBody | null> {
   const body = await mailbox.getBody(messageId);
   if (!body) return null;
@@ -83,7 +102,7 @@ export async function renderBody(
       messageId,
       await referencedContentIds(body.html),
     );
-    const sanitized = await sanitizeEmailHtml(body.html, images);
+    const sanitized = await sanitizeEmailHtml(body.html, images, ownDomain);
     return {
       kind: "html",
       html: sanitized.html,

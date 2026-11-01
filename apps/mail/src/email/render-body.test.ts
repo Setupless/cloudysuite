@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Buffer } from "node:buffer";
 import { checkMailboxAccess } from "@cloudysuite/access";
 import type { UserId } from "../../../../src/db/schema";
 import { createTestDatabase } from "../../../../src/db/test-database";
@@ -8,7 +9,12 @@ import { createTestEnv, MAILBOX_A, toArrayBuffer } from "../test-support";
 import type { MessageId } from "../types";
 import { renderBody } from "./render-body";
 
-const PNG_BASE64 = "AAEC";
+const fromHex = (hex: string) => Buffer.from(hex, "hex").toString("base64");
+const PNG_BASE64 = fromHex("89504e470d0a1a0a0000");
+const JPEG_BASE64 = fromHex("ffd8ffe000104a464946");
+const GIF_BASE64 = fromHex("474946383961010001");
+const WEBP_BASE64 = fromHex("52494646240000005745425056503820");
+const DOMAIN = "suite.example.com";
 const alice = "user-alice" as UserId;
 
 async function setUp() {
@@ -51,7 +57,7 @@ async function setUp() {
   return { mailbox, deliver };
 }
 
-const relatedMail = (type: string, html: string) => [
+const relatedMail = (type: string, html: string, content = PNG_BASE64) => [
   'Content-Type: multipart/related; boundary="b"',
   "",
   "--b",
@@ -64,24 +70,63 @@ const relatedMail = (type: string, html: string) => [
   "Content-ID: <logo@x>",
   "Content-Disposition: inline",
   "",
-  PNG_BASE64,
+  content,
   "--b--",
 ];
 
 test("a picture the message uses is embedded and leaves the attachment list", async () => {
   const { mailbox, deliver } = await setUp();
   const id = await deliver(relatedMail("image/png", `<img src="cid:logo@x">`));
-  const body = await renderBody(mailbox, id);
+  const body = await renderBody(mailbox, id, DOMAIN);
   if (body?.kind !== "html") throw new Error("expected html");
   expect(body.html).toContain(`data:image/png;base64,${PNG_BASE64}`);
   expect(body.embedded).toHaveLength(1);
+});
+
+test("each picture format is embedded when its bytes agree", async () => {
+  const { mailbox, deliver } = await setUp();
+  for (const [type, content] of [
+    ["image/png", PNG_BASE64],
+    ["IMAGE/JPEG", JPEG_BASE64],
+    ["image/gif", GIF_BASE64],
+    ["image/webp", WEBP_BASE64],
+  ] as const) {
+    const id = await deliver(
+      relatedMail(type, `<img src="cid:logo@x">`, content),
+    );
+    const body = await renderBody(mailbox, id, DOMAIN);
+    if (body?.kind !== "html") throw new Error("expected html");
+    expect(body.html).toContain(`data:${type.toLowerCase()};base64,${content}`);
+    expect(body.embedded).toHaveLength(1);
+  }
+});
+
+test("a file that lies about being a picture stays an attachment", async () => {
+  const { mailbox, deliver } = await setUp();
+  for (const [type, content] of [
+    ["image/png", btoa("<svg xmlns='http://www.w3.org/2000/svg'/>")],
+    ["image/png", JPEG_BASE64],
+    ["image/jpeg", PNG_BASE64],
+    ["image/gif", fromHex("474946383861")],
+    ["image/gif", fromHex("474946")],
+    ["image/webp", fromHex("524946462400000041564920")],
+    ["image/png", ""],
+  ] as const) {
+    const id = await deliver(
+      relatedMail(type, `<img src="cid:logo@x" alt="a">`, content),
+    );
+    const body = await renderBody(mailbox, id, DOMAIN);
+    if (body?.kind !== "html") throw new Error("expected html");
+    expect(body.html).toContain(`<img alt="a">`);
+    expect(body.embedded).toEqual([]);
+  }
 });
 
 test("an inline file that could hold script is never embedded", async () => {
   const { mailbox, deliver } = await setUp();
   for (const type of ["image/svg+xml", "text/html"]) {
     const id = await deliver(relatedMail(type, `<img src="cid:logo@x">`));
-    const body = await renderBody(mailbox, id);
+    const body = await renderBody(mailbox, id, DOMAIN);
     if (body?.kind !== "html") throw new Error("expected html");
     expect(body.html).not.toContain("data:");
     expect(body.embedded).toEqual([]);
@@ -95,7 +140,7 @@ test("hostile HTML reaches the browser only after cleaning", async () => {
     "",
     `<p onclick="x">Hi</p><script>alert(1)</script>`,
   ]);
-  const body = await renderBody(mailbox, id);
+  const body = await renderBody(mailbox, id, DOMAIN);
   if (body?.kind !== "html") throw new Error("expected html");
   expect(body.html.trim()).toBe("<p>Hi</p>");
 });
@@ -103,12 +148,12 @@ test("hostile HTML reaches the browser only after cleaning", async () => {
 test("plain text stays plain, and an empty message says so", async () => {
   const { mailbox, deliver } = await setUp();
   const text = await deliver(["Content-Type: text/plain", "", "<b>Hello</b>"]);
-  const plain = await renderBody(mailbox, text);
+  const plain = await renderBody(mailbox, text, DOMAIN);
   if (plain?.kind !== "text") throw new Error("expected text");
   expect(plain.text.trim()).toBe("<b>Hello</b>");
   const empty = await deliver(["Content-Type: text/plain", "", ""]);
-  expect(await renderBody(mailbox, empty)).toEqual({ kind: "empty" });
-  expect(await renderBody(mailbox, 999 as MessageId)).toBeNull();
+  expect(await renderBody(mailbox, empty, DOMAIN)).toEqual({ kind: "empty" });
+  expect(await renderBody(mailbox, 999 as MessageId, DOMAIN)).toBeNull();
 });
 
 test("a body too long to show does not reach the browser", async () => {
@@ -119,7 +164,11 @@ test("a body too long to show does not reach the browser", async () => {
     "",
     `<p>${long}</p>`,
   ]);
-  expect(await renderBody(mailbox, onlyHtml)).toEqual({ kind: "tooLong" });
+  expect(await renderBody(mailbox, onlyHtml, DOMAIN)).toEqual({
+    kind: "tooLong",
+  });
   const onlyText = await deliver(["Content-Type: text/plain", "", long]);
-  expect(await renderBody(mailbox, onlyText)).toEqual({ kind: "tooLong" });
+  expect(await renderBody(mailbox, onlyText, DOMAIN)).toEqual({
+    kind: "tooLong",
+  });
 });

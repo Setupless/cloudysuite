@@ -4,6 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { readSettings } from "../../../src/settings";
 import {
   addresses,
   type MailboxKind,
@@ -100,9 +101,13 @@ export const findThreadOfMessage = createServerFn({ method: "GET" })
 
 export const getMessageBody = createServerFn({ method: "GET" })
   .validator(parseMessageInput)
-  .handler(async ({ data }) =>
-    renderBody(await openFor(data.mailboxId), data.messageId),
-  );
+  .handler(async ({ data }) => {
+    const mailbox = await openFor(data.mailboxId);
+    const { primaryDomain } = await readSettings(env.DB);
+    // The hostname router sends every request to /setup until a domain is stored.
+    if (primaryDomain === null) throw new Error("No primary domain is stored.");
+    return renderBody(mailbox, data.messageId, primaryDomain);
+  });
 
 export const setFlags = createServerFn({ method: "POST" })
   .validator(parseFlagsInput)

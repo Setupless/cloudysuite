@@ -28,3 +28,19 @@ export function emailFrameDocument(
 ): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${emailFramePolicy(showRemoteImages)}"><meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off"><base target="_blank"><style>:root{color-scheme:${palette.scheme}}html,body{margin:0;padding:0}body{background:${palette.page};color:${palette.text};font:14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}a{color:${palette.link}}img{max-width:100%;height:auto}pre{white-space:pre-wrap}@media (max-width:640px){table,td{width:auto!important;max-width:100%!important}}</style></head><body>${html}`;
 }
+
+// The measuring copy shares Mail's origin, and from there Chromium sends a Referer
+// with every CSS load, whatever the `<meta>` or a Referrer-Policy header says. CSS
+// images rarely change a message's height, so that copy goes without them. The
+// sanitizer has already removed the escapes and comments that could hide these names.
+export function emailMeasuringDocument(
+  html: string,
+  showRemoteImages: boolean,
+  palette: FramePalette,
+): string {
+  return emailFrameDocument(
+    html.replace(/(?:-[a-z]+-)?image-set\(|\burl\(/gi, "none("),
+    showRemoteImages,
+    palette,
+  );
+}

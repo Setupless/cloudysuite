@@ -5,7 +5,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { emailFrameDocument, type FramePalette } from "../email/frame-document";
+import {
+  emailFrameDocument,
+  emailMeasuringDocument,
+  type FramePalette,
+} from "../email/frame-document";
 
 const INITIAL_HEIGHT = 96;
 // A hostile `height: 100000000px` stops here, and the frame scrolls on its own.
@@ -41,6 +45,11 @@ const useColorScheme = () =>
     readColorScheme,
     () => "light",
   );
+
+// The sanitizer drops URLs on our own hosts, but a sender's server can redirect an
+// image to one, and Chromium would send the session cookie with it. Other browsers
+// ignore this attribute. TypeScript's React types do not have it yet.
+const CREDENTIALLESS = { credentialless: true };
 
 // Nothing can read a sandboxed, scriptless frame's height from outside, so a
 // second copy measures it. That copy needs `allow-same-origin` for the parent to
@@ -94,6 +103,7 @@ function MeasuringFrame({
       tabIndex={-1}
       sandbox="allow-same-origin"
       referrerPolicy="no-referrer"
+      {...CREDENTIALLESS}
       srcDoc={srcDoc}
       style={{ width }}
       className="pointer-events-none invisible absolute top-0 left-0 h-px border-0"
@@ -158,6 +168,11 @@ export function EmailFrame({
     [html, showRemoteImages, palette],
   );
 
+  const measuringDoc = useMemo(
+    () => palette && emailMeasuringDocument(html, showRemoteImages, palette),
+    [html, showRemoteImages, palette],
+  );
+
   useEffect(() => setMeasuring(true), [srcDoc, width]);
 
   const onPaper = designed && scheme === "dark";
@@ -183,10 +198,10 @@ export function EmailFrame({
             className="block w-full border-0"
           />
         )}
-        {srcDoc && width > 0 && measuring && (
+        {measuringDoc && width > 0 && measuring && (
           <MeasuringFrame
-            key={`${width}:${srcDoc.length}:${showRemoteImages}:${frameScheme}`}
-            srcDoc={srcDoc}
+            key={`${width}:${measuringDoc.length}:${showRemoteImages}:${frameScheme}`}
+            srcDoc={measuringDoc}
             width={width}
             onMeasure={setHeight}
             onSettled={() => setMeasuring(false)}

@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { emailFrameDocument, emailFramePolicy } from "./frame-document";
+import {
+  emailFrameDocument,
+  emailFramePolicy,
+  emailMeasuringDocument,
+} from "./frame-document";
 
 const palette = {
   scheme: "light",
@@ -44,4 +48,27 @@ test("a tag the mail left open has nothing after it to close it", () => {
   expect(emailFrameDocument(unterminated, false, palette)).toEndWith(
     unterminated,
   );
+});
+
+test("no load from the frame says where it came from", () => {
+  const document = emailFrameDocument(
+    `<img src="https://x.example/a.png">`,
+    true,
+    palette,
+  );
+  const policyAt = document.indexOf(
+    `<meta name="referrer" content="no-referrer">`,
+  );
+  expect(policyAt).toBeGreaterThan(-1);
+  expect(policyAt).toBeLessThan(document.indexOf("<img"));
+});
+
+test("the measuring copy keeps pictures but loads nothing from CSS", () => {
+  const document = emailMeasuringDocument(
+    `<style>a{background:URL("https://x.example/a")}b{background:-webkit-image-set("https://x.example/b" 1x)}</style><p style="background:url(&quot;https://x.example/c&quot;)">d</p><img src="https://x.example/e.png" referrerpolicy="no-referrer">`,
+    true,
+    palette,
+  );
+  expect(document).not.toMatch(/url\(|image-set\(/i);
+  expect(document).toContain(`<img src="https://x.example/e.png"`);
 });
