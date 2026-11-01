@@ -163,6 +163,14 @@ Mail includes:
 - A short undo window after sending.
 - An installable PWA with web push and offline reading.
 
+Search, labels, and rules work like this:
+
+- **Search** takes Gmail's operators, such as `from:` and `in:trash`, and groups results by conversation. It leaves out Spam and Trash until asked. Search text is parsed into words and never reaches the index as syntax, so no text can cause an error.
+- **Labels** belong to a mailbox, so everyone with access sees and manages the same set. A label applies to a whole conversation, and a reply joins the labels of its conversation. A label's list leaves out Spam and Trash, because that mail has been put out of the way. Anyone with access can delete a label, even though only managers edit rules: the deletion takes the label out of any rule that used it, and a rule left with nothing to do turns off.
+- **Rules** belong to a mailbox: its managers edit them, and its members can read them. They run on new inbound mail only, never on imported or sent mail, so an import can't re-sort a mailbox's history. Rules run from the top down, every rule that matches applies, and the highest rule that moves a message decides where it goes.
+- A rule can't forward mail, because that would make a mailbox an open relay. A rule can't delete permanently, because a bad rule must never lose mail. Its strongest action moves mail to Trash.
+- Rules run before spam scoring, and the spam verdict has the last word on the folder. A rule reads a `From` line that anyone can forge, so it must not be a way past the spam filter. A mailbox's allow list is the deliberate way to trust a sender.
+
 Scheduled send and snooze are not in the first release. Native mail apps such as Apple Mail and Outlook are not supported, because they need IMAP and SMTP servers that run outside Workers.
 
 ### Spam filtering

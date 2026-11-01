@@ -3,6 +3,7 @@ import type { MailboxEntry } from "./functions";
 import { MOVE_DISPLAY, type MoveId } from "./model";
 import type {
   Folder,
+  LabelId,
   MailboxId,
   MessageFlags,
   ThreadDetail,
@@ -48,6 +49,40 @@ export function patchFlagsInPages(
       };
     }),
   );
+}
+
+const withLabel = (ids: LabelId[], labelId: LabelId, applied: boolean) => {
+  const others = ids.filter((id) => id !== labelId);
+  return applied ? [...others, labelId] : others;
+};
+
+export function patchLabelInPages(
+  pages: ThreadPages,
+  threadId: ThreadId,
+  labelId: LabelId,
+  applied: boolean,
+): ThreadPages {
+  return mapPages(pages, (threads) =>
+    threads.map((thread) =>
+      thread.id === threadId
+        ? { ...thread, labelIds: withLabel(thread.labelIds, labelId, applied) }
+        : thread,
+    ),
+  );
+}
+
+export function patchLabelInDetail(
+  detail: ThreadDetail,
+  labelId: LabelId,
+  applied: boolean,
+): ThreadDetail {
+  return {
+    ...detail,
+    messages: detail.messages.map((message) => ({
+      ...message,
+      labelIds: withLabel(message.labelIds, labelId, applied),
+    })),
+  };
 }
 
 export function removeFromPages(

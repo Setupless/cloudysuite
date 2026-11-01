@@ -1,12 +1,17 @@
 import type { MailboxGrant } from "@cloudysuite/access";
 import { createMailboxImports, type MailboxImports } from "./import/uploads";
+import type { LabelWrite } from "./labels/store";
 import { rawKey } from "./r2-keys";
+import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
+import type { SearchInput, SearchPage } from "./search/store";
 import { mailboxStub } from "./stub";
 import type {
   AttachmentId,
   AttachmentInfo,
   AttachmentRef,
   Folder,
+  LabelColour,
+  LabelId,
   MailboxSummary,
   MessageBody,
   MessageFlags,
@@ -51,9 +56,22 @@ export type AttachmentDownload = {
 export type MailboxClient = {
   summary(): Promise<MailboxSummary>;
   listThreads(query: ThreadQuery): Promise<ThreadPage>;
+  search(input: SearchInput): Promise<SearchPage>;
   getThread(threadId: ThreadId): Promise<ThreadDetail | null>;
   threadOfMessage(messageId: MessageId): Promise<ThreadId | null>;
   setFlags(selection: MessageSelection, flags: MessageFlags): Promise<number>;
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): Promise<boolean>;
+  createLabel(name: string, colour: LabelColour): Promise<LabelWrite>;
+  updateLabel(
+    id: LabelId,
+    change: { name?: string | undefined; colour?: LabelColour | undefined },
+  ): Promise<LabelWrite>;
+  deleteLabel(id: LabelId): Promise<void>;
+  listRules(): Promise<Rule[]>;
   moveToFolder(
     selection: MessageSelection,
     folder: Folder,
@@ -82,11 +100,20 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
   return {
     summary: async () => (await stub.summary()) as MailboxSummary,
     listThreads: async (query) => (await stub.listThreads(query)) as ThreadPage,
+    search: async (input) => (await stub.search(input)) as SearchPage,
     getThread: async (threadId) =>
       (await stub.getThread(threadId)) as ThreadDetail | null,
     threadOfMessage: async (messageId) =>
       (await stub.threadOfMessage(messageId)) as ThreadId | null,
     setFlags: (selection, flags) => stub.setFlags(selection, flags),
+    setLabel: (selection, labelId, applied) =>
+      stub.setLabel(selection, labelId, applied),
+    createLabel: async (name, colour) =>
+      (await stub.createLabel(name, colour)) as LabelWrite,
+    updateLabel: async (id, change) =>
+      (await stub.updateLabel(id, change)) as LabelWrite,
+    deleteLabel: (id) => stub.deleteLabel(id),
+    listRules: async () => (await stub.listRules()) as Rule[],
     moveToFolder,
     moveToTrash: (selection) => moveToFolder(selection, "trash"),
     restore: async (selection) =>
@@ -129,8 +156,8 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
   };
 }
 
-// Importing is the one mailbox action a member may not take. Null is a refusal, so
-// no caller can reach an import without facing it.
+// Importing is for a mailbox's managers. Null is a refusal, so no caller can reach
+// an import without facing it.
 export function openMailboxImports(
   env: Env,
   grant: MailboxGrant,
@@ -141,4 +168,28 @@ export function openMailboxImports(
     mailboxStub(env, grant.mailboxId),
     grant.mailboxId,
   );
+}
+
+export type MailboxRuleEditor = {
+  create(draft: RuleDraft): Promise<RuleWrite>;
+  update(id: RuleId, draft: RuleDraft): Promise<RuleWrite>;
+  remove(id: RuleId): Promise<void>;
+  reorder(ids: RuleId[]): Promise<boolean>;
+};
+
+// Anyone with access can read a mailbox's rules, and only its managers can change
+// them. Null is a refusal, so no caller can change a rule without facing it.
+export function openMailboxRuleEditor(
+  env: Env,
+  grant: MailboxGrant,
+): MailboxRuleEditor | null {
+  if (grant.role !== "manager") return null;
+  const stub = mailboxStub(env, grant.mailboxId);
+  return {
+    create: async (draft) => (await stub.createRule(draft)) as RuleWrite,
+    update: async (id, draft) =>
+      (await stub.updateRule(id, draft)) as RuleWrite,
+    remove: (id) => stub.deleteRule(id),
+    reorder: (ids) => stub.reorderRules(ids),
+  };
 }

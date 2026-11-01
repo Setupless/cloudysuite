@@ -3,13 +3,19 @@ import { IconPaperclip } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { viewParam } from "../model";
+import { listingSearchParams, viewParam } from "../model";
 import { threadQuery } from "../queries";
 import type { ThreadId, ThreadSummary } from "../types";
 import { displayName, sendersLine } from "./format";
 import { useMailView } from "./mail-view-context";
 import { ThreadDate } from "./states";
-import { MoveButtons, ReadButton, StarButton } from "./thread-actions";
+import { RowLabels, useLabels } from "./label-chip";
+import {
+  LabelButton,
+  MoveButtons,
+  ReadButton,
+  StarButton,
+} from "./thread-actions";
 
 // Long enough that a pointer crossing the list does not read every row it passes.
 const HOVER_PREFETCH_MS = 120;
@@ -23,14 +29,17 @@ function ThreadRow({
   open: boolean;
   focused: boolean;
 }) {
-  const { mailboxId, view, commands, moves, act } = useMailView();
+  const { mailboxId, view, commands, movesOf, act, openLabels } = useMailView();
+  const labels = useLabels(mailboxId);
   const queryClient = useQueryClient();
   // Only the row under the pointer holds these, so a long list stays light.
   const [hovered, setHovered] = useState(false);
   const prefetchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const unread = thread.unreadCount > 0;
   const sender = thread.senders[0];
-  const quietMoves = moves.filter((move) => move !== "deleteForever");
+  const quietMoves = movesOf(thread.folders).filter(
+    (move) => move !== "deleteForever",
+  );
 
   return (
     <li
@@ -46,6 +55,7 @@ function ThreadRow({
           view: viewParam(view),
           threadId: String(thread.id),
         }}
+        search={listingSearchParams(view)}
         aria-current={open ? "true" : undefined}
         onMouseEnter={() => {
           prefetchTimer.current = setTimeout(
@@ -88,6 +98,7 @@ function ThreadRow({
             {thread.subject?.trim() || "(No subject)"}
           </p>
           <p className="flex items-center gap-1.5 pr-8 text-[13px] text-secondary">
+            <RowLabels labels={labels} labelIds={thread.labelIds} />
             <span className="min-w-0 flex-1 truncate">{thread.snippet}</span>
             {thread.hasAttachments && (
               <IconPaperclip
@@ -112,6 +123,7 @@ function ThreadRow({
             unread={unread}
             onToggle={() => commands.setRead(thread.id, unread)}
           />
+          <LabelButton onClick={() => openLabels(thread.id)} />
           <MoveButtons
             moves={quietMoves}
             onMove={(move) => act(thread.id, move)}

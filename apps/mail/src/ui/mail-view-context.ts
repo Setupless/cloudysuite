@@ -1,15 +1,18 @@
 import { createContext, useContext } from "react";
-import type { MoveId } from "../model";
-import type { MailboxId, ThreadId, ThreadView } from "../types";
+import type { MailListing, MoveId } from "../model";
+import type { Folder, MailboxId, ThreadId } from "../types";
 import type { ThreadCommands } from "./commands";
+import type { LabelCommands } from "./label-commands";
 
 export type MailViewContextValue = {
   mailboxId: MailboxId;
-  view: ThreadView;
+  view: MailListing;
   commands: ThreadCommands;
-  moves: readonly MoveId[];
+  movesOf: (folders: readonly Folder[]) => readonly MoveId[];
   act: (threadId: ThreadId, move: MoveId) => void;
   closeThread: () => void;
+  labelCommands: LabelCommands;
+  openLabels: (threadId: ThreadId) => void;
 };
 
 export const MailViewContext = createContext<MailViewContextValue | null>(null);

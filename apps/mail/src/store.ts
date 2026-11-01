@@ -1,4 +1,4 @@
-import { placementFor } from "./placement";
+import { type Placement, placementFor } from "./placement";
 import type { SqlDriver, SqlRow } from "./sql";
 import {
   normalizeSubject,
@@ -6,7 +6,7 @@ import {
   sameConversation,
   SUBJECT_FALLBACK_WINDOW_MS,
 } from "./threading";
-import { FOLDERS } from "./types";
+import { FOLDERS, liveFolders, parseColour } from "./types";
 import type {
   Address,
   AttachmentId,
@@ -89,7 +89,7 @@ type ViewRow = SqlRow & {
   has_attachments: number;
 };
 
-type ViewSourceRow = SqlRow & {
+export type ViewSourceRow = SqlRow & {
   id: number;
   folder: Folder;
   subject: string | null;
@@ -159,7 +159,12 @@ function toMessageDetail(
   };
 }
 
-function toSummary(row: ViewRow): ThreadSummary {
+export type ThreadFacts = { folders: Folder[]; labelIds: LabelId[] };
+
+function toSummary(
+  row: ViewRow,
+  facts: ThreadFacts | undefined,
+): ThreadSummary {
   return {
     id: row.thread_id as ThreadId,
     subject: row.subject,
@@ -170,10 +175,15 @@ function toSummary(row: ViewRow): ThreadSummary {
     unreadCount: row.unread_count,
     starred: row.is_starred === 1,
     hasAttachments: row.has_attachments === 1,
+    folders: facts?.folders ?? [],
+    labelIds: facts?.labelIds ?? [],
   };
 }
 
-function parseCursor(
+export const encodeCursor = (lastAt: number, threadId: number) =>
+  `${lastAt}_${threadId}`;
+
+export function parseCursor(
   cursor: string | undefined,
 ): { lastAt: number; threadId: number } | null {
   const match = /^(-?\d{1,16})_(\d{1,16})$/.exec(cursor ?? "");
@@ -192,6 +202,23 @@ function senderList(rows: ViewSourceRow[]): Address[] {
     if (seen.size === MAX_SENDERS_IN_VIEW) break;
   }
   return [...seen.values()];
+}
+
+// What a list row says about some of a thread's messages, given oldest first.
+export function describeMembers(members: ViewSourceRow[]) {
+  const latest = members.reduce((a, b) =>
+    b.received_at >= a.received_at ? b : a,
+  );
+  return {
+    lastMessageAt: latest.received_at,
+    subject: members[0]!.subject,
+    snippet: latest.snippet,
+    senders: senderList(members),
+    messageCount: members.length,
+    unreadCount: members.filter((row) => row.is_read === 0).length,
+    starred: members.some((row) => row.is_starred === 1),
+    hasAttachments: members.some((row) => row.has_attachments === 1),
+  };
 }
 
 // Every query for a mailbox lives here. The Durable Object adds transport, and
@@ -228,6 +255,21 @@ export class MailboxStore {
       const placement = placementFor(message, this.#db);
       const threadId = this.#assignThread(message);
       const messageId = this.#insertMessage(message, threadId, placement);
+      this.#db.exec(
+        `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+         SELECT ?, id FROM labels WHERE id IN (SELECT value FROM json_each(?))`,
+        messageId,
+        JSON.stringify(placement.labelIds),
+      );
+      // A reply stays in the conversation's labels, or a labelled conversation
+      // would go quiet in its own label view.
+      this.#db.exec(
+        `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+         SELECT DISTINCT ?, ml.label_id FROM message_labels ml
+         JOIN messages m ON m.id = ml.message_id WHERE m.thread_id = ?`,
+        messageId,
+        threadId,
+      );
       this.refreshThread(threadId);
       return {
         status: "stored",
@@ -339,7 +381,7 @@ export class MailboxStore {
   #insertMessage(
     message: NewMessage,
     threadId: ThreadId,
-    placement: { folder: Folder; read: boolean },
+    placement: Placement,
   ): MessageId {
     const { normalized, isReply } = normalizeSubject(message.subject);
     const [row] = this.#db
@@ -349,8 +391,8 @@ export class MailboxStore {
            parse_status, rfc_message_id, refs, thread_id, from_name, from_address,
            reply_to, to_addresses, cc_addresses, participants, subject,
            normalized_subject, is_orphan_reply, snippet, sent_at, received_at,
-           thread_date, is_read, folder, has_attachments, auth_results
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           thread_date, is_read, is_starred, folder, has_attachments, auth_results
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
         message.rawHash,
         message.rawSize,
@@ -376,6 +418,7 @@ export class MailboxStore {
         message.receivedAt,
         message.sentAt ?? message.receivedAt,
         placement.read ? 1 : 0,
+        placement.starred ? 1 : 0,
         placement.folder,
         message.attachments.some((attachment) => !attachment.inline) ? 1 : 0,
         message.authResults ? JSON.stringify(message.authResults) : null,
@@ -454,15 +497,16 @@ export class MailboxStore {
     };
     for (const row of rows) {
       addTo(viewKey({ folder: row.folder }), row);
+      // Spam and Trash are where mail goes to be out of the way, so a label only
+      // shows and counts what is still live.
+      if (row.folder === "spam" || row.folder === "trash") continue;
       for (const label of labelsByMessage.get(row.id) ?? []) {
         addTo(viewKey({ labelId: label.label_id as LabelId }), row);
       }
     }
 
     for (const [view, members] of views) {
-      const latest = members.reduce((a, b) =>
-        b.received_at >= a.received_at ? b : a,
-      );
+      const row = describeMembers(members);
       this.#db.exec(
         `INSERT INTO thread_views (
            view, thread_id, last_at, subject, snippet, senders, message_count,
@@ -470,14 +514,14 @@ export class MailboxStore {
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         view,
         threadId,
-        latest.received_at,
-        members[0]!.subject,
-        latest.snippet,
-        JSON.stringify(senderList(members)),
-        members.length,
-        members.filter((row) => row.is_read === 0).length,
-        members.some((row) => row.is_starred === 1) ? 1 : 0,
-        members.some((row) => row.has_attachments === 1) ? 1 : 0,
+        row.lastMessageAt,
+        row.subject,
+        row.snippet,
+        JSON.stringify(row.senders),
+        row.messageCount,
+        row.unreadCount,
+        row.starred ? 1 : 0,
+        row.hasAttachments ? 1 : 0,
       );
     }
   }
@@ -505,13 +549,46 @@ export class MailboxStore {
       .toArray();
     const page = rows.slice(0, limit);
     const last = page.at(-1);
+    const facts = this.threadFacts(page.map((row) => row.thread_id));
     return {
-      threads: page.map(toSummary),
+      threads: page.map((row) => toSummary(row, facts.get(row.thread_id))),
       nextCursor:
         rows.length > limit && last
-          ? `${last.last_at}_${last.thread_id}`
+          ? encodeCursor(last.last_at, last.thread_id)
           : null,
     };
+  }
+
+  // Read per page, not kept in the read model, so renaming or deleting a label
+  // never has to touch the rows of every thread it is on. One trashed reply does
+  // not make a live conversation count as trash, so its row offers moves that fit
+  // the rest of it.
+  threadFacts(threadIds: number[]): Map<number, ThreadFacts> {
+    const rows = this.#db
+      .exec<{ thread_id: number; folder: Folder; label_id: number | null }>(
+        `SELECT DISTINCT m.thread_id, m.folder, ml.label_id
+         FROM messages m LEFT JOIN message_labels ml ON ml.message_id = m.id
+         WHERE m.thread_id IN (SELECT value FROM json_each(?))`,
+        JSON.stringify(threadIds),
+      )
+      .toArray();
+    return new Map(
+      [...Map.groupBy(rows, (row) => row.thread_id)].map(
+        ([threadId, group]) => [
+          threadId,
+          {
+            folders: liveFolders(group.map((row) => row.folder)),
+            labelIds: [
+              ...new Set(
+                group.flatMap((row) =>
+                  row.label_id === null ? [] : [row.label_id as LabelId],
+                ),
+              ),
+            ],
+          },
+        ],
+      ),
+    );
   }
 
   getThread(threadId: ThreadId): ThreadDetail | null {
@@ -569,9 +646,11 @@ export class MailboxStore {
       .exec<RefRow>(
         `SELECT id, thread_id, folder FROM messages
          WHERE thread_id IN (SELECT value FROM json_each(?))
-           AND (?2 IS NULL OR folder = ?2)`,
+           AND (?2 IS NULL OR folder IN (SELECT value FROM json_each(?2)))`,
         JSON.stringify(selection.threadIds),
-        selection.inFolder ?? null,
+        selection.inFolder === undefined
+          ? null
+          : JSON.stringify([selection.inFolder].flat()),
       )
       .toArray();
   }
@@ -595,6 +674,33 @@ export class MailboxStore {
       );
       this.#refreshThreadsOf(rows);
       return rows.length;
+    });
+  }
+
+  // False when the label is gone, which a person with an old page open can reach.
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): boolean {
+    return this.#db.transaction(() => {
+      const [label] = this.#db
+        .exec<{ id: number }>("SELECT id FROM labels WHERE id = ?", labelId)
+        .toArray();
+      if (!label) return false;
+      const rows = this.#select(selection);
+      const idsJson = JSON.stringify(rows.map((row) => row.id));
+      this.#db.exec(
+        applied
+          ? `INSERT OR IGNORE INTO message_labels (message_id, label_id)
+             SELECT value, ?1 FROM json_each(?2)`
+          : `DELETE FROM message_labels
+             WHERE label_id = ?1 AND message_id IN (SELECT value FROM json_each(?2))`,
+        labelId,
+        idsJson,
+      );
+      this.#refreshThreadsOf(rows);
+      return true;
     });
   }
 
@@ -654,13 +760,14 @@ export class MailboxStore {
         FOLDERS.map((folder) => [folder, unreadIn({ folder })]),
       ) as Record<Folder, number>,
       labels: this.#db
-        .exec<{ id: number; name: string }>(
-          "SELECT id, name FROM labels ORDER BY name COLLATE NOCASE",
+        .exec<{ id: number; name: string; colour: string }>(
+          "SELECT id, name, colour FROM labels ORDER BY name COLLATE NOCASE",
         )
         .toArray()
         .map((row) => ({
           id: row.id as LabelId,
           name: row.name,
+          colour: parseColour(row.colour),
           unread: unreadIn({ labelId: row.id as LabelId }),
         })),
     };

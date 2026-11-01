@@ -2,7 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
 import type { ImportFailure } from "./import/types";
+import { LabelStore, type LabelWrite } from "./labels/store";
 import { applyMigrations } from "./migrations";
+import { RuleStore } from "./rules/store";
+import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
+import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import type { SqlDriver } from "./sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
@@ -11,6 +15,8 @@ import type {
   BodyRef,
   CommitResult,
   Folder,
+  LabelColour,
+  LabelId,
   MailboxSummary,
   MessageFlags,
   MessageId,
@@ -26,6 +32,9 @@ import type {
 export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
   readonly #imports: ImportStore;
+  readonly #search: SearchStore;
+  readonly #labels: LabelStore;
+  readonly #rules: RuleStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -36,6 +45,9 @@ export class Mailbox extends DurableObject<Env> {
     applyMigrations(db);
     this.#store = new MailboxStore(db);
     this.#imports = new ImportStore(db, this.#store);
+    this.#search = new SearchStore(db, this.#store);
+    this.#rules = new RuleStore(db);
+    this.#labels = new LabelStore(db, this.#rules);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -57,6 +69,10 @@ export class Mailbox extends DurableObject<Env> {
     return this.#store.listThreads(query);
   }
 
+  search(input: SearchInput): SearchPage {
+    return this.#search.search(input);
+  }
+
   getThread(threadId: ThreadId): ThreadDetail | null {
     return this.#store.getThread(threadId);
   }
@@ -71,6 +87,49 @@ export class Mailbox extends DurableObject<Env> {
 
   restore(selection: MessageSelection): MessageRef[] {
     return this.#store.restore(selection);
+  }
+
+  setLabel(
+    selection: MessageSelection,
+    labelId: LabelId,
+    applied: boolean,
+  ): boolean {
+    return this.#store.setLabel(selection, labelId, applied);
+  }
+
+  createLabel(name: string, colour: LabelColour): LabelWrite {
+    return this.#labels.create(name, colour);
+  }
+
+  updateLabel(
+    id: LabelId,
+    change: { name?: string | undefined; colour?: LabelColour | undefined },
+  ): LabelWrite {
+    return this.#labels.update(id, change);
+  }
+
+  deleteLabel(id: LabelId): void {
+    this.#labels.delete(id);
+  }
+
+  listRules(): Rule[] {
+    return this.#rules.list();
+  }
+
+  createRule(draft: RuleDraft): RuleWrite {
+    return this.#rules.create(draft);
+  }
+
+  updateRule(id: RuleId, draft: RuleDraft): RuleWrite {
+    return this.#rules.update(id, draft);
+  }
+
+  deleteRule(id: RuleId): void {
+    this.#rules.delete(id);
+  }
+
+  reorderRules(ids: RuleId[]): boolean {
+    return this.#rules.reorder(ids);
   }
 
   threadOfMessage(messageId: MessageId): ThreadId | null {

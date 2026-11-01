@@ -70,19 +70,25 @@ test("the client offers no way to add mail or reach the raw stub", async () => {
   const { env } = createTestEnv();
   const mailbox = openMailbox(env, await grantFor(MAILBOX_A));
   expect(Object.keys(mailbox).sort()).toEqual([
+    "createLabel",
     "deleteForever",
+    "deleteLabel",
     "getAttachment",
     "getBody",
     "getRaw",
     "getThread",
     "inlineAttachments",
+    "listRules",
     "listThreads",
     "moveToFolder",
     "moveToTrash",
     "restore",
+    "search",
     "setFlags",
+    "setLabel",
     "summary",
     "threadOfMessage",
+    "updateLabel",
   ]);
 });
 

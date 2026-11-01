@@ -8,6 +8,7 @@ import {
   IconShieldCheck,
   IconStar,
   IconStarFilled,
+  IconTag,
   IconTrash,
   IconTrashX,
 } from "@tabler/icons-react";
@@ -88,6 +89,10 @@ export function ReadButton({
       onClick={onToggle}
     />
   );
+}
+
+export function LabelButton({ onClick }: { onClick: () => void }) {
+  return <IconButton icon={IconTag} label="Labels" onClick={onClick} />;
 }
 
 export function MoveButtons({

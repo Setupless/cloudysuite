@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import type { MailboxEntry } from "./functions";
 import {
   patchFlagsInDetail,
+  patchLabelInDetail,
+  patchLabelInPages,
   patchFlagsInPages,
   removeFromPages,
   summaryAfterFlags,
@@ -28,6 +30,8 @@ const row = (id: number, unreadCount = 0): ThreadSummary => ({
   unreadCount,
   starred: false,
   hasAttachments: false,
+  folders: ["inbox"],
+  labelIds: [],
 });
 const pages = (...rows: ThreadSummary[][]): ThreadPages => ({
   pageParams: rows.map(() => undefined),
@@ -138,4 +142,29 @@ test("an unread conversation that moves takes its count with it", () => {
     true,
   );
   expect(gone[0]!.summary.folderUnread.inbox).toBe(2);
+});
+
+test("a label shows on a row and in a thread at once, and comes off", () => {
+  const label = 7 as LabelId;
+  const pages = {
+    pages: [{ threads: [row(1), row(2)], nextCursor: null }],
+    pageParams: [undefined],
+  };
+  const on = patchLabelInPages(pages, 1 as ThreadId, label, true);
+  expect(on.pages[0]!.threads.map((thread) => thread.labelIds)).toEqual([
+    [label],
+    [],
+  ]);
+  const off = patchLabelInPages(on, 1 as ThreadId, label, false);
+  expect(off.pages[0]!.threads[0]!.labelIds).toEqual([]);
+
+  const detail = {
+    id: 1 as ThreadId,
+    messages: [{ labelIds: [] as LabelId[] }, { labelIds: [label] }],
+  } as ThreadDetail;
+  const patched = patchLabelInDetail(detail, label, true);
+  expect(patched.messages.map((message) => message.labelIds)).toEqual([
+    [label],
+    [label],
+  ]);
 });

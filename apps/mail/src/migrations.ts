@@ -176,6 +176,8 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
   [
     `CREATE INDEX thread_views_unread ON thread_views(view) WHERE unread_count > 0`,
   ],
+  // A role from the theme, not a colour, so editing the theme recolours labels too.
+  [`ALTER TABLE labels ADD COLUMN colour TEXT NOT NULL DEFAULT 'secondary'`],
 ];
 
 export function applyMigrations(

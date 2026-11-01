@@ -14,14 +14,21 @@ import {
 } from "../../../src/db/schema";
 import { openMailboxAs, openMailboxFor } from "./access";
 import { renderBody } from "./email/render-body";
+import type { LabelWrite } from "./labels/store";
 import type { MailboxId, MailboxSummary } from "./types";
 import {
   parseFlagsInput,
+  parseLabelChangeInput,
+  parseLabelInput,
   parseListInput,
   parseMessageInput,
   parseMoveInput,
+  parseNewLabelInput,
+  parseSearchInput,
   parseSelectionInput,
+  parseSetLabelInput,
   parseThreadInput,
+  refusal,
 } from "./wire";
 
 export type MailboxEntry = {
@@ -87,6 +94,14 @@ export const listThreads = createServerFn({ method: "GET" })
     (await openFor(mailboxId)).listThreads(query),
   );
 
+// POST so that a hostile length reaches the parser, and gets a plain answer, rather
+// than stopping at a URL limit.
+export const searchThreads = createServerFn({ method: "POST" })
+  .validator(parseSearchInput)
+  .handler(async ({ data: { mailboxId, ...input } }) =>
+    (await openFor(mailboxId)).search(input),
+  );
+
 export const getThread = createServerFn({ method: "GET" })
   .validator(parseThreadInput)
   .handler(async ({ data }) =>
@@ -138,3 +153,43 @@ export const deleteForever = createServerFn({ method: "POST" })
   .handler(async ({ data }) =>
     (await openFor(data.mailboxId)).deleteForever(data.selection),
   );
+
+function labelOrRefusal(write: LabelWrite) {
+  if (!write.ok) throw refusal(write.status, write.message);
+  return write.label;
+}
+
+export const createLabel = createServerFn({ method: "POST" })
+  .validator(parseNewLabelInput)
+  .handler(async ({ data }) =>
+    labelOrRefusal(
+      await (await openFor(data.mailboxId)).createLabel(data.name, data.colour),
+    ),
+  );
+
+export const updateLabel = createServerFn({ method: "POST" })
+  .validator(parseLabelChangeInput)
+  .handler(async ({ data: { mailboxId, labelId, ...change } }) =>
+    labelOrRefusal(
+      await (await openFor(mailboxId)).updateLabel(labelId, change),
+    ),
+  );
+
+export const deleteLabel = createServerFn({ method: "POST" })
+  .validator(parseLabelInput)
+  .handler(async ({ data }) =>
+    (await openFor(data.mailboxId)).deleteLabel(data.labelId),
+  );
+
+export const setLabel = createServerFn({ method: "POST" })
+  .validator(parseSetLabelInput)
+  .handler(async ({ data }) => {
+    const mailbox = await openFor(data.mailboxId);
+    const done = await mailbox.setLabel(
+      data.selection,
+      data.labelId,
+      data.applied,
+    );
+    if (!done) throw refusal(404, "That label isn't here anymore.");
+    return done;
+  });
