@@ -34,6 +34,7 @@ import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
   AttachmentId,
   AttachmentRef,
+  RecentAttachment,
   Address,
   BodyRef,
   CommitResult,
@@ -218,6 +219,17 @@ export class Mailbox extends DurableObject<Env> {
     attachmentId: AttachmentId,
   ): AttachmentRef | null {
     return this.#store.attachmentRef(messageId, attachmentId);
+  }
+
+  recentAttachments(limit: number): RecentAttachment[] {
+    return this.#store.recentAttachments(limit);
+  }
+
+  listedAttachmentRef(
+    messageId: MessageId,
+    attachmentId: AttachmentId,
+  ): AttachmentRef | null {
+    return this.#store.listedAttachmentRef(messageId, attachmentId);
   }
 
   storagePrefix(messageId: MessageId): string | null {

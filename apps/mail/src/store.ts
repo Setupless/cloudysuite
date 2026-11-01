@@ -20,6 +20,7 @@ import type {
   AttachmentId,
   AttachmentInfo,
   AttachmentRef,
+  RecentAttachment,
   AuthResults,
   BodyKind,
   BodyRef,
@@ -134,6 +135,27 @@ const toRef = (row: RefRow): MessageRef => ({
   threadId: row.thread_id as ThreadId,
   folder: row.folder,
 });
+
+type RecentAttachmentRow = SqlRow & {
+  id: number;
+  message_id: number;
+  filename: string | null;
+  mime_type: string;
+  from_name: string | null;
+  from_address: string | null;
+  received_at: number;
+};
+
+const LISTED_ATTACHMENT = `messages.has_attachments = 1 AND messages.folder IN ('inbox', 'sent', 'archive')`;
+
+export const RECENT_ATTACHMENTS_QUERY = `SELECT attachments.id, attachments.message_id,
+    attachments.filename, attachments.mime_type, messages.from_name, messages.from_address,
+    messages.received_at
+  FROM messages
+  JOIN attachments ON attachments.message_id = messages.id
+  WHERE ${LISTED_ATTACHMENT} AND attachments.is_inline = 0
+  ORDER BY messages.received_at DESC, messages.id DESC, attachments.position
+  LIMIT ?`;
 
 function toAttachmentInfo(row: AttachmentRow): AttachmentInfo {
   return {
@@ -964,6 +986,42 @@ export class MailboxStore {
     const [row] = this.#db
       .exec<AttachmentRow>(
         "SELECT * FROM attachments WHERE id = ? AND message_id = ?",
+        attachmentId,
+        messageId,
+      )
+      .toArray();
+    return row ? { ...toAttachmentInfo(row), r2Key: row.r2_key } : null;
+  }
+
+  // Must match the messages_recent_attachments index word for word, or SQLite won't use
+  // it. Spam, Trash, and Drafts stay out, and so does any folder added later.
+  recentAttachments(limit: number): RecentAttachment[] {
+    return this.#db
+      .exec<RecentAttachmentRow>(RECENT_ATTACHMENTS_QUERY, limit)
+      .toArray()
+      .map((row) => ({
+        messageId: row.message_id as MessageId,
+        attachmentId: row.id as AttachmentId,
+        filename: row.filename,
+        mimeType: row.mime_type,
+        fromName: row.from_name,
+        fromAddress: row.from_address,
+        receivedAt: row.received_at,
+      }));
+  }
+
+  // Null for anything `recentAttachments` wouldn't list, so ids from a browser can't
+  // reach an inline image or mail that has since moved to Spam or Trash.
+  listedAttachmentRef(
+    messageId: MessageId,
+    attachmentId: AttachmentId,
+  ): AttachmentRef | null {
+    const [row] = this.#db
+      .exec<AttachmentRow>(
+        `SELECT attachments.* FROM attachments
+         JOIN messages ON messages.id = attachments.message_id
+         WHERE attachments.id = ? AND attachments.message_id = ?
+           AND attachments.is_inline = 0 AND ${LISTED_ATTACHMENT}`,
         attachmentId,
         messageId,
       )

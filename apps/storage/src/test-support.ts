@@ -9,10 +9,13 @@ import {
 import type { SqlDriver } from "@cloudysuite/object-sql";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
 import { FakeBucket } from "@cloudysuite/transfer/fake-bucket";
-import { createTestDatabase } from "../../../src/db/test-database";
+import {
+  createTestDatabase,
+  testWorkerEnv,
+} from "../../../src/db/test-database";
 
 mock.module("cloudflare:workers", () => ({
-  env: {},
+  env: testWorkerEnv,
   DurableObject: class {
     ctx: unknown;
     env: unknown;

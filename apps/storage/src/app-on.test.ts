@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { createTestDatabase } from "../../../src/db/test-database";
-import { assertStorageOn, STORAGE_OFF_MESSAGE } from "./app-on";
+import {
+  assertMailOn,
+  assertStorageOn,
+  MAIL_OFF_MESSAGE,
+  STORAGE_OFF_MESSAGE,
+} from "./app-on";
 
 test("a missing row means on, and a row saying off refuses in plain words", async () => {
   const { sqlite, d1 } = createTestDatabase();
@@ -14,4 +19,17 @@ test("a missing row means on, and a row saying off refuses in plain words", asyn
   expect(refusal).toBeInstanceOf(Response);
   expect(refusal.status).toBe(403);
   expect(await refusal.json()).toEqual({ message: STORAGE_OFF_MESSAGE });
+});
+
+test("Mail being off is refused in plain words, and says nothing about Storage", async () => {
+  const { sqlite, d1 } = createTestDatabase();
+  await expect(assertMailOn(d1)).resolves.toBeUndefined();
+
+  sqlite.run("INSERT INTO app_settings (app, enabled) VALUES ('storage', 0)");
+  await expect(assertMailOn(d1)).resolves.toBeUndefined();
+
+  sqlite.run("INSERT INTO app_settings (app, enabled) VALUES ('mail', 0)");
+  const refusal = await assertMailOn(d1).catch((failure) => failure);
+  expect(refusal.status).toBe(403);
+  expect(await refusal.json()).toEqual({ message: MAIL_OFF_MESSAGE });
 });

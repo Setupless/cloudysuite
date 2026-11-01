@@ -1,4 +1,9 @@
-import { type DriveId, parseDriveId } from "@cloudysuite/access";
+import {
+  type DriveId,
+  parseDriveId,
+  parseMailboxId,
+} from "@cloudysuite/access";
+import type { AttachmentId, MessageId } from "@cloudysuite/mail/client";
 import { type ItemId, parseItemId } from "./types";
 
 // Everything a browser sends to a Storage function passes through these.
@@ -86,4 +91,25 @@ export function parseRecentInput(raw: unknown) {
   const { limit } = record(raw);
   if (limit !== 4 && limit !== 50) throw badRequest();
   return { limit };
+}
+
+function requirePositiveId<Id>(raw: unknown): Id {
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw <= 0) {
+    throw badRequest();
+  }
+  return raw as Id;
+}
+
+export function parseMailAttachmentInput(raw: unknown) {
+  const input = record(raw);
+  const mailboxId =
+    typeof input.mailboxId === "string"
+      ? parseMailboxId(input.mailboxId)
+      : null;
+  if (!mailboxId) throw badRequest();
+  return {
+    mailboxId,
+    messageId: requirePositiveId<MessageId>(input.messageId),
+    attachmentId: requirePositiveId<AttachmentId>(input.attachmentId),
+  };
 }

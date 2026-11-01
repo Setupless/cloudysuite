@@ -23,6 +23,7 @@ import type {
   MessageId,
   MessageRef,
   MessageSelection,
+  RecentAttachment,
   ThreadDetail,
   ThreadId,
   ThreadPage,
@@ -44,6 +45,7 @@ export type {
   MessageId,
   MessageRef,
   MessageSelection,
+  RecentAttachment,
   ThreadDetail,
   ThreadId,
   ThreadPage,
@@ -91,6 +93,18 @@ export type MailboxClient = {
     messageId: MessageId,
     attachmentId: AttachmentId,
   ): Promise<AttachmentDownload | null>;
+  // Newest first, across the mail a person would see as filed.
+  recentAttachments(limit: number): Promise<RecentAttachment[]>;
+  // Null when `recentAttachments` wouldn't list it.
+  listedAttachment(
+    messageId: MessageId,
+    attachmentId: AttachmentId,
+  ): Promise<AttachmentInfo | null>;
+  readListedAttachment(
+    messageId: MessageId,
+    attachmentId: AttachmentId,
+    range: { offset: number; length: number },
+  ): Promise<ReadableStream | null>;
   getRaw(messageId: MessageId): Promise<ReadableStream | null>;
   outgoing: MailboxOutgoing;
   pushMuted(): Promise<boolean>;
@@ -156,6 +170,23 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       if (!object) return null;
       const { r2Key: _, ...info } = ref;
       return { info: info as AttachmentInfo, body: object.body };
+    },
+
+    recentAttachments: async (limit) =>
+      (await stub.recentAttachments(limit)) as RecentAttachment[],
+
+    async listedAttachment(messageId, attachmentId) {
+      const ref = await stub.listedAttachmentRef(messageId, attachmentId);
+      if (!ref) return null;
+      const { r2Key: _, ...info } = ref;
+      return info as AttachmentInfo;
+    },
+
+    async readListedAttachment(messageId, attachmentId, range) {
+      const ref = await stub.listedAttachmentRef(messageId, attachmentId);
+      if (!ref) return null;
+      const object = await env.BUCKET.get(ref.r2Key, { range });
+      return object?.body ?? null;
     },
 
     async getRaw(messageId) {

@@ -2,7 +2,11 @@ import { beforeEach, expect, test } from "bun:test";
 import { applyMigrations } from "@cloudysuite/object-sql";
 import { MIGRATIONS } from "./migrations";
 import type { SqlDriver } from "@cloudysuite/object-sql";
-import { MailboxStore, sweepDeletions } from "./store";
+import {
+  MailboxStore,
+  RECENT_ATTACHMENTS_QUERY,
+  sweepDeletions,
+} from "./store";
 import { createSqlDriver, FakeBucket } from "./test-support";
 import type { LabelId, MessageId, NewMessage, ThreadId } from "./types";
 
@@ -691,4 +695,17 @@ test("the winner's commit arriving twice does not queue the message's own object
   store.commit(winner);
   expect(store.commit(winner).status).toBe("duplicate");
   expect(store.pendingDeletions(10)).toEqual([]);
+});
+
+test("the newest attachments read walks a few index rows, whatever the mailbox's size", () => {
+  const plan = db
+    .exec<{ detail: string }>(
+      `EXPLAIN QUERY PLAN ${RECENT_ATTACHMENTS_QUERY}`,
+      5,
+    )
+    .toArray()
+    .map((step) => step.detail)
+    .join("\n");
+  expect(plan).toContain("messages_recent_attachments");
+  expect(plan).not.toContain("TEMP B-TREE");
 });

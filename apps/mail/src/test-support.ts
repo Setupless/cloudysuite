@@ -1,4 +1,7 @@
-import { createTestDatabase } from "../../../src/db/test-database";
+import {
+  createTestDatabase,
+  testWorkerEnv,
+} from "../../../src/db/test-database";
 import type { Database } from "bun:sqlite";
 import { mock, setSystemTime } from "bun:test";
 import type { MailboxId } from "@cloudysuite/access";
@@ -9,7 +12,7 @@ import { FakeBucket } from "@cloudysuite/transfer/fake-bucket";
 export { createSqlDriver, FakeBucket };
 
 mock.module("cloudflare:workers", () => ({
-  env: {},
+  env: testWorkerEnv,
   DurableObject: class {
     ctx: unknown;
     env: unknown;

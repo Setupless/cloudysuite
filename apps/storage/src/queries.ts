@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import type { DriveId } from "@cloudysuite/access";
 import { getDirectory, getFile, getFolder, getRecent } from "./functions";
+import { getMailAttachments } from "./mail-attachment-functions";
 import type { ItemId } from "./types";
 
 const CANNOT_REACH =
@@ -60,6 +61,7 @@ export const storageKeys = {
   file: (driveId: DriveId, fileId: ItemId) =>
     ["storage", "file", driveId, fileId] as const,
   recent: (limit: number) => ["storage", "recent", limit] as const,
+  mailAttachments: ["storage", "mailAttachments"] as const,
 };
 
 export const directoryQuery = () =>
@@ -87,6 +89,18 @@ export const recentQuery = (limit: 4 | 50) =>
   queryOptions({
     queryKey: storageKeys.recent(limit),
     queryFn: () => call(() => getRecent({ data: { limit } })),
+  });
+
+// Not prefetched, so a slow mailbox can't hold up Home. No retry, because the section
+// is only left out when this fails.
+export const mailAttachmentsQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.mailAttachments,
+    queryFn: () => call(() => getMailAttachments()),
+    retry: false,
+    // Each read wakes every mailbox the person can reach, so returning to the tab
+    // doesn't ask again right away.
+    staleTime: 60_000,
   });
 
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A

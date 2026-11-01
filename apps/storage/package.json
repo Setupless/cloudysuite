@@ -12,6 +12,7 @@
   "dependencies": {
     "@cloudysuite/access": "workspace:*",
     "@cloudysuite/auth": "workspace:*",
+    "@cloudysuite/mail": "workspace:*",
     "@cloudysuite/object-sql": "workspace:*",
     "@cloudysuite/transfer": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
