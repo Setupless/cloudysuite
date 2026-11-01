@@ -5,8 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.tsx",
+    "./account": "./src/account/functions.ts",
+    "./guard": "./src/guard.ts",
     "./handler": "./src/handler.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./shell": "./src/shell.tsx"
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.14",

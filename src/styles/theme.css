@@ -26,6 +26,10 @@
   --color-tag-1: light-dark(#a84c08, #f0a15c);
   --color-tag-2: light-dark(#2b7a4b, #5cc98b);
 
+  /* Scanners expect dark on light, so a QR code keeps these in dark mode too. */
+  --color-qr-ink: #000000;
+  --color-qr-paper: #ffffff;
+
   --color-on-avatar: #ffffff;
   --color-avatar-1: #3a6ea5;
   --color-avatar-2: #8a5a83;

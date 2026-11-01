@@ -83,6 +83,7 @@ Deploying CloudySuite must take fewer steps and fewer decisions than comparable 
 - Passkeys are the main way to sign in.
 - A password with a TOTP authenticator app is the fallback.
 - Admins can reset a member's sign-in and require 2FA for the organisation.
+- Under the 2FA rule, a passkey counts as the second factor. A person with neither a passkey nor an authenticator app is sent to add one and cannot use any app until they do. A password alone cannot sign in to an account that has only a passkey.
 
 Auth uses [Better Auth](https://www.better-auth.com) with its email and password sign-in and the `twoFactor`, `passkey`, and `admin` plugins. CloudySuite adds lost-device recovery, the organisation's 2FA rule, and the invite flow. Mailbox access stays in CloudySuite's own tables.
 

@@ -4,7 +4,8 @@ import { createAuth } from "./auth";
 import { appOrigins } from "./origins";
 
 export async function getAuth(request: Request) {
-  const { primaryDomain } = await readSettings(env.DB);
+  const settings = await readSettings(env.DB);
+  const { primaryDomain } = settings;
   // The hostname router sends every request to /setup until a domain is stored.
   if (primaryDomain === null) throw new Error("No primary domain is stored.");
   // The wizard sets this secret, so it can be missing despite its generated type.
@@ -18,5 +19,5 @@ export async function getAuth(request: Request) {
     primaryDomain,
     origins,
   });
-  return { auth, origins };
+  return { auth, origins, settings };
 }

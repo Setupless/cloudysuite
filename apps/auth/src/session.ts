@@ -1,45 +1,52 @@
+import { env } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import type { OrgRole, UserId } from "../../../src/db/schema";
-import { type AppId, isAppId } from "../../../src/routing";
-import { getActiveSession } from "./auth";
-import { safeReturnUrl, signInUrl } from "./origins";
+import { APPS, type AppId, isAppId } from "../../../src/routing";
+import { getActiveSession, readViewer, type SessionUser } from "./auth";
+import { enrolUrl, safeReturnUrl, signInUrl } from "./origins";
 import { getAuth } from "./server";
 
-export type SessionUser = {
-  id: UserId;
-  name: string;
-  email: string;
-  role: OrgRole;
+export type { SessionUser };
+
+export type SignedIn = SessionUser & {
+  // Address of every app this person can open. A turned-off app has no entry.
+  apps: Partial<Record<AppId, string>>;
 };
 
-const requireUserOnServer = createServerFn({ method: "GET" })
-  .validator((input: { app: string; path: string }) => {
-    if (!isAppId(input.app)) throw new Error("Unknown app.");
-    return { app: input.app, path: input.path };
-  })
-  .handler(async ({ data }): Promise<SessionUser> => {
-    const request = getRequest();
-    const { auth, origins } = await getAuth(request);
-    const session = await getActiveSession(auth, request.headers);
-    if (!session) {
-      const here = new URL(data.path, origins[data.app]).href;
-      throw redirect({ href: signInUrl(origins, here) });
+function parsePlace(input: { app: string; path: string }) {
+  if (!isAppId(input.app)) throw new Error("Unknown app.");
+  return { app: input.app, path: input.path };
+}
+
+async function readSignedIn({ app, path }: { app: AppId; path: string }) {
+  const request = getRequest();
+  const { auth, origins, settings } = await getAuth(request);
+  const viewer = await readViewer(auth, env.DB, request.headers);
+  const here = new URL(path, origins[app]).href;
+  if (viewer.status === "signed-out") {
+    throw redirect({ href: signInUrl(origins, here) });
+  }
+  if (viewer.status === "must-enrol") {
+    throw redirect({ href: enrolUrl(origins, here) });
+  }
+  const apps: SignedIn["apps"] = {};
+  for (const id of Object.keys(APPS) as AppId[]) {
+    if (!(settings.disabled as ReadonlySet<string>).has(id)) {
+      apps[id] = `${origins[id]}/`;
     }
-    const { id, name, email, role } = session.user;
-    return {
-      id: id as UserId,
-      name,
-      email,
-      role: role === "admin" ? "admin" : "user",
-    };
-  });
+  }
+  return { ...viewer.user, apps } satisfies SignedIn;
+}
+
+const requireUserOnServer = createServerFn({ method: "GET" })
+  .validator(parsePlace)
+  .handler(({ data }): Promise<SignedIn> => readSignedIn(data));
 
 export function requireUser(
   app: AppId,
   location: { publicHref: string },
-): Promise<SessionUser> {
+): Promise<SignedIn> {
   return requireUserOnServer({ data: { app, path: location.publicHref } });
 }
 

@@ -5,12 +5,20 @@ import { authClient } from "./client";
 
 type Step = "passkey" | "password" | "code" | "backup-code";
 
-type Failure = { status: number } | null;
+type Failure = { status: number; code?: string } | null;
 
 const TOO_MANY_TRIES = "That's too many tries. Wait a minute, then try again.";
 
+const SUSPENDED =
+  "Your account has been suspended. Ask your admin if you think this is a mistake.";
+const USE_PASSKEY =
+  "Your organisation asks you to sign in with your passkey, because this account has no authenticator app.";
+
 function explain(failure: NonNullable<Failure>, otherwise: string): string {
-  return failure.status === 429 ? TOO_MANY_TRIES : otherwise;
+  if (failure.status === 429) return TOO_MANY_TRIES;
+  if (failure.code === "BANNED_USER") return SUSPENDED;
+  if (failure.code === "PASSKEY_REQUIRED") return USE_PASSKEY;
+  return otherwise;
 }
 
 export function SignIn({ returnTo }: { returnTo: string }) {

@@ -44,9 +44,19 @@ export function safeReturnUrl(
   return Object.values(origins).includes(url.origin) ? url.href : null;
 }
 
-export function signInUrl(origins: AppOrigins, returnTo: string): string {
-  const url = new URL("/sign-in", origins.auth);
+function authPageUrl(
+  path: string,
+  origins: AppOrigins,
+  returnTo: string,
+): string {
+  const url = new URL(path, origins.auth);
   const safe = safeReturnUrl(returnTo, origins);
   if (safe) url.searchParams.set("returnTo", safe);
   return url.href;
 }
+
+export const signInUrl = (origins: AppOrigins, returnTo: string) =>
+  authPageUrl("/sign-in", origins, returnTo);
+
+export const enrolUrl = (origins: AppOrigins, returnTo: string) =>
+  authPageUrl("/enrol", origins, returnTo);
