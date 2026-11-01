@@ -4,7 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { APPS, type AppId, isAppId } from "../../../src/routing";
 import { getActiveSession, readViewer, type SessionUser } from "./auth";
-import { enrolUrl, safeReturnUrl, signInUrl } from "./origins";
+import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
 import { getAuth } from "./server";
 
 export type { SessionUser };
@@ -65,7 +65,7 @@ export function requireAdmin(location: {
 }
 
 export const prepareSignIn = createServerFn({ method: "GET" })
-  .validator((input: { returnTo?: string }) => input)
+  .validator(parseReturnTo)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {
     const request = getRequest();
     const { auth, origins } = await getAuth(request);

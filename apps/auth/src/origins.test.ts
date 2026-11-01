@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appOrigins, safeReturnUrl, signInUrl } from "./origins";
+import { appOrigins, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
 
 const request = (url: string, headers: Record<string, string> = {}) =>
   new Request(url, { headers });
@@ -95,3 +95,54 @@ test("the sign-in address drops a return address on the wrong domain", () => {
 test("a backslash cannot move a return address onto another host", () => {
   expect(safeReturnUrl("https:\\\\evil.net/", production)).toBeNull();
 });
+
+test.each([
+  "https://evil.com",
+  "https://evil.com/",
+  "ftp",
+  "https:",
+  "HTTPS",
+  "",
+])("a local dev server ignores the forwarded protocol %j", (forwarded) => {
+  expect(
+    appOrigins(
+      "dev.localhost",
+      request("http://auth.dev.localhost:8787/", {
+        "x-forwarded-proto": forwarded,
+        "x-forwarded-port": "443",
+      }),
+    ),
+  ).toEqual({
+    auth: "http://auth.dev.localhost:8787",
+    mail: "http://mail.dev.localhost:8787",
+  });
+});
+
+test("a forged forwarded protocol cannot move the sign-in address off the stored domain", () => {
+  const origins = appOrigins(
+    "dev.localhost",
+    request("http://auth.dev.localhost:8787/", {
+      "x-forwarded-proto": "https://evil.com",
+    }),
+  );
+  expect(
+    new URL(signInUrl(origins, "https://mail.dev.localhost/")).hostname,
+  ).toBe("auth.dev.localhost");
+});
+
+test.each([
+  [undefined, {}],
+  [null, {}],
+  ["x", {}],
+  [{}, {}],
+  [{ returnTo: 1 }, {}],
+  [
+    { returnTo: "https://mail.example.com/" },
+    { returnTo: "https://mail.example.com/" },
+  ],
+])(
+  "%j is read as the return address %j without throwing",
+  (input, expected) => {
+    expect(parseReturnTo(input)).toEqual(expected);
+  },
+);
