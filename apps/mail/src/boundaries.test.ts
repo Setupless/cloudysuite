@@ -46,7 +46,6 @@ test("the package does not export the stub or the store", () => {
     ".",
     "./client",
     "./download",
-    "./functions",
     "./import",
     "./import-api",
     "./ingest",

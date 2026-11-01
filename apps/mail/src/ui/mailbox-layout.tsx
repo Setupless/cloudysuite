@@ -124,6 +124,7 @@ function MailNavigation({
       {current?.role === "manager" && (
         <Link
           to="/mail/import"
+          search={{ mailbox: mailboxId }}
           className={NAV_ITEM}
           activeProps={{ className: NAV_ITEM_ACTIVE }}
         >

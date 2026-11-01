@@ -40,3 +40,24 @@ test("markup right after a link cannot join the link", () => {
     href: "http://a.example/",
   });
 });
+
+test("a closing bracket that the link opened stays in the link", () => {
+  expect(linkify("Read https://en.wikipedia.org/wiki/Foo_(bar).")).toEqual([
+    { kind: "text", text: "Read " },
+    {
+      kind: "link",
+      text: "https://en.wikipedia.org/wiki/Foo_(bar)",
+      href: "https://en.wikipedia.org/wiki/Foo_(bar)",
+    },
+    { kind: "text", text: "." },
+  ]);
+  expect(linkify("(see https://en.wikipedia.org/wiki/Foo_(bar))")).toEqual([
+    { kind: "text", text: "(see " },
+    {
+      kind: "link",
+      text: "https://en.wikipedia.org/wiki/Foo_(bar)",
+      href: "https://en.wikipedia.org/wiki/Foo_(bar)",
+    },
+    { kind: "text", text: ")" },
+  ]);
+});

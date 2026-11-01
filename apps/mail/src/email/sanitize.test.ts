@@ -334,6 +334,24 @@ test("CSS built to make the cleaner slow finishes quickly", async () => {
     await clean(`<p style='url(${css.replaceAll("'", "")}'>a</p>`);
     expect(performance.now() - started).toBeLessThan(2_000);
   }
+}, 60_000);
+
+test("a 2 MB tag made of attributes is cleaned in linear time", async () => {
+  const attributes = Array.from({ length: 210_000 }, (_, i) => `a${i}=1`);
+  const tag = `<p ${attributes.join(" ")}>Hidden</p>`;
+  expect(tag.length).toBeGreaterThan(1_900_000);
+  const started = performance.now();
+  const { html } = await clean(`<p>Kept</p>${tag}<p>After</p>`);
+  // Removing the attributes one by one took many seconds. Cleaning takes well under one.
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(html).toBe("<p>Kept</p><p>After</p>");
+}, 30_000);
+
+test("an ordinary tag keeps its safe attributes however many it has", async () => {
+  const { html } = await clean(
+    `<td align="left" bgcolor="white" data-a="1">a</td>`,
+  );
+  expect(html).toBe(`<td align="left" bgcolor="white">a</td>`);
 });
 
 test("a tag the mail never finishes is removed", async () => {

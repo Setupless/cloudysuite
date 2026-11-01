@@ -9,7 +9,6 @@
     "./import": "./src/import/index.ts",
     "./import-api": "./src/import/api.ts",
     "./download": "./src/download.ts",
-    "./functions": "./src/functions.ts",
     "./ingest": "./src/ingest.ts",
     "./mailbox": "./src/mailbox.ts"
   },

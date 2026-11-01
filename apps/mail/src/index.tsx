@@ -4,3 +4,4 @@ export { requireMailUser } from "./ui/session";
 export { NoThreadOpen, ThreadPane } from "./ui/thread-pane";
 export { MailViewScreen } from "./ui/view-screen";
 export { prefetchMailboxes, prefetchThreads } from "./queries";
+export { redirectToFirstMailbox } from "./redirect";

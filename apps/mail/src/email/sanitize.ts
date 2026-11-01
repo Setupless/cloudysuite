@@ -50,6 +50,10 @@ const REMOVED_WITH_CONTENT = [
 
 const REMOVED_KEEPING_CONTENT = ["fieldset", "form", "legend"];
 
+// Removing attributes one by one slows down with every attribute on the tag, so a tag
+// built from many of them could use up the Worker's CPU time. No real mail needs this many.
+const MAX_ATTRIBUTES_PER_TAG = 200;
+
 const SAFE_ATTRIBUTES = new Set([
   "align",
   "alink",
@@ -355,7 +359,12 @@ export async function sanitizeEmailHtml(
     })
     .on("*", {
       element(element) {
-        for (const [name, value] of [...element.attributes]) {
+        const attributes = [...element.attributes];
+        if (attributes.length > MAX_ATTRIBUTES_PER_TAG) {
+          element.remove();
+          return;
+        }
+        for (const [name, value] of attributes) {
           if (name === "href" || name === "src") continue;
           if (!SAFE_ATTRIBUTES.has(name) && !name.startsWith("aria-")) {
             element.removeAttribute(name);
