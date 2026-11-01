@@ -1,4 +1,9 @@
-import { clearDevice, readOwner, readServerSession } from "./device-store";
+import {
+  clearDevice,
+  readKeptRows,
+  readOwner,
+  readServerSession,
+} from "./device-store";
 import { clearingStep } from "./offline-model";
 
 // The stop between signing out and the sign-in page. Sign-out happens on the Account
@@ -38,6 +43,9 @@ async function run(): Promise<void> {
       return;
     case "askFirst":
       show("kept");
+      if (owner && (await readKeptRows(owner.user.id).catch(() => [])).length) {
+        document.getElementById("unsaved")?.removeAttribute("hidden");
+      }
       document
         .getElementById("remove")
         ?.addEventListener(
