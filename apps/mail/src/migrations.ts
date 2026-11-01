@@ -282,6 +282,31 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
       PRIMARY KEY (address, shown, actual, message_id)
     ) WITHOUT ROWID`,
   ],
+  [
+    // Inbound messages not yet told to anyone. Sender and subject stay in `messages`,
+    // so a message read, moved, or deleted before the flush is never announced.
+    `CREATE TABLE push_outbox (
+      message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+      mailbox_id TEXT NOT NULL,
+      queued_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX push_outbox_queued ON push_outbox(queued_at)`,
+    // One row per device, so a flood replaces what a device is owed and cannot add to
+    // it. subscription_id is a row in D1's push_subscriptions.
+    `CREATE TABLE push_deliveries (
+      subscription_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      notice TEXT NOT NULL,
+      attempts INTEGER NOT NULL,
+      next_attempt_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    `CREATE INDEX push_deliveries_due ON push_deliveries(next_attempt_at)`,
+    `CREATE TABLE push_schedule (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_flush_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE push_muted_users (user_id TEXT PRIMARY KEY) WITHOUT ROWID`,
+  ],
 ];
 
 export function applyMigrations(

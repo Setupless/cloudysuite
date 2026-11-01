@@ -4,6 +4,7 @@ import {
   QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
+import { MailFailure, NotSavedOnDevice } from "./failure";
 import {
   findThreadOfMessage,
   getMessageBody,
@@ -13,6 +14,16 @@ import {
   searchThreads,
 } from "./functions";
 import { type MailListing, parseViewParam, viewParam } from "./model";
+import {
+  isOffline,
+  OFFLINE_ACTION_REFUSED,
+  readBody,
+  readMailboxes,
+  readRules,
+  readSearchPage,
+  readThread,
+  readThreadPage,
+} from "./pwa/saved-mail";
 import { getRules } from "./rules/functions";
 import type { SearchPage } from "./search/store";
 import { getSenderLists } from "./spam/functions";
@@ -25,14 +36,7 @@ const CANNOT_REACH =
 const SOMETHING_WENT_WRONG =
   "Something went wrong on our side. Try again in a moment.";
 
-export class MailFailure extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { MailFailure };
 
 // A refusal from a server function arrives as a thrown Response. What the person
 // sees is the plain message the server wrote, or a plain message from here.
@@ -57,6 +61,12 @@ export async function call<Result>(run: () => Promise<Result>) {
   }
 }
 
+// Refused before it runs and never queued, so nothing happens later by surprise.
+export async function callAction<Result>(run: () => Promise<Result>) {
+  if (isOffline()) throw new MailFailure(0, OFFLINE_ACTION_REFUSED);
+  return call(run);
+}
+
 export const mailKeys = {
   mailboxes: ["mail", "mailboxes"] as const,
   all: (mailboxId: MailboxId) => ["mail", mailboxId] as const,
@@ -76,7 +86,7 @@ export const mailKeys = {
 export const mailboxesQuery = () =>
   queryOptions({
     queryKey: mailKeys.mailboxes,
-    queryFn: () => call(() => listMailboxes()),
+    queryFn: () => call(() => readMailboxes(() => listMailboxes())),
   });
 
 function readListing(
@@ -84,21 +94,24 @@ function readListing(
   listing: MailListing,
   cursor: string | undefined,
 ): Promise<SearchPage> {
-  return call(async () => {
+  return call(() => {
     if ("search" in listing) {
-      return searchThreads({
-        data: {
-          mailboxId,
-          text: listing.search,
-          offsetMinutes: new Date().getTimezoneOffset(),
-          cursor,
-        },
-      });
+      return readSearchPage(() =>
+        searchThreads({
+          data: {
+            mailboxId,
+            text: listing.search,
+            offsetMinutes: new Date().getTimezoneOffset(),
+            cursor,
+          },
+        }),
+      );
     }
-    const page = await listThreads({
-      data: { mailboxId, view: listing, cursor },
-    });
-    return { ...page, problem: null };
+    return readThreadPage(
+      () => listThreads({ data: { mailboxId, view: listing, cursor } }),
+      mailboxId,
+      listing,
+    );
   });
 }
 
@@ -113,7 +126,8 @@ export const threadsQuery = (mailboxId: MailboxId, listing: MailListing) =>
 export const rulesQuery = (mailboxId: MailboxId) =>
   queryOptions({
     queryKey: mailKeys.rules(mailboxId),
-    queryFn: () => call(() => getRules({ data: { mailboxId } })),
+    queryFn: () =>
+      call(() => readRules(() => getRules({ data: { mailboxId } }))),
   });
 
 export const sendersQuery = (mailboxId: MailboxId) =>
@@ -125,7 +139,14 @@ export const sendersQuery = (mailboxId: MailboxId) =>
 export const threadQuery = (mailboxId: MailboxId, threadId: ThreadId) =>
   queryOptions({
     queryKey: mailKeys.thread(mailboxId, threadId),
-    queryFn: () => call(() => getThread({ data: { mailboxId, threadId } })),
+    queryFn: () =>
+      call(() =>
+        readThread(
+          () => getThread({ data: { mailboxId, threadId } }),
+          mailboxId,
+          threadId,
+        ),
+      ),
   });
 
 // A message's content never changes, so one read is enough until the cache forgets it.
@@ -133,7 +154,13 @@ export const bodyQuery = (mailboxId: MailboxId, messageId: MessageId) =>
   queryOptions({
     queryKey: mailKeys.body(mailboxId, messageId),
     queryFn: () =>
-      call(() => getMessageBody({ data: { mailboxId, messageId } })),
+      call(() =>
+        readBody(
+          () => getMessageBody({ data: { mailboxId, messageId } }),
+          mailboxId,
+          messageId,
+        ),
+      ),
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 30 * 60 * 1000,
   });
@@ -154,7 +181,7 @@ export const isRefusal = (error: Error): boolean =>
   error instanceof MailFailure && error.status >= 400 && error.status < 500;
 
 export const retryUnlessRefused = (failures: number, error: Error): boolean =>
-  !isRefusal(error) && failures < 2;
+  !isRefusal(error) && !(error instanceof NotSavedOnDevice) && failures < 2;
 
 // The first HTML holds the mail, so a reload shows the list and not a skeleton.
 // A failed prefetch leaves the query empty, and the page shows the failure.

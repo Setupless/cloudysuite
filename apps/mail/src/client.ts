@@ -93,6 +93,8 @@ export type MailboxClient = {
   ): Promise<AttachmentDownload | null>;
   getRaw(messageId: MessageId): Promise<ReadableStream | null>;
   outgoing: MailboxOutgoing;
+  pushMuted(): Promise<boolean>;
+  setPushMuted(muted: boolean): Promise<void>;
 };
 
 // The only way for user-facing code to reach a mailbox. A grant cannot cross RPC,
@@ -163,6 +165,8 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
     },
 
     outgoing: createMailboxOutgoing(env.BUCKET, stub, grant.mailboxId),
+    pushMuted: () => stub.pushMuted(grant.userId),
+    setPushMuted: (muted) => stub.setPushMuted(grant.userId, muted),
   };
 }
 

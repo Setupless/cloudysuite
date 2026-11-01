@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { MailboxId } from "@cloudysuite/access";
+import type { MailboxId, UserId } from "@cloudysuite/access";
 import { runDueSends } from "./compose/job";
 import {
   type AddAttachmentResult,
@@ -25,6 +25,8 @@ import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
 import { SpamStore } from "./spam/store";
 import type { SenderEntry, SenderList, SenderWrite } from "./spam/types";
 import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
+import { runDuePush } from "./push/job";
+import { announces, PushStore } from "./push/store";
 import type { SqlDriver } from "./sql";
 import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
 import type {
@@ -56,6 +58,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #rules: RuleStore;
   readonly #outgoing: OutgoingStore;
   readonly #spam: SpamStore;
+  readonly #push: PushStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -71,16 +74,37 @@ export class Mailbox extends DurableObject<Env> {
     this.#labels = new LabelStore(db, this.#rules);
     this.#outgoing = new OutgoingStore(db, this.#store);
     this.#spam = new SpamStore(db);
+    this.#push = new PushStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
     return this.#store.findByHash(rawHash);
   }
 
-  async commit(message: NewMessage): Promise<CommitResult> {
+  // `inboundTo` is set only by the inbound path. A Durable Object cannot reliably read
+  // its own name during an alarm, so the job needs to be told which mailbox this is.
+  async commit(
+    message: NewMessage,
+    inboundTo: MailboxId | null = null,
+  ): Promise<CommitResult> {
     const result = this.#store.commit(message);
-    if (result.status === "duplicate") await this.#scheduleNextWakeUp();
+    if (
+      inboundTo !== null &&
+      result.status === "stored" &&
+      announces(result.folder)
+    ) {
+      this.#push.enqueue(result.messageId, inboundTo, Date.now());
+    }
+    await this.#scheduleNextWakeUp();
     return result;
+  }
+
+  pushMuted(userId: UserId): boolean {
+    return this.#push.isMuted(userId);
+  }
+
+  setPushMuted(userId: UserId, muted: boolean): void {
+    this.#push.setMuted(userId, muted);
   }
 
   async abandonUpload(prefix: string): Promise<void> {
@@ -356,6 +380,7 @@ export class Mailbox extends DurableObject<Env> {
       this.#store.nextDeletionAt(),
       this.#imports.nextRunAt(),
       this.#outgoing.nextDueAt(),
+      this.#push.nextRunAt(),
     ].filter((time) => time !== null);
     return due.length > 0
       ? this.ctx.storage.setAlarm(Math.min(...due))
@@ -368,6 +393,7 @@ export class Mailbox extends DurableObject<Env> {
     await this.#runSends();
     await this.#sweep();
     await this.#runImports();
+    await this.#runPush();
     await this.#scheduleNextWakeUp();
   }
 
@@ -420,6 +446,22 @@ export class Mailbox extends DurableObject<Env> {
       );
     } catch (error) {
       console.error("An import batch stopped. It will try again.", error);
+    }
+  }
+
+  async #runPush(): Promise<void> {
+    try {
+      await runDuePush(this.#push, {
+        database: this.env.DB,
+        fetch: (url, init) => fetch(url, init),
+        now: Date.now,
+      });
+    } catch (error) {
+      console.error(
+        "Could not send notifications. They will try again.",
+        error,
+      );
+      this.#push.postpone(Date.now());
     }
   }
 }

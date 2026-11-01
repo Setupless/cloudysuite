@@ -184,6 +184,53 @@ How sending behaves, and why:
 
 Scheduled send and snooze are not in the first release. Native mail apps such as Apple Mail and Outlook are not supported, because they need IMAP and SMTP servers that run outside Workers.
 
+### The installable app
+
+Mail installs from its own host as a PWA. The **App and notifications** page in Mail's menu holds the install button, and on Apple devices, which have no install prompt, the steps in words.
+
+**The rule that shapes everything: no person's mail is in Cache Storage.** The service worker saves only the public build and one anonymous page, `/offline-shell`, which renders nothing on the server. Pages that hold mail are never saved. Every saved message is in one IndexedDB database, so clearing a device means deleting that database, and there is nothing else to track.
+
+- **Pages** go to the network first. With no connection, the service worker serves the anonymous page at the address asked for, and the client loads that address's routes itself. A new deployment therefore cannot leave stale HTML linking a dead stylesheet.
+- **Everything else** that is not a hashed build file or a listed public file passes straight through, including sign-in, server functions, and downloads.
+- **Updates.** `sw.js` lists the build's exact file names, so any change to them changes it. A new worker installs, takes over, and deletes the old files. A plain file serves it, outside the Worker, so a fixed worker reaches a browser even when an old one answers every request with an error. The browser checks `sw.js` itself on each page load, with no page code involved.
+
+**What is saved:** for each mailbox, up to 300 inbox, 100 sent, and 100 archived conversations, each body up to 256 KB, and up to 50 MB in total. Attachments, Spam, Trash, Drafts, and labels are not saved. Search, label lists, and rules need a connection, and say so when there is none. Bodies come through the same `renderBody` as reading online, so only sanitized HTML is ever stored, and it shows in the same sandboxed frame.
+
+**Why a small hand-written store.** TanStack DB's browser persistence needs `@journeyapps/wa-sqlite`, a dependency outside this stack, and uses SQLite rather than IndexedDB. Query's persister rewrites one blob holding everything on each save, 15.7 MB in our test against one record here. The speed gap was small, 14 ms against under 1 ms. What decided it is safety: here, the check of who owns the device and the write share one transaction, so a tab finishing a refresh cannot put the last person's mail back after a sign-out cleared it.
+
+**While offline, actions are refused** in plain words, never queued. Someone who archives a message on a train should not be surprised by what runs when the train arrives. Opening a message offline leaves it unread.
+
+**A device is cleared when:**
+
+| What happened                        | What notices                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| Signing out                          | The sign-out page sends the browser through Mail's `/device-cleared`            |
+| A session ending elsewhere           | The service worker asks who is signed in on each page load, with no page code   |
+| A tab left open when a session ends  | Its next call gets a 401                                                        |
+| Someone else signing in              | The same check, and the page, comparing against the device's owner              |
+| 7 days with no check from the server | Offline, saved mail stops opening, because the session could have ended by then |
+
+Sign-out happens on Account's host, which cannot reach Mail's storage, so it has to pass through Mail's. `/device-cleared` is a plain file, so this also works while Mail is off.
+
+Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 7 days. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
+
+Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because `/pwa/session` is the one Mail address that answers while Mail is off. It returns a person's id or a 401, and no mail.
+
+Saved mail stays on the disk until Mail is next opened on that device, because nothing can reach a closed browser. A person who loses a device should have an admin reset their sign-in, and the saved mail is still readable by anyone who can read that browser's files. CloudySuite does not encrypt it.
+
+### Notifications
+
+A person turns notifications on for each device and can turn off any mailbox they share. A notification goes out for inbound mail that lands in the inbox, and never for imported mail, sent mail, or Spam. It carries the sender and subject, encrypted so that the push service cannot read them.
+
+- **Web push is hand-written** with WebCrypto: RFC 8291 to encrypt and RFC 8292 to sign. A test checks it against RFC 8291's published message, byte for byte. The organisation's signing keys are made once, on first use.
+- **Only known push services.** A browser supplies its own endpoint and the Worker later sends a request to it, so an open list would let anyone signed in aim the Worker at any URL. `apps/mail/src/push/endpoint.ts` lists the hosts. Chromium handed out `jmt17.google.com` on 2026-11-01, which Google's documents do not name, so a browser could start using a host this list lacks. It then shows a plain failure, and the fix is one line.
+- **Access is checked when sending,** not when queuing, through the one access check. A person also needs a live session somewhere, so someone who signed out everywhere or was reset hears nothing, and neither does someone who has not opened Mail on any device for 7 days, because their session has ended.
+- **A flood stays small.** A device gets at most one notification every 30 seconds. The first message after a quiet spell goes at once, and the rest become one summary with no sender or subject. An alarm sends at most 50, and a device only ever owes its newest notice, so the queue cannot grow.
+- **Hostile text.** The service worker treats the decrypted message as hostile. A click opens a path built only from checked ids, on Mail's own host.
+- **Mail turned off** still stores inbound mail but tells nobody, then or later.
+
+**Not tested on Safari or an iPhone.** iPhone web push needs the app installed on the Home Screen first, and a real-device check is owed before release.
+
 ### Spam filtering
 
 Spam filtering works without a Jev key and adds no dependency.
@@ -254,6 +301,7 @@ Every colour lives in [`src/styles/theme.css`](src/styles/theme.css) as a role, 
 
 1. Edit the values in `src/styles/theme.css`. For a new accent colour, change `--color-accent`, `--color-on-accent`, and `--color-selected`.
 2. Run `bun scripts/check-theme.mjs`.
+3. If the accent changed, run `bun scripts/generate-app-icons.mjs`. Mail's app icons are images, so a test fails until they match the theme. The manifest's colours are read from the theme when the build writes it.
 
 The script fails if a text and background pair is below the WCAG AA contrast ratio of 4.5, if a role is missing, or if a file in `src`, `apps`, or `packages` contains a colour value outside the theme file. It does not catch a misspelled class: `bg-acent` builds without an error and renders no colour.
 

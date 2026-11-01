@@ -46,6 +46,7 @@ test("the package does not export the stub or the store", () => {
     ".",
     "./client",
     "./compose-api",
+    "./device-session",
     "./download",
     "./import",
     "./import-api",

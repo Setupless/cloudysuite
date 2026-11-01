@@ -11,6 +11,7 @@ import {
   IconInbox,
   IconMailbox,
   IconSend,
+  IconSettings,
   IconTags,
   IconTrash,
   IconUsers,
@@ -27,6 +28,8 @@ import type { ReactNode } from "react";
 import { ComposeProvider } from "../compose/ui/compose-context";
 import type { MailboxEntry } from "../functions";
 import { FOLDER_DISPLAY, FOLDER_ORDER, viewParam } from "../model";
+import { useOffline } from "../pwa/connectivity";
+import { DEVICE_CLEARED_PATH } from "../pwa/sw-policy";
 import { mailboxesQuery, REFRESH_MS } from "../queries";
 import type { Folder, MailboxId, ThreadView } from "../types";
 import { LabelIcon } from "./label-chip";
@@ -172,6 +175,14 @@ function MailNavigation({
           <span className="min-w-0 truncate">Import mail</span>
         </Link>
       )}
+      <Link
+        to="/mail/device"
+        className={NAV_ITEM}
+        activeProps={{ className: NAV_ITEM_ACTIVE }}
+      >
+        <IconSettings size={18} stroke={1.75} aria-hidden />
+        <span className="min-w-0 truncate">App and notifications</span>
+      </Link>
       {mailboxes.length > 1 && (
         <>
           <SectionTitle>Mailboxes</SectionTitle>
@@ -214,10 +225,12 @@ function MailboxShell({
     refetchInterval: () => (queryClient.isMutating() ? false : REFRESH_MS),
   });
   const current = mailboxes.find((mailbox) => mailbox.id === mailboxId);
+  const offline = useOffline();
   return (
     <SuiteShell
       app="mail"
       user={user}
+      signOutHref={offline ? DEVICE_CLEARED_PATH : undefined}
       navigationLabel={current?.name ?? "Mail"}
       navigation={
         <MailNavigation

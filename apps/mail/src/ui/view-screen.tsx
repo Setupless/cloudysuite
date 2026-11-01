@@ -48,6 +48,7 @@ import {
   type ThreadId,
   type ThreadSummary,
 } from "../types";
+import { OfflineBanner } from "../pwa/offline-notice";
 import { useThreadCommands } from "./commands";
 import { useLabelCommands } from "./label-commands";
 import { LabelPicker } from "./label-picker";
@@ -204,15 +205,15 @@ function MailView({
 
   const moveAway = (threadId: ThreadId, move: MoveId) => {
     const next = neighbourOf(threads, threadId);
-    commands.move(threadId, move);
+    if (!commands.move(threadId, move)) return;
     if (!folder && MOVE_DISPLAY[move].staysInMixedListing) return;
     setFocusedId(next);
     if (threadId === openThreadId) closeThread();
   };
 
   const act = (threadId: ThreadId, move: MoveId) => {
-    if (move === "deleteForever") setConfirmingDelete(threadId);
-    else moveAway(threadId, move);
+    if (move !== "deleteForever") moveAway(threadId, move);
+    else if (!commands.refuseIfOffline()) setConfirmingDelete(threadId);
   };
 
   const step = (direction: 1 | -1) => {
@@ -341,8 +342,8 @@ function MailView({
     () => {
       const state = targetState();
       if (!state || target === null) return;
-      commands.setRead(target, state.unread);
-      if (!state.unread && target === openThreadId) closeThread();
+      const accepted = commands.setRead(target, state.unread);
+      if (accepted && !state.unread && target === openThreadId) closeThread();
     },
     hotkeys,
   );
@@ -423,59 +424,62 @@ function MailView({
 
   return (
     <MailViewContext.Provider value={context}>
-      <div className="flex h-full min-w-0">
-        <section
-          aria-label={title}
-          className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null && !panelSession ? "flex" : "max-lg:hidden"}`}
-        >
-          <SearchBox
-            key={searching ? view.search : ""}
-            mailboxId={mailboxId}
-            initial={searching ? view.search : ""}
-            inputRef={searchInput}
-          />
-          <header className="flex flex-none items-baseline gap-3 px-4 pt-3.5 pb-2.5">
-            <h1 className="min-w-0 flex-1 truncate text-[21px] font-semibold">
-              {title}
-            </h1>
-            {showsUnread && (unread ?? 0) > 0 && (
-              <span className="flex-none text-xs text-secondary">
-                {unread} unread
+      <div className="flex h-full min-w-0 flex-col">
+        <OfflineBanner />
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <section
+            aria-label={title}
+            className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null && !panelSession ? "flex" : "max-lg:hidden"}`}
+          >
+            <SearchBox
+              key={searching ? view.search : ""}
+              mailboxId={mailboxId}
+              initial={searching ? view.search : ""}
+              inputRef={searchInput}
+            />
+            <header className="flex flex-none items-baseline gap-3 px-4 pt-3.5 pb-2.5">
+              <h1 className="min-w-0 flex-1 truncate text-[21px] font-semibold">
+                {title}
+              </h1>
+              {showsUnread && (unread ?? 0) > 0 && (
+                <span className="flex-none text-xs text-secondary">
+                  {unread} unread
+                </span>
+              )}
+              <span className="self-center">
+                <Button
+                  variant="action"
+                  icon={IconPencil}
+                  onClick={() => {
+                    if (openThreadId !== null) closeThread();
+                    compose.startNew();
+                  }}
+                >
+                  Write
+                </Button>
               </span>
+              <span className="self-center max-lg:hidden">
+                <IconButton
+                  icon={IconKeyboard}
+                  label="Keyboard shortcuts"
+                  onClick={() => setHelpOpen(true)}
+                />
+              </span>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto pb-2">{listBody}</div>
+          </section>
+          <section
+            key={openThreadId ?? "none"}
+            aria-label={panelSession ? "New message" : "Conversation"}
+            className={`min-w-0 flex-1 overflow-y-auto bg-panel ${openThreadId === null && !panelSession ? "max-lg:hidden" : ""}`}
+          >
+            {panelSession ? (
+              <ComposeEditor key={panelSession.id} session={panelSession} />
+            ) : (
+              children
             )}
-            <span className="self-center">
-              <Button
-                variant="action"
-                icon={IconPencil}
-                onClick={() => {
-                  if (openThreadId !== null) closeThread();
-                  compose.startNew();
-                }}
-              >
-                Write
-              </Button>
-            </span>
-            <span className="self-center max-lg:hidden">
-              <IconButton
-                icon={IconKeyboard}
-                label="Keyboard shortcuts"
-                onClick={() => setHelpOpen(true)}
-              />
-            </span>
-          </header>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-2">{listBody}</div>
-        </section>
-        <section
-          key={openThreadId ?? "none"}
-          aria-label={panelSession ? "New message" : "Conversation"}
-          className={`min-w-0 flex-1 overflow-y-auto bg-panel ${openThreadId === null && !panelSession ? "max-lg:hidden" : ""}`}
-        >
-          {panelSession ? (
-            <ComposeEditor key={panelSession.id} session={panelSession} />
-          ) : (
-            children
-          )}
-        </section>
+          </section>
+        </div>
       </div>
       {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
       {labelling !== null && (

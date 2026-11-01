@@ -16,10 +16,11 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useState } from "react";
+import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
 import {
   isRefusal,
   asMailFailure,
-  call,
+  callAction,
   mailboxesQuery,
   mailKeys,
   rulesQuery,
@@ -517,7 +518,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const attempt = async (run: () => Promise<unknown>) => {
     setProblem(null);
     try {
-      await call(run);
+      await callAction(run);
     } catch (thrown) {
       setProblem((await asMailFailure(thrown)).message);
     }
@@ -526,7 +527,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
 
   const save = async (draft: RuleDraft): Promise<string | null> => {
     try {
-      await call(() =>
+      await callAction(() =>
         editing?.kind === "existing"
           ? updateRule({
               data: { mailboxId, ruleId: editing.rule.id, rule: draft },
@@ -542,6 +543,10 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   };
 
   const move = (index: number, direction: -1 | 1) => {
+    if (isOffline()) {
+      setProblem(OFFLINE_ACTION_REFUSED);
+      return;
+    }
     const ids: RuleId[] = rules.map((rule) => rule.id);
     const [moved] = ids.splice(index, 1);
     ids.splice(index + direction, 0, moved!);

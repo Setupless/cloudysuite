@@ -1,4 +1,5 @@
 import type { MailboxId } from "@cloudysuite/access";
+import { readSettings } from "../../../src/settings";
 import { resolveRecipient } from "./address";
 import { parseAuthenticationResults } from "./auth-results";
 import {
@@ -24,7 +25,12 @@ import {
 } from "./types";
 
 export type IngestInput = { mailboxId: MailboxId; raw: ArrayBuffer } & (
-  | { source: "inbound"; envelope: { from: string; to: string } }
+  | {
+      source: "inbound";
+      envelope: { from: string; to: string };
+      // Stored, with no notification for anyone.
+      quiet?: boolean;
+    }
   | { source: "import" }
   | { source: "sent" }
 );
@@ -182,7 +188,10 @@ export async function ingest(
   }
 
   const message = describeMessage(input, raw, rawHash, prefix, parsed, objects);
-  return (await stub.commit(message)) as IngestResult;
+  return (await stub.commit(
+    message,
+    input.source === "inbound" && !input.quiet ? mailboxId : null,
+  )) as IngestResult;
 }
 
 export type PreparedImport =
@@ -265,11 +274,14 @@ export async function receiveInbound(
     return;
   }
   const raw = await new Response(message.raw).arrayBuffer();
+  // Decided on arrival, because Mail may be back on before the notification's alarm.
+  const { disabled } = await readSettings(env.DB);
   const result = await ingest(env, {
     source: "inbound",
     mailboxId,
     raw,
     envelope: { from: message.from, to: message.to },
+    quiet: disabled.has("mail"),
   });
   if (result.status === "tooLarge") {
     message.setReject("This message is larger than the 25 MB limit.");

@@ -50,6 +50,8 @@ test.each([
   [setup, "/", { action: "redirect", to: "/setup" }],
   [setup, "/off", { action: "redirect", to: "/setup" }],
   [off, "/off", { action: "pass" }],
+  [off, "/pwa/session", { action: "pass" }],
+  [off, "/pwa/session/other", { action: "redirect", to: "/off" }],
   [off, "/", { action: "redirect", to: "/off" }],
   [off, "/inbox/1", { action: "redirect", to: "/off" }],
   [off, "/setup", { action: "redirect", to: "/off" }],
@@ -64,4 +66,17 @@ test.each([
   [unknown, "/setup/api", { action: "notFound" }],
 ] as const)("gate %j at %s", (route, pathname, expected) => {
   expect(gate(route, pathname)).toEqual(expected);
+});
+
+test("only Mail's host serves the offline shell, and only while Mail is on", () => {
+  const app = (name: "auth" | "mail") => ({ kind: "app" as const, app: name });
+  expect(gate(app("mail"), "/offline-shell")).toEqual({ action: "pass" });
+  expect(gate(app("auth"), "/offline-shell")).toEqual({ action: "notFound" });
+  expect(gate({ kind: "off", app: "mail" }, "/offline-shell")).toEqual({
+    action: "redirect",
+    to: "/off",
+  });
+  expect(gate({ kind: "unknown" }, "/offline-shell")).toEqual({
+    action: "notFound",
+  });
 });

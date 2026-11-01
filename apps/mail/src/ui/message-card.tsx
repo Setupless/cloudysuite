@@ -13,6 +13,7 @@ import { safeFileName } from "../attachment-headers";
 import { linkify } from "../email/linkify";
 import type { RenderedBody } from "../email/render-body";
 import { FOLDER_DISPLAY } from "../model";
+import { useOffline } from "../pwa/connectivity";
 import { bodyQuery } from "../queries";
 import { whyInSpam } from "../spam/explain";
 import type {
@@ -110,10 +111,21 @@ function Attachments({
   mailboxId: MailboxId;
   embedded: readonly AttachmentId[];
 }) {
+  const offline = useOffline();
   const shown = message.attachments.filter(
     (attachment: AttachmentInfo) => !embedded.includes(attachment.id),
   );
   if (shown.length === 0) return null;
+  if (offline) {
+    return (
+      <p className="text-sm text-secondary">
+        {shown.length === 1
+          ? "This message has an attachment."
+          : `This message has ${shown.length} attachments.`}{" "}
+        You can download attachments when you're back online.
+      </p>
+    );
+  }
   return (
     <ul className="flex flex-wrap gap-2" aria-label="Attachments">
       {shown.map((attachment) => (
