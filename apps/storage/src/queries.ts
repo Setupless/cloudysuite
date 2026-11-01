@@ -5,7 +5,13 @@ import {
   queryOptions,
 } from "@tanstack/react-query";
 import type { DriveId } from "@cloudysuite/access";
-import { getDirectory, getFile, getFolder, getRecent } from "./functions";
+import {
+  getDirectory,
+  getFile,
+  getFolder,
+  getRecent,
+  getTrash,
+} from "./functions";
 import { getMailAttachments } from "./mail-attachment-functions";
 import type { ItemId } from "./types";
 
@@ -62,6 +68,7 @@ export const storageKeys = {
     ["storage", "file", driveId, fileId] as const,
   recent: (limit: number) => ["storage", "recent", limit] as const,
   mailAttachments: ["storage", "mailAttachments"] as const,
+  trash: ["storage", "trash"] as const,
 };
 
 export const directoryQuery = () =>
@@ -103,6 +110,12 @@ export const mailAttachmentsQuery = () =>
     staleTime: 60_000,
   });
 
+export const trashQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.trash,
+    queryFn: () => call(() => getTrash()),
+  });
+
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A
 // failed prefetch leaves the query empty, and the page shows the failure.
 export async function prefetchDirectory() {
@@ -123,6 +136,13 @@ export async function prefetchRecent() {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await client.prefetchQuery(recentQuery(50));
+  return dehydrate(client);
+}
+
+export async function prefetchTrash() {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(trashQuery());
   return dehydrate(client);
 }
 

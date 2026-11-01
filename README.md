@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** not released yet. Auth and Mail are built, and Storage has its first part: team folders, My files, uploading, and downloading. This README describes the intended product and says where something is not built yet.
+**Status:** not released yet. Auth and Mail are built, and Storage has team folders, My files, uploading, downloading, rename, move, and Trash. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -335,9 +335,9 @@ A question is asked only when its answer could change something:
 
 Storage replaces Google Drive. A person lands on Home, which shows their team folders, recent files, and recent attachments from their mail. Inside a folder, a table lists what is there, and a panel describes the chosen file or, with nothing chosen, the folder itself. One click opens a folder. One click on a file chooses it, and another click lets it go.
 
-**Built so far:** team folders, subfolders, My files, uploading with resume, downloading, previews of pictures, storage limits, and saving attachments from mail.
+**Built so far:** team folders, subfolders, My files, uploading with resume, downloading, previews of pictures, storage limits, saving attachments from mail, rename, move, delete, and Trash.
 
-**Not built yet:** adding people to a folder, sharing, Shared with me, rename, move, delete, Trash, search, starring, and WebDAV. A control appears only once it works, so none of these has a button yet.
+**Not built yet:** adding people to a folder, sharing, Shared with me, renaming or deleting a whole team folder, search, starring, and WebDAV. A control appears only once it works, so none of these has a button yet.
 
 - **A team folder is its own member list,** like a shared mailbox. There are no teams across the organisation to keep in step. Anyone signed in can create a team folder and becomes its manager, so sharing files never has to wait for an admin. Until adding people is built, only its creator can open a team folder.
 - **My files is made on first use, not on first look.** Viewing the page changes nothing, because no `GET` request changes a person's data. The first upload or folder makes it, and so does an admin giving the person a limit, and the database allows one for each person, so two tabs can't make two.
@@ -349,6 +349,13 @@ Storage replaces Google Drive. A person lands on Home, which shows their team fo
 - **Each drive is one SQLite-backed Durable Object.** A drive is a team folder or a person's My files. The object holds the names and details, and the bytes go in R2 through the Worker, so a large file never holds up anyone else using the drive. Each object keeps the truth for its bytes and file count, and writes the totals to D1 after each change. Team folder cards and the sidebar read D1 only, so opening Home wakes no object except for Recent, which asks each drive the person can open that holds files, and attachments from mail, which asks each mailbox they can reach after the page has shown. The totals are absolute values, so writing them twice changes nothing. A failed write leaves a flag, and the object's alarm tries again.
 - **Previews are limited to PNG, JPEG, WebP, and GIF, up to 5 MB.** `storage.` shares the session cookie's domain, so an HTML or SVG file shown inline would be a script running with the signed-in person's session, whatever type the upload claimed. The preview route refuses every other type, and sends `nosniff` and a `sandbox` policy, so a page calling itself a PNG can't run either. Everything else downloads, and shows a type icon.
 - **A taken name.** A new folder with a taken name is refused in plain words. An upload keeps both, as `Report (2).pdf`, because a person dropping files shouldn't be stopped or lose either copy.
+- **Rename and move refuse a taken name,** because the person is choosing where the item goes and can choose again. Restoring keeps both, as `Report (2).pdf`, because refusing would leave the item stuck in Trash.
+- **Trash belongs to each drive and shows as one flat list.** Deleting a folder takes what is in it, and it comes back as one unit. A deleted item frees its name. If the folder it came from is gone, it returns to the top of its drive and the page says so.
+- **Bytes in Trash still count towards the amount used** until they are deleted forever, because R2 still holds them. They leave a team folder's file count, Recent, and listings straight away, and downloading one gives a plain 404.
+- **Trash empties itself after 30 days.** Delete forever, Empty Trash, and the 30 days all mark what is due and go through one path. Each small batch removes rows and queues their R2 objects in one transaction, so the alarm can pick up after a crash without losing a file or leaving one behind. Empty Trash covers every drive the person is on, including what others deleted, and its confirmation says so.
+- **A move between drives keeps the file's bytes where they are.** The new drive's row points at the same R2 object, so nothing is copied. The two objects can't share a transaction, so the sender locks the rows and keeps a record, the receiver adds them and remembers the move's id, and only then does the sender remove its copy. If the answer never arrives, the alarm asks again, and the repeat adds nothing. A folder of more than 2,000 items is refused, because it must fit in one call. Move what is inside it in smaller folders.
+- **An upload whose folder is deleted while it runs lands at the drive's root,** so the file isn't lost with the folder. If that folder has since been deleted forever or moved to another drive, the upload stops and says so.
+- **Anyone on a drive can rename, move, and delete for now.** Every change opens the drive through `openDriveToEdit`, which is where Can view will narrow it.
 - **Removing a person deletes no files.** Their My files stays and still counts towards the amount used, but nobody can open it, or a team folder only they were on, until a way to hand those over is built. The removal dialog says so.
 
 **Attachments from your mail** is a section on Home listing the newest 5 attachments across every mailbox a person can reach, each with a button that saves a copy to My files.

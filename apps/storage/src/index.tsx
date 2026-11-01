@@ -4,10 +4,12 @@ export { RecentScreen } from "./ui/recent-screen";
 export { requireStorageUser } from "./ui/session";
 export { StorageLayout } from "./ui/storage-layout";
 export { StorageRoot } from "./ui/storage-root";
+export { TrashScreen } from "./ui/trash-screen";
 export {
   prefetchDirectory,
   prefetchFolder,
   prefetchHome,
   prefetchRecent,
+  prefetchTrash,
 } from "./queries";
 export { redirectToMyDrive } from "./redirect";

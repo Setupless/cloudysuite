@@ -3,9 +3,11 @@ import { Avatar, buttonClass, useHydrated } from "@cloudysuite/ui";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { IconDownload, IconFolder, IconUsers } from "@tabler/icons-react";
 import { useEffect, useRef } from "react";
-import type { FileItem } from "../types";
+import type { FileItem, FolderItem } from "../types";
+import { detailsPanelId, focusDetailsIfAsked } from "./details-focus";
 import { FilePreview } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
+import { ItemActions } from "./item-actions";
 import { teamColour } from "./team-colour";
 
 // Who can open this comes from the drive. A personal drive is only ever its owner.
@@ -20,11 +22,13 @@ export type PanelSubject =
       contains: number;
       changedAt: number | null;
       createdBy: string;
+      // Null for a drive's root, which is not an item and has no actions.
+      actionable: { driveId: DriveId; folder: FolderItem } | null;
     }
   | { kind: "file"; driveId: DriveId; file: FileItem; addedBy: string };
 
-const PANEL =
-  "flex-none border-line p-3.5 max-[899px]:border-t min-[900px]:w-[262px] min-[900px]:border-l";
+export const PANEL =
+  "flex-none border-line p-3.5 outline-none max-[899px]:border-t min-[900px]:w-[262px] min-[900px]:border-l";
 
 function AccessRow({ access }: { access: PanelAccess }) {
   return (
@@ -64,6 +68,7 @@ export function DetailsPanel({
     if (fileId && window.matchMedia("(max-width: 899px)").matches) {
       panel.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+    if (fileId) focusDetailsIfAsked();
   }, [fileId]);
 
   const changed = (timestamp: number | null) =>
@@ -87,7 +92,13 @@ export function DetailsPanel({
         ];
 
   return (
-    <aside ref={panel} aria-label="Details" className={PANEL}>
+    <aside
+      ref={panel}
+      id={detailsPanelId}
+      tabIndex={-1}
+      aria-label="Details"
+      className={PANEL}
+    >
       <div className="sticky top-3.5 flex flex-col gap-3">
         <div className="flex h-[124px] items-center justify-center overflow-hidden rounded bg-field text-secondary">
           {subject.kind === "file" ? (
@@ -100,7 +111,7 @@ export function DetailsPanel({
           {subject.kind === "file" ? subject.file.name : subject.name}
         </h2>
         {subject.kind === "file" && (
-          <div className="flex">
+          <div className="flex flex-wrap gap-1.5">
             <a
               href={`/download/${subject.driveId}/${subject.file.id}`}
               download
@@ -109,6 +120,15 @@ export function DetailsPanel({
               <IconDownload size={16} stroke={1.75} aria-hidden />
               Download
             </a>
+            <ItemActions driveId={subject.driveId} item={subject.file} />
+          </div>
+        )}
+        {subject.kind === "folder" && subject.actionable && (
+          <div className="flex flex-wrap gap-1.5">
+            <ItemActions
+              driveId={subject.actionable.driveId}
+              item={subject.actionable.folder}
+            />
           </div>
         )}
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
@@ -132,12 +152,14 @@ export function DetailsPanel({
   );
 }
 
-export function NothingChosenPanel() {
+export function NothingChosenPanel({
+  message = "Choose a file to see its details.",
+}: {
+  message?: string;
+}) {
   return (
-    <aside aria-label="Details" className={PANEL}>
-      <p className="mt-16 text-center text-sm text-secondary">
-        Choose a file to see its details.
-      </p>
+    <aside id={detailsPanelId} aria-label="Details" className={PANEL}>
+      <p className="mt-16 text-center text-sm text-secondary">{message}</p>
     </aside>
   );
 }

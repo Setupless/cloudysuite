@@ -13,6 +13,7 @@ import {
 import type { ItemId } from "../types";
 import type { Destination } from "./upload-queue";
 import { destinationName } from "./upload-queue";
+import { focusDetails } from "./details-focus";
 import { useUploads } from "./uploads-context";
 
 export function FolderLink({
@@ -85,6 +86,21 @@ export function Breadcrumb({
   );
 }
 
+// A long table stands between a keyboard and the panel's actions.
+export function SkipToDetails() {
+  return (
+    <div className="px-4">
+      <button
+        type="button"
+        className="sr-only cursor-pointer rounded text-sm text-accent outline-accent focus:not-sr-only focus:mb-1 focus:inline-block focus:px-2 focus:py-1 focus-visible:outline-2"
+        onClick={focusDetails}
+      >
+        Go to the actions for this folder
+      </button>
+    </div>
+  );
+}
+
 export function PageTop({
   title,
   children,
@@ -106,17 +122,19 @@ export function NameDialog({
   title,
   hint,
   submitLabel,
+  initialName = "",
   onSubmit,
   onClose,
 }: {
   title: string;
   hint: string;
   submitLabel: string;
+  initialName?: string;
   // Resolves once done, and throws with the words to show if it can't be.
   onSubmit: (name: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 

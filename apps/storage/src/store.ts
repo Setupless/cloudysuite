@@ -8,9 +8,15 @@ import type {
   FolderItem,
   FolderListing,
   ItemId,
+  MoveResult,
   NewFolderResult,
+  RenameResult,
+  RestoreResult,
+  TrashEntry,
+  TrashResult,
   UploadView,
 } from "./types";
+import { MAX_ITEMS_ACROSS_DRIVES, TRASH_MS } from "./types";
 
 export const UPLOAD_EXPIRY_MS = 3 * 24 * 60 * 60 * 1000;
 export const USAGE_RETRY_MS = 60_000;
@@ -26,6 +32,7 @@ type ItemRow = SqlRow & {
   created_by: string;
   created_at: number;
   changed_at: number;
+  move_id: string | null;
   contains: number;
 };
 
@@ -41,7 +48,7 @@ type UploadRow = SqlRow & {
 };
 
 const SELECT_ITEMS = `SELECT items.*,
-  (SELECT count(*) FROM items AS child WHERE coalesce(child.parent_id, '') = items.id) AS contains
+  (SELECT count(*) FROM items AS child WHERE coalesce(child.parent_id, '') = items.id AND child.trash_id IS NULL) AS contains
   FROM items`;
 
 function parseItem(row: ItemRow): DriveItem {
@@ -65,6 +72,15 @@ function parseItem(row: ItemRow): DriveItem {
       };
   }
 }
+
+// An item and everything inside it. Items deleted earlier have a null parent, so a
+// folder's tree holds only what is still in it.
+const TREE = `WITH RECURSIVE tree(id, depth) AS (
+  SELECT id, 0 FROM items WHERE id = ?
+  UNION ALL
+  SELECT items.id, tree.depth + 1
+  FROM items JOIN tree ON items.parent_id = tree.id
+)`;
 
 const CHAIN = `WITH RECURSIVE chain(id, parent_id, depth) AS (
   SELECT id, parent_id, 0 FROM items WHERE id = ?
@@ -138,6 +154,33 @@ export type CommitResult =
 
 export type StaleUpload = { id: string; r2Key: string; r2UploadId: string };
 
+// What crosses between two objects. Parents come before their children.
+export type MovedRow = {
+  id: string;
+  parentId: string | null;
+  kind: "folder" | "file";
+  name: string;
+  nameKey: string;
+  size: number | null;
+  mimeType: string | null;
+  r2Key: string | null;
+  createdBy: string;
+  createdAt: number;
+  changedAt: number;
+};
+
+export type OutgoingMove = {
+  moveId: string;
+  toDriveId: DriveId;
+  toParentId: ItemId | null;
+  rows: MovedRow[];
+};
+
+export type ReceiveResult =
+  | { status: "received" }
+  | { status: "nameTaken" }
+  | { status: "noDestination" };
+
 export class DriveStore {
   readonly #db: SqlDriver;
 
@@ -149,9 +192,22 @@ export class DriveStore {
     return this.#db.exec<Row>(query, ...bindings).toArray();
   }
 
+  // Trashed items don't exist for anything a person reads.
   item(id: ItemId): DriveItem | null {
-    const [row] = this.#rows<ItemRow>(`${SELECT_ITEMS} WHERE items.id = ?`, id);
+    const [row] = this.#rows<ItemRow>(
+      `${SELECT_ITEMS} WHERE items.id = ? AND items.trash_id IS NULL`,
+      id,
+    );
     return row ? parseItem(row) : null;
+  }
+
+  // An upload that became a file stays finished, wherever that file is now.
+  #finishedFile(id: ItemId): FileItem | null {
+    const [row] = this.#rows<ItemRow>(
+      `${SELECT_ITEMS} WHERE items.id = ? AND items.kind = 'file'`,
+      id,
+    );
+    return row ? (parseItem(row) as FileItem) : null;
   }
 
   #folder(id: ItemId): FolderItem | null {
@@ -164,6 +220,14 @@ export class DriveStore {
     return item?.kind === "file" ? item : null;
   }
 
+  #folderToAddTo(id: ItemId): boolean {
+    const [row] = this.#rows<{ move_id: string | null }>(
+      "SELECT move_id FROM items WHERE id = ? AND kind = 'folder' AND trash_id IS NULL",
+      id,
+    );
+    return row !== undefined && row.move_id === null;
+  }
+
   // Null when the folder doesn't exist, so a bad link can't look like an empty folder.
   list(parentId: ItemId | null, cursor: string | null): FolderListing | null {
     const folder = parentId === null ? null : this.#folder(parentId);
@@ -172,7 +236,7 @@ export class DriveStore {
     const after = cursor ? decodeCursor(cursor) : null;
     const rows = this.#rows<ItemRow>(
       `${SELECT_ITEMS}
-       WHERE coalesce(items.parent_id, '') = ?
+       WHERE coalesce(items.parent_id, '') = ? AND items.trash_id IS NULL
        ${after ? "AND (items.kind < ? OR (items.kind = ? AND items.name_key > ?))" : ""}
        ORDER BY items.kind DESC, items.name_key
        LIMIT ?`,
@@ -188,7 +252,7 @@ export class DriveStore {
       contains: folder
         ? folder.contains
         : (this.#rows<{ total: number }>(
-            "SELECT count(*) AS total FROM items WHERE coalesce(parent_id, '') = ''",
+            "SELECT count(*) AS total FROM items WHERE coalesce(parent_id, '') = '' AND trash_id IS NULL",
           )[0]?.total ?? 0),
       items: page.map(parseItem),
       nextCursor:
@@ -209,7 +273,7 @@ export class DriveStore {
 
   recent(limit: number): FileItem[] {
     return this.#rows<ItemRow>(
-      `SELECT items.*, 0 AS contains FROM items WHERE kind = 'file'
+      `SELECT items.*, 0 AS contains FROM items WHERE kind = 'file' AND trash_id IS NULL
        ORDER BY changed_at DESC, id LIMIT ?`,
       limit,
     ).map(parseItem) as FileItem[];
@@ -218,7 +282,7 @@ export class DriveStore {
   #nameIsFree(parentId: ItemId | null, nameKey: string): boolean {
     return (
       this.#rows(
-        "SELECT 1 AS found FROM items WHERE coalesce(parent_id, '') = ? AND name_key = ?",
+        "SELECT 1 AS found FROM items WHERE coalesce(parent_id, '') = ? AND name_key = ? AND trash_id IS NULL",
         parentId ?? "",
         nameKey,
       ).length === 0
@@ -266,7 +330,7 @@ export class DriveStore {
   }): NewFolderResult {
     const { driveId, id, parentId, name, createdBy, now } = input;
     return this.#db.transaction((): NewFolderResult => {
-      if (parentId !== null && !this.#folder(parentId)) {
+      if (parentId !== null && !this.#folderToAddTo(parentId)) {
         return { status: "noParent" };
       }
       if (!this.#nameIsFree(parentId, name.nameKey)) {
@@ -369,7 +433,7 @@ export class DriveStore {
   }
 
   partPlan(id: ItemId, partNumber: number): PartPlan {
-    if (this.file(id)) return { status: "finished" };
+    if (this.#finishedFile(id)) return { status: "finished" };
     const row = this.#upload(id);
     if (!row) return { status: "unknown" };
     if (partNumber < 1 || partNumber > partCountFor(row.size)) {
@@ -404,7 +468,7 @@ export class DriveStore {
   }
 
   completionPlan(id: ItemId): CompletionPlan {
-    const finished = this.file(id);
+    const finished = this.#finishedFile(id);
     if (finished) return { status: "finished", item: finished };
     const row = this.#upload(id);
     if (!row) return { status: "unknown" };
@@ -424,11 +488,15 @@ export class DriveStore {
   // name is decided here, inside the transaction that claims the new one.
   commitUpload(id: ItemId, driveId: DriveId, now: number): CommitResult {
     return this.#db.transaction((): CommitResult => {
-      const finished = this.file(id);
+      const finished = this.#finishedFile(id);
       if (finished) return { status: "committed", item: finished };
       const row = this.#upload(id);
       if (!row) return { status: "unknown" };
-      const parentId = row.parent_id as ItemId | null;
+      // Someone deleted or moved the folder during the upload. The file is still wanted,
+      // so it lands at the drive's root rather than vanishing with the folder.
+      const wanted = row.parent_id as ItemId | null;
+      const parentId =
+        wanted !== null && this.#folderToAddTo(wanted) ? wanted : null;
 
       let name = row.name;
       for (
@@ -480,7 +548,7 @@ export class DriveStore {
 
   r2KeyOf(id: ItemId): string | null {
     const [row] = this.#rows<{ r2_key: string | null }>(
-      "SELECT r2_key FROM items WHERE id = ?",
+      "SELECT r2_key FROM items WHERE id = ? AND trash_id IS NULL",
       id,
     );
     return row?.r2_key ?? null;
@@ -518,6 +586,510 @@ export class DriveStore {
       "SELECT touched_at FROM uploads ORDER BY touched_at LIMIT 1",
     );
     return row ? row.touched_at + UPLOAD_EXPIRY_MS : null;
+  }
+
+  // Taken names are refused rather than numbered, because the person is choosing this
+  // name and can choose another. Only the name's own case can change onto itself.
+  rename(input: {
+    driveId: DriveId;
+    id: ItemId;
+    name: Extract<ParsedName, { ok: true }>;
+    now: number;
+  }): RenameResult {
+    const { driveId, id, name, now } = input;
+    return this.#db.transaction((): RenameResult => {
+      const item = this.item(id);
+      if (!item) return { status: "gone" };
+      if (this.#isLocked(id)) return { status: "busy" };
+      if (
+        nameKeyOf(item.name) !== name.nameKey &&
+        !this.#nameIsFree(item.parentId, name.nameKey)
+      ) {
+        return { status: "nameTaken" };
+      }
+      if (item.name === name.name) return { status: "renamed", item };
+      this.#db.exec(
+        "UPDATE items SET name = ?, name_key = ?, changed_at = ? WHERE id = ?",
+        name.name,
+        name.nameKey,
+        now,
+        id,
+      );
+      this.#touchChain(item.parentId, now);
+      this.#noteChange(driveId, 0, 0, now);
+      return { status: "renamed", item: this.item(id) as DriveItem };
+    });
+  }
+
+  #isLocked(id: ItemId): boolean {
+    return (
+      this.#rows(
+        "SELECT 1 AS found FROM items WHERE id = ? AND move_id IS NOT NULL",
+        id,
+      ).length > 0
+    );
+  }
+
+  #treeIsLocked(id: ItemId): boolean {
+    return (
+      this.#rows(
+        `${TREE} SELECT 1 AS found FROM items JOIN tree ON items.id = tree.id
+         WHERE items.move_id IS NOT NULL LIMIT 1`,
+        id,
+      ).length > 0
+    );
+  }
+
+  moveWithin(input: {
+    driveId: DriveId;
+    id: ItemId;
+    toParentId: ItemId | null;
+    now: number;
+  }): MoveResult {
+    const { driveId, id, toParentId, now } = input;
+    return this.#db.transaction((): MoveResult => {
+      const item = this.item(id);
+      if (!item) return { status: "gone" };
+      if (this.#isLocked(id)) return { status: "busy" };
+      if (toParentId !== null) {
+        const inside = this.#rows(
+          `${CHAIN} SELECT 1 AS found FROM chain WHERE id = ? LIMIT 1`,
+          toParentId,
+          id,
+        );
+        if (inside.length > 0) return { status: "intoItself" };
+        if (!this.#folderToAddTo(toParentId)) {
+          return { status: "noDestination" };
+        }
+      }
+      if (item.parentId === toParentId) return { status: "moved" };
+      if (!this.#nameIsFree(toParentId, nameKeyOf(item.name))) {
+        return { status: "nameTaken" };
+      }
+      this.#db.exec(
+        "UPDATE items SET parent_id = ? WHERE id = ?",
+        toParentId,
+        id,
+      );
+      this.#touchChain(item.parentId, now);
+      this.#touchChain(toParentId, now);
+      this.#noteChange(driveId, 0, 0, now);
+      return { status: "moved" };
+    });
+  }
+
+  beginMoveOut(input: {
+    moveId: string;
+    id: ItemId;
+    toDriveId: DriveId;
+    toParentId: ItemId | null;
+    tryAt: number;
+  }): MoveResult | { status: "begun" } {
+    const { moveId, id, toDriveId, toParentId, tryAt } = input;
+    return this.#db.transaction(() => {
+      if (!this.item(id)) return { status: "gone" as const };
+      if (this.#treeIsLocked(id)) return { status: "busy" as const };
+      const [count] = this.#rows<{ total: number }>(
+        `${TREE} SELECT count(*) AS total FROM tree`,
+        id,
+      );
+      if ((count?.total ?? 0) > MAX_ITEMS_ACROSS_DRIVES) {
+        return { status: "tooMany" as const };
+      }
+      this.#db.exec(
+        `${TREE} UPDATE items SET move_id = ? WHERE id IN (SELECT id FROM tree)`,
+        id,
+        moveId,
+      );
+      this.#db.exec(
+        "INSERT INTO moves_out (id, top_id, to_drive_id, to_parent_id, try_at) VALUES (?, ?, ?, ?, ?)",
+        moveId,
+        id,
+        toDriveId,
+        toParentId,
+        tryAt,
+      );
+      return { status: "begun" as const };
+    });
+  }
+
+  outgoingMove(moveId: string): OutgoingMove | null {
+    const [move] = this.#rows<{
+      top_id: string;
+      to_drive_id: string;
+      to_parent_id: string | null;
+    }>("SELECT * FROM moves_out WHERE id = ?", moveId);
+    if (!move) return null;
+    const toParentId = move.to_parent_id as ItemId | null;
+    const rows = this.#rows<
+      ItemRow & { name_key: string; r2_key: string | null }
+    >(
+      `${TREE} SELECT items.* FROM items JOIN tree ON items.id = tree.id ORDER BY tree.depth`,
+      move.top_id,
+    ).map((row, index): MovedRow => ({
+      id: row.id,
+      parentId: index === 0 ? toParentId : row.parent_id,
+      kind: row.kind,
+      name: row.name,
+      nameKey: row.name_key,
+      size: row.size,
+      mimeType: row.mime_type,
+      r2Key: row.r2_key,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      changedAt: row.changed_at,
+    }));
+    return {
+      moveId,
+      toDriveId: move.to_drive_id as DriveId,
+      toParentId,
+      rows,
+    };
+  }
+
+  receiveMove(input: OutgoingMove & { driveId: DriveId; now: number }) {
+    const { moveId, driveId, toParentId, rows, now } = input;
+    return this.#db.transaction((): ReceiveResult => {
+      const repeat = this.#rows(
+        "SELECT 1 AS found FROM moves_in WHERE id = ?",
+        moveId,
+      );
+      if (repeat.length > 0) return { status: "received" };
+      if (toParentId !== null && !this.#folderToAddTo(toParentId)) {
+        return { status: "noDestination" };
+      }
+      const top = rows[0];
+      if (top && !this.#nameIsFree(toParentId, top.nameKey)) {
+        return { status: "nameTaken" };
+      }
+      for (const row of rows) {
+        this.#db.exec(
+          `INSERT INTO items (id, parent_id, kind, name, name_key, size, mime_type, r2_key, created_by, created_at, changed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          row.id,
+          row.parentId,
+          row.kind,
+          row.name,
+          row.nameKey,
+          row.size,
+          row.mimeType,
+          row.r2Key,
+          row.createdBy,
+          row.createdAt,
+          row.changedAt,
+        );
+      }
+      this.#db.exec("INSERT INTO moves_in (id) VALUES (?)", moveId);
+      const files = rows.filter((row) => row.kind === "file");
+      this.#touchChain(toParentId, now);
+      this.#noteChange(
+        driveId,
+        files.reduce((total, row) => total + (row.size ?? 0), 0),
+        files.length,
+        now,
+      );
+      return { status: "received" };
+    });
+  }
+
+  forgetMoveIn(moveId: string): void {
+    this.#db.exec("DELETE FROM moves_in WHERE id = ?", moveId);
+  }
+
+  // The other drive holds the rows now, and the same R2 objects, which stay where they
+  // are. Removing a row queues no R2 deletion.
+  finishMoveOut(moveId: string, driveId: DriveId, now: number): void {
+    this.#db.transaction(() => {
+      const [move] = this.#rows<{ top_id: string }>(
+        "SELECT top_id FROM moves_out WHERE id = ?",
+        moveId,
+      );
+      if (!move) return;
+      const top = this.#rows<{ parent_id: string | null }>(
+        "SELECT parent_id FROM items WHERE id = ?",
+        move.top_id,
+      )[0];
+      const rows = this.#rows<{
+        id: string;
+        kind: string;
+        size: number | null;
+      }>(
+        `${TREE} SELECT items.id, items.kind, items.size FROM items
+         JOIN tree ON items.id = tree.id ORDER BY tree.depth DESC`,
+        move.top_id,
+      );
+      let bytes = 0;
+      let files = 0;
+      for (const row of rows) {
+        this.#closeUploadsIn(row.id);
+        this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
+        if (row.kind === "file") {
+          bytes += row.size ?? 0;
+          files += 1;
+        }
+      }
+      this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
+      this.#touchChain((top?.parent_id ?? null) as ItemId | null, now);
+      this.#noteChange(driveId, -bytes, -files, now);
+    });
+  }
+
+  cancelMoveOut(moveId: string): void {
+    this.#db.transaction(() => {
+      this.#db.exec(
+        "UPDATE items SET move_id = NULL WHERE move_id = ?",
+        moveId,
+      );
+      this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
+    });
+  }
+
+  dueMoves(now: number, limit: number): string[] {
+    return this.#rows<{ id: string }>(
+      "SELECT id FROM moves_out WHERE try_at <= ? ORDER BY try_at LIMIT ?",
+      now,
+      limit,
+    ).map((row) => row.id);
+  }
+
+  postponeMove(moveId: string, tryAt: number): void {
+    this.#db.exec(
+      "UPDATE moves_out SET try_at = ? WHERE id = ?",
+      tryAt,
+      moveId,
+    );
+  }
+
+  nextMoveAt(): number | null {
+    return (
+      this.#rows<{ next: number | null }>(
+        "SELECT min(try_at) AS next FROM moves_out",
+      )[0]?.next ?? null
+    );
+  }
+
+  // Bytes stay counted until they're deleted forever. Files leave the file count now,
+  // because the count is what people see on a team folder.
+  trash(input: { driveId: DriveId; id: ItemId; now: number }): TrashResult {
+    const { driveId, id, now } = input;
+    return this.#db.transaction((): TrashResult => {
+      const item = this.item(id);
+      if (!item) return { status: "gone" };
+      if (this.#treeIsLocked(id)) return { status: "busy" };
+      const [files] = this.#rows<{ total: number }>(
+        `${TREE} SELECT count(*) AS total FROM items JOIN tree ON items.id = tree.id
+         WHERE items.kind = 'file'`,
+        id,
+      );
+      this.#db.exec(
+        `${TREE} UPDATE items SET trash_id = ? WHERE id IN (SELECT id FROM tree)`,
+        id,
+        id,
+      );
+      this.#db.exec(
+        `UPDATE items SET parent_id = NULL, trashed_from = ?, trashed_at = ?, purge_at = ?
+         WHERE id = ?`,
+        item.parentId,
+        now,
+        now + TRASH_MS,
+        id,
+      );
+      this.#touchChain(item.parentId, now);
+      this.#noteChange(driveId, 0, -(files?.total ?? 0), now);
+      return { status: "trashed" };
+    });
+  }
+
+  trashEntries(now: number, limit: number): TrashEntry[] {
+    return this.#rows<
+      SqlRow & {
+        id: string;
+        kind: "folder" | "file";
+        name: string;
+        mime_type: string | null;
+        bytes: number;
+        members: number;
+        trashed_at: number;
+        purge_at: number;
+        trashed_from: string | null;
+        from_name: string | null;
+      }
+    >(
+      `SELECT items.id, items.kind, items.name, items.mime_type, items.trashed_at,
+         items.purge_at, items.trashed_from,
+         (SELECT coalesce(sum(unit.size), 0) FROM items AS unit WHERE unit.trash_id = items.id) AS bytes,
+         (SELECT count(*) FROM items AS unit WHERE unit.trash_id = items.id) AS members,
+         (SELECT origin.name FROM items AS origin
+           WHERE origin.id = items.trashed_from AND origin.trash_id IS NULL) AS from_name
+       FROM items WHERE items.purge_at > ?
+       ORDER BY items.trashed_at DESC, items.id LIMIT ?`,
+      now,
+      limit,
+    ).map((row) => ({
+      id: row.id as ItemId,
+      kind: row.kind,
+      name: row.name,
+      mimeType: row.mime_type,
+      size: row.bytes,
+      contains: row.members - 1,
+      trashedAt: row.trashed_at,
+      purgeAt: row.purge_at,
+      fromFolder: row.trashed_from === null ? null : { name: row.from_name },
+    }));
+  }
+
+  // A taken name keeps both, because the person didn't choose a name here and refusing
+  // would leave the item stuck in Trash.
+  restore(input: { driveId: DriveId; id: ItemId; now: number }): RestoreResult {
+    const { driveId, id, now } = input;
+    return this.#db.transaction((): RestoreResult => {
+      const [top] = this.#rows<{ name: string; trashed_from: string | null }>(
+        "SELECT name, trashed_from FROM items WHERE id = ? AND purge_at > ?",
+        id,
+        now,
+      );
+      if (!top) return { status: "gone" };
+      const from = top.trashed_from as ItemId | null;
+      const folderGone = from !== null && !this.#folderToAddTo(from);
+      const parentId = folderGone ? null : from;
+
+      let name = top.name;
+      for (
+        let number = 2;
+        !this.#nameIsFree(parentId, nameKeyOf(name));
+        number += 1
+      ) {
+        name = numberedName(top.name, number);
+      }
+      const [files] = this.#rows<{ total: number }>(
+        "SELECT count(*) AS total FROM items WHERE trash_id = ? AND kind = 'file'",
+        id,
+      );
+      this.#db.exec(
+        `UPDATE items SET parent_id = ?, name = ?, name_key = ?, trash_id = NULL,
+           trashed_from = NULL, trashed_at = NULL, purge_at = NULL
+         WHERE id = ?`,
+        parentId,
+        name,
+        nameKeyOf(name),
+        id,
+      );
+      this.#db.exec("UPDATE items SET trash_id = NULL WHERE trash_id = ?", id);
+      this.#touchChain(parentId, now);
+      this.#noteChange(driveId, 0, files?.total ?? 0, now);
+      return {
+        status: "restored",
+        item: this.item(id) as DriveItem,
+        folderGone,
+      };
+    });
+  }
+
+  // Only ever matches something already in Trash, and repeating it changes nothing.
+  markForPurge(id: ItemId): void {
+    this.#db.exec(
+      "UPDATE items SET purge_at = 0 WHERE id = ? AND purge_at IS NOT NULL",
+      id,
+    );
+  }
+
+  markAllForPurge(now: number): void {
+    this.#db.exec("UPDATE items SET purge_at = 0 WHERE trashed_at <= ?", now);
+  }
+
+  nextPurgeAt(): number | null {
+    return (
+      this.#rows<{ next: number | null }>(
+        "SELECT min(purge_at) AS next FROM items WHERE purge_at IS NOT NULL",
+      )[0]?.next ?? null
+    );
+  }
+
+  // One transaction removes some rows and queues their objects, so a crash can't lose
+  // track of either, and the next run just carries on with what's left. Only rows with
+  // nothing inside go, so the row the person chose goes last and the unit stays due
+  // until the end.
+  purgeBatch(now: number, limit: number): boolean {
+    return this.#db.transaction(() => {
+      const [unit] = this.#rows<{ id: string }>(
+        `SELECT id FROM items WHERE purge_at IS NOT NULL AND purge_at <= ?
+         ORDER BY purge_at LIMIT 1`,
+        now,
+      );
+      const usage = this.usage();
+      if (!unit || !usage) return false;
+      const rows = this.#rows<{
+        id: string;
+        size: number | null;
+        r2_key: string | null;
+      }>(
+        `SELECT id, size, r2_key FROM items
+         WHERE trash_id = ?
+           AND NOT EXISTS (SELECT 1 FROM items AS child WHERE child.parent_id = items.id)
+         LIMIT ?`,
+        unit.id,
+        limit,
+      );
+      let bytes = 0;
+      for (const row of rows) {
+        if (row.r2_key !== null) {
+          this.#db.exec(
+            "INSERT OR IGNORE INTO r2_deletions (r2_key, not_before) VALUES (?, 0)",
+            row.r2_key,
+          );
+          bytes += row.size ?? 0;
+        }
+        this.#closeUploadsIn(row.id);
+        this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
+      }
+      this.#noteChange(usage.driveId, -bytes, 0, now);
+      return true;
+    });
+  }
+
+  // These uploads have nowhere to land. The sweep removes what they stored, and sending
+  // more tells the person it stopped.
+  #closeUploadsIn(folderId: string): void {
+    this.#db.exec(
+      "UPDATE uploads SET closing = 1, parent_id = NULL WHERE parent_id = ?",
+      folderId,
+    );
+  }
+
+  dueR2Deletions(now: number, limit: number): string[] {
+    return this.#rows<{ r2_key: string }>(
+      "SELECT r2_key FROM r2_deletions WHERE not_before <= ? LIMIT ?",
+      now,
+      limit,
+    ).map((row) => row.r2_key);
+  }
+
+  finishR2Deletions(keys: readonly string[]): void {
+    this.#db.transaction(() => {
+      for (const key of keys) {
+        this.#db.exec("DELETE FROM r2_deletions WHERE r2_key = ?", key);
+      }
+    });
+  }
+
+  postponeR2Deletions(keys: readonly string[], until: number): void {
+    this.#db.transaction(() => {
+      for (const key of keys) {
+        this.#db.exec(
+          "UPDATE r2_deletions SET not_before = ? WHERE r2_key = ?",
+          until,
+          key,
+        );
+      }
+    });
+  }
+
+  nextR2DeletionAt(): number | null {
+    return (
+      this.#rows<{ next: number | null }>(
+        "SELECT min(not_before) AS next FROM r2_deletions",
+      )[0]?.next ?? null
+    );
   }
 
   usage(): Usage | null {

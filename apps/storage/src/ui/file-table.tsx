@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { People } from "../functions";
 import type { DriveItem, FileItem, FolderItem, ItemId } from "../types";
+import { focusDetailsOnNextFile } from "./details-focus";
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { personOf } from "./people";
@@ -103,7 +104,11 @@ function FileRow({
       type="button"
       aria-pressed={selected}
       className={`${ROW} ${selected ? "bg-selected hover:bg-selected" : ""}`}
-      onClick={() => onSelect(file.id)}
+      onClick={(event) => {
+        // Enter and Space report no clicks.
+        if (event.detail === 0 && !selected) focusDetailsOnNextFile();
+        onSelect(file.id);
+      }}
     >
       <Cells
         icon={

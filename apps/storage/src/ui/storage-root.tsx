@@ -1,3 +1,4 @@
+import { ToastProvider } from "@cloudysuite/ui";
 import {
   MutationCache,
   QueryCache,
@@ -79,7 +80,7 @@ export function StorageRoot({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       <UploadsContext.Provider value={queue}>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </UploadsContext.Provider>
     </QueryClientProvider>
   );

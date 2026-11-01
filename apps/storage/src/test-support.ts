@@ -31,6 +31,7 @@ const { openDrive } = await import("./client");
 export const ALICE = "user-alice" as UserId;
 export const BOB = "user-bob" as UserId;
 export const DRIVE_A = "8b3f4e30-ac2d-4f90-9e77-2c3d4e5f6071" as DriveId;
+export const DRIVE_B = "9c4f5e41-bd3e-4fa1-8f88-3d4e5f607182" as DriveId;
 
 type Instance = {
   sqlite: Database;
@@ -74,6 +75,7 @@ export async function createStorageTest() {
         sql: { exec: instance.db.exec },
         transactionSync: instance.db.transaction,
         setAlarm: async (at: number) => {
+          if (at <= 0) throw new Error("setAlarm() needs a time above 0");
           instance.alarm = at;
         },
         deleteAlarm: async () => {
@@ -109,9 +111,15 @@ export async function createStorageTest() {
     [DRIVE_A],
   );
   directory.run(
-    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'manager')",
-    [DRIVE_A, ALICE],
+    "INSERT INTO drives (id, kind, name, colour) VALUES (?, 'team', 'Finance', 3)",
+    [DRIVE_B],
   );
+  for (const driveId of [DRIVE_A, DRIVE_B]) {
+    directory.run(
+      "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'manager')",
+      [driveId, ALICE],
+    );
+  }
 
   async function grantFor(userId: UserId, driveId: DriveId) {
     const access = await checkDriveAccess(database, userId, driveId);
@@ -130,6 +138,7 @@ export async function createStorageTest() {
     grantFor,
     open,
     drive: open(await grantFor(ALICE, DRIVE_A)),
+    driveB: open(await grantFor(ALICE, DRIVE_B)),
     instance: (driveId: DriveId = DRIVE_A) => instanceOf(driveId),
     // Moves the clock to the alarm's time, as the runtime would, and runs it.
     async fireAlarm(driveId: DriveId = DRIVE_A) {
@@ -142,12 +151,12 @@ export async function createStorageTest() {
         setSystemTime();
       }
     },
-    driveRow: () =>
+    driveRow: (driveId: DriveId = DRIVE_A) =>
       directory
         .query(
           "SELECT used_bytes, file_count, changed_at FROM drives WHERE id = ?",
         )
-        .get(DRIVE_A) as {
+        .get(driveId) as {
         used_bytes: number;
         file_count: number;
         changed_at: number;

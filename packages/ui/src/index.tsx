@@ -10,6 +10,7 @@ import {
 } from "react";
 
 export * from "./shell";
+export * from "./toast";
 
 const noSubscription = () => () => {};
 

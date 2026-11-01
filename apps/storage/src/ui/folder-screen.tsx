@@ -38,6 +38,7 @@ import {
   PageActions,
   PageTop,
   Problem,
+  SkipToDetails,
 } from "./page-parts";
 import { personOf } from "./people";
 import type { Destination } from "./upload-queue";
@@ -128,6 +129,7 @@ function Folder({
           people,
           first.folder?.createdBy ?? first.driveCreatedBy ?? "",
         ).name,
+        actionable: first.folder ? { driveId, folder: first.folder } : null,
       };
 
   const isDriveRoot = folderId === null;
@@ -161,6 +163,7 @@ function Folder({
         <PageTop title={title}>
           <PageActions destination={destination} onNewFolder={createFolder} />
         </PageTop>
+        {first.folder && <SkipToDetails />}
         {items.length === 0 ? (
           <EmptyFolder />
         ) : (
@@ -275,6 +278,7 @@ export function MyFilesScreen({ me }: { me: SignedIn }) {
           contains: 0,
           changedAt: null,
           createdBy: me.name,
+          actionable: null,
         }}
         access={{ kind: "personal", me }}
       />
