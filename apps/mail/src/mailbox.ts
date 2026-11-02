@@ -5,13 +5,14 @@ import {
   type AddAttachmentResult,
   OutgoingStore,
   type ScheduleResult,
+  type StoredSave,
 } from "./compose/store";
 import type {
+  DiscardResult,
   OutgoingDetail,
   OutgoingId,
   OutgoingSummary,
-  KeptSaveResult,
-  SaveResult,
+  RemoveAttachmentResult,
 } from "./compose/types";
 import { runDueImportWork } from "./import/job";
 import { ImportStore, type NewImportJob } from "./import/store";
@@ -326,16 +327,17 @@ export class Mailbox extends DurableObject<Env> {
 
   async saveOutgoing(
     input: Parameters<OutgoingStore["save"]>[0],
-  ): Promise<SaveResult> {
+  ): Promise<StoredSave> {
     const result = this.#outgoing.save(input);
     if (result.status === "removed") await this.#scheduleNextWakeUp();
     return result;
   }
 
-  saveKeptOutgoing(
-    input: Parameters<OutgoingStore["saveKept"]>[0],
-  ): KeptSaveResult {
-    return this.#outgoing.saveKept(input);
+  carryIntoOutgoingCopy(
+    id: OutgoingId,
+    carried: Parameters<OutgoingStore["carryIntoCopy"]>[1],
+  ): ReturnType<OutgoingStore["carryIntoCopy"]> {
+    return this.#outgoing.carryIntoCopy(id, carried);
   }
 
   async scheduleOutgoing(
@@ -356,10 +358,12 @@ export class Mailbox extends DurableObject<Env> {
     return this.#outgoing.reopen(id);
   }
 
-  async discardOutgoing(id: OutgoingId): Promise<boolean> {
-    const discarded = this.#outgoing.discard(id);
+  async discardOutgoing(
+    input: Parameters<OutgoingStore["discard"]>[0],
+  ): Promise<DiscardResult> {
+    const result = this.#outgoing.discard(input);
     await this.#scheduleNextWakeUp();
-    return discarded;
+    return result;
   }
 
   addOutgoingAttachment(
@@ -369,12 +373,11 @@ export class Mailbox extends DurableObject<Env> {
   }
 
   async removeOutgoingAttachment(
-    id: OutgoingId,
-    attachmentId: number,
-  ): Promise<boolean> {
-    const removed = this.#outgoing.removeAttachment(id, attachmentId);
+    input: Parameters<OutgoingStore["removeAttachment"]>[0],
+  ): Promise<RemoveAttachmentResult> {
+    const result = this.#outgoing.removeAttachment(input);
     await this.#scheduleNextWakeUp();
-    return removed;
+    return result;
   }
 
   // Every background job keeps its own due time in its own table, and this one

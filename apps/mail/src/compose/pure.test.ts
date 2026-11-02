@@ -14,11 +14,12 @@ import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
 import { isEditorLink } from "./editor-tags";
 import { holdsSomethingAdded } from "./added";
+import { copyIdOf, nextCopyId } from "./copy-id";
 import { discardWhenSettled, nothingToDiscard } from "./discard";
 import {
+  changedText,
   isLeftOut,
   keptAsText,
-  keptCopyId,
   keptHoldsSomething,
   keptNoteText,
   leftOutOf,
@@ -36,9 +37,9 @@ import {
   fitsSendLimit,
   type KeptDraft,
   type KeptNote,
-  type KeptSaveResult,
   NOTHING_PREFILLED,
   type OutgoingId,
+  type SaveResult,
   writtenBytes,
 } from "./types";
 import { isValidAddress, parseAddressList } from "./validate";
@@ -49,6 +50,8 @@ const keptDraft: KeptDraft = {
   id: "kept-id" as OutgoingId,
   mailboxId: MAILBOX_A as KeptDraft["mailboxId"],
   keptAt: 1,
+  session: "session-one",
+  written: true,
   revision: 3,
   mode: "new",
   parent: null,
@@ -74,10 +77,11 @@ const HOLDS_ALL = (draft: KeptDraft) => ({
   threaded: draft.parent !== null,
 });
 
-const savedHolding = (holds: DraftHolds): KeptSaveResult => ({
+const savedHolding = (holds: DraftHolds): SaveResult => ({
   status: "saved",
   revision: 4,
   holds,
+  carried: [],
 });
 
 const keptForward: KeptDraft = {
@@ -272,17 +276,26 @@ test("words kept on a device go to their own draft", async () => {
   expect(changed).toBeNull();
 });
 
+const copiedInto = (
+  id: string,
+  changed: { by: string | null } | null,
+  state: "draft" | "sent" = "draft",
+): SaveResult => ({
+  status: "copied",
+  id: id as OutgoingId,
+  state,
+  revision: 2,
+  holds: { attachmentIds: [], carriedFrom: [], quote: false, threaded: false },
+  files: [],
+  changed,
+});
+
 test("words kept for a message someone has since sent become a new draft", async () => {
   const { savedAs, leftOut, changed } = (await moveToDrafts(
     keptForward,
-    async (copyId) => ({
-      status: "copied",
-      copyId,
-      copyIsDraft: true,
-      changed: null,
-    }),
+    async () => copiedInto("copy-id", null),
   ))!;
-  expect(savedAs).toBe(await keptCopyId(keptForward.id, keptForward.keptAt));
+  expect(savedAs as string).toBe("copy-id");
   expect(changed).toBeNull();
   expect(leftOut).toEqual({
     files: ["alpha.pdf", "beta.pdf"],
@@ -291,17 +304,31 @@ test("words kept for a message someone has since sent become a new draft", async
   });
 });
 
-test("words beside a draft that moved on say who changed it", async () => {
-  const moved = (await moveToDrafts(keptForward, async (copyId) => ({
-    status: "copied",
-    copyId,
-    copyIsDraft: true,
-    changed: { by: "Sam" },
+test("what a new draft did carry over isn't reported as left out", async () => {
+  const moved = (await moveToDrafts(keptForward, async () => ({
+    ...(copiedInto("copy-id", { by: "Sam" }) as Extract<
+      SaveResult,
+      { status: "copied" }
+    >),
+    holds: {
+      attachmentIds: keptForward.attachments.map((f) => f.id),
+      carriedFrom: keptForward.attachments.flatMap((f) => f.carriedFrom ?? []),
+      quote: true,
+      threaded: true,
+    },
   })))!;
+  expect(isLeftOut(moved.leftOut)).toBe(false);
+  expect(moved.changed).toEqual({ by: "Sam" });
+});
+
+test("words beside a draft that moved on say who changed it", async () => {
+  const moved = (await moveToDrafts(keptForward, async () =>
+    copiedInto("copy-id", { by: "Sam" }),
+  ))!;
   expect(moved.changed).toEqual({ by: "Sam" });
   const text = keptNoteText({ ...moved, subject: "Plan" });
   expect(text).toStartWith(
-    'Sam changed "Plan" while you were offline, so your words are in a new draft beside it.',
+    'Sam changed "Plan" while you were writing, so your words are in a new draft beside it.',
   );
   expect(text).toContain("2 attached files (alpha.pdf, beta.pdf)");
 });
@@ -311,31 +338,55 @@ test("the same person elsewhere is told the same thing, without a name", () => {
   expect(
     keptNoteText({ subject: "", leftOut: nothing, changed: { by: null } }),
   ).toBe(
-    "A draft was changed on another device or tab while you were offline, so your words are in a new draft beside it.",
+    "A draft was changed on another device or tab while you were writing, so your words are in a new draft beside it.",
   );
   expect(
     keptNoteText({ subject: "", leftOut: nothing, changed: { by: "Sam" } }),
   ).toBe(
-    "Sam changed a draft while you were offline, so your words are in a new draft beside it.",
+    "Sam changed a draft while you were writing, so your words are in a new draft beside it.",
+  );
+  expect(changedText({ by: "Sam" })).toBe(
+    "Sam changed this draft while you were writing, so your words are in a new draft beside it.",
+  );
+  expect(changedText({ by: null })).toBe(
+    "This draft was changed on another device or tab while you were writing, so your words are in a new draft beside it.",
   );
 });
 
 test("a copy already sent means the words went with it", async () => {
-  const moved = (await moveToDrafts(keptForward, async (copyId) => ({
-    status: "copied",
-    copyId,
-    copyIsDraft: false,
-    changed: { by: "Sam" },
-  })))!;
+  const moved = (await moveToDrafts(keptForward, async () =>
+    copiedInto("copy-id", { by: "Sam" }, "sent"),
+  ))!;
   expect(isLeftOut(moved.leftOut)).toBe(false);
   expect(moved.changed).toBeNull();
 });
 
-test("trying again for the same kept words reaches the same new draft", async () => {
-  const first = await keptCopyId(keptForward.id, 7);
-  expect(await keptCopyId(keptForward.id, 7)).toBe(first);
-  expect(await keptCopyId(keptForward.id, 8)).not.toBe(first);
+test("kept words with nothing new beside a draft that moved on just go", async () => {
+  expect(
+    await moveToDrafts(keptDraft, async () => ({
+      status: "behind",
+      changed: { by: "Sam" },
+    })),
+  ).toBeNull();
+});
+
+test("a kept row from an earlier build still has one session to retry with", () => {
+  const { session: _session, written: _written, ...earlier } = keptDraft;
+  const parsed = parseKeptDraft({ ...earlier, id: keptForward.id, keptAt: 7 })!;
+  expect(parsed.session).toBe("kept-7");
+  expect(parsed.written).toBe(true);
+  expect(
+    parseKeptDraft({ ...keptDraft, id: keptForward.id, session: "a b" }),
+  ).toBeNull();
+});
+
+test("one editor reaches the same new draft each time, and another editor a different one", async () => {
+  const first = await copyIdOf(keptForward.id, "one");
+  expect(await copyIdOf(keptForward.id, "one")).toBe(first);
+  expect(await copyIdOf(keptForward.id, "two")).not.toBe(first);
   expect(parseOutgoingId(first)).toBe(first);
+  expect(nextCopyId(first)).not.toBe(first);
+  expect(parseOutgoingId(nextCopyId(first))).toBe(nextCopyId(first));
 });
 
 test("a draft removed elsewhere reports the files and quote it can no longer have", async () => {

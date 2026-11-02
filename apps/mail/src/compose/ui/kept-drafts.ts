@@ -7,7 +7,7 @@ import {
 } from "../../pwa/device-store";
 import { callAction } from "../../queries";
 import type { MailboxId } from "../../types";
-import { saveKeptDraft } from "../functions";
+import { saveDraft } from "../functions";
 import {
   isLeftOut,
   keptHoldsSomething,
@@ -71,14 +71,19 @@ export async function saveKeptDrafts(
   for (const draft of await readEveryKept(userId)) {
     if (draft.id === openId || !mayWrite(draft.mailboxId)) continue;
     try {
-      const result = await moveToDrafts(draft, (copyId) =>
+      const result = await moveToDrafts(draft, () =>
         callAction(() =>
-          saveKeptDraft({
+          saveDraft({
             data: {
               mailboxId: draft.mailboxId,
               id: draft.id,
-              copyId,
               baseRevision: draft.revision,
+              session: draft.session,
+              written: draft.written,
+              fileComing: false,
+              showing: draft.attachments,
+              // Nobody is here to choose, so words for a message already gone get their own.
+              whenLocked: "copy",
               content: draft.content,
               start: startOf(draft),
             },

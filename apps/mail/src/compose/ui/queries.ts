@@ -8,6 +8,7 @@ import {
   suggestAddresses,
 } from "../functions";
 import type {
+  DraftBase,
   DraftStart,
   OutgoingAttachment,
   OutgoingId,
@@ -59,6 +60,9 @@ const CANNOT_REACH =
 
 export class UploadRefused extends Error {}
 
+// Someone changed the draft since this screen last looked, so the file wasn't added.
+export class DraftMovedOn extends Error {}
+
 export type UploadedFile = {
   attachment: OutgoingAttachment;
   revision: number;
@@ -71,8 +75,13 @@ export async function uploadAttachment(
   id: OutgoingId,
   file: File,
   start: DraftStart | undefined,
+  { baseRevision, session }: DraftBase,
 ): Promise<UploadedFile> {
-  const params = new URLSearchParams({ name: file.name });
+  const params = new URLSearchParams({
+    name: file.name,
+    base: String(baseRevision),
+    session,
+  });
   if (start) params.set("start", JSON.stringify(start));
   let response: Response;
   try {
@@ -88,7 +97,8 @@ export async function uploadAttachment(
     throw new UploadRefused(CANNOT_REACH);
   }
   const body = (await response.json().catch(() => null)) as
-    (UploadedFile & { message?: string }) | null;
+    (UploadedFile & { message?: string; status?: string }) | null;
+  if (body?.status === "behind") throw new DraftMovedOn();
   if (!response.ok || !body) {
     throw new UploadRefused(body?.message ?? CANNOT_REACH);
   }

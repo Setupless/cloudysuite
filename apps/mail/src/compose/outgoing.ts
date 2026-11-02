@@ -15,11 +15,21 @@ import type {
   MessageId,
 } from "../types";
 import { holdsSomethingAdded } from "./added";
-import type { AddAttachmentResult, NewOutgoing, ScheduleResult } from "./store";
+import { copyIdOf } from "./copy-id";
+import type {
+  AddAttachmentResult,
+  CopyCarry,
+  NewFile,
+  NewOutgoing,
+  ScheduleResult,
+  StoredSave,
+} from "./store";
 import { buildQuote, cleanEditorHtml, htmlToPlainText } from "./body";
 import { composeSubject, defaultFromAddress, replyRecipients } from "./reply";
 import {
   type ComposeMode,
+  type DiscardResult,
+  type DraftBase,
   type DraftContent,
   type DraftForEditor,
   type DraftStart,
@@ -30,8 +40,9 @@ import {
   type OutgoingDetail,
   type OutgoingId,
   type OutgoingSummary,
-  type KeptSaveResult,
+  type RemoveAttachmentResult,
   SEND_FAILURES,
+  type SaveIntent,
   type SaveResult,
   TOO_LARGE_TEXT,
   TOO_MANY_ATTACHMENTS_TEXT,
@@ -80,45 +91,56 @@ export type MailboxOutgoing = {
   quoteHtml(id: OutgoingId): Promise<string | null>;
   suggest(query: string): Promise<Address[]>;
   prefill(source: ReplySource): Promise<PrefilledDraft>;
-  save(input: {
-    id: OutgoingId;
-    baseRevision: number;
-    content: DraftContent;
-    editor: Editor;
-    ownDomain: string;
-    from?: NewRowFrom;
-    leaving?: boolean;
-  }): Promise<SaveResult>;
-  saveKept(input: {
-    id: OutgoingId;
-    copyId: OutgoingId;
-    baseRevision: number;
-    content: DraftContent;
-    editor: Editor;
-    ownDomain: string;
-    from?: NewRowFrom;
-  }): Promise<KeptSaveResult>;
-  send(input: {
-    id: OutgoingId;
-    content: DraftContent;
-    editor: Editor;
-    ownDomain: string;
-    fromName: string;
-    from?: NewRowFrom;
-  }): Promise<ScheduleResult | { status: "refused"; refusal: SendRefusal }>;
+  save(
+    input: SaveIntent & {
+      id: OutgoingId;
+      content: DraftContent;
+      editor: Editor;
+      ownDomain: string;
+      from?: NewRowFrom;
+      leaving?: boolean;
+    },
+  ): Promise<SaveResult>;
+  send(
+    input: DraftBase & {
+      id: OutgoingId;
+      content: DraftContent;
+      editor: Editor;
+      ownDomain: string;
+      fromName: string;
+      from?: NewRowFrom;
+    },
+  ): Promise<ScheduleResult | { status: "refused"; refusal: SendRefusal }>;
   undo(id: OutgoingId): Promise<boolean>;
   reopen(id: OutgoingId): Promise<boolean>;
-  discard(id: OutgoingId): Promise<boolean>;
-  upload(input: {
-    id: OutgoingId;
-    fileName: string;
-    mimeType: string;
-    body: AttachmentBody;
-    fromAddress: string;
-    editor: Editor;
-    from?: NewRowFrom;
-  }): Promise<AddAttachmentResult>;
-  removeAttachment(id: OutgoingId, attachmentId: number): Promise<boolean>;
+  discard(
+    input: DraftBase & { id: OutgoingId; editor: Editor },
+  ): Promise<DiscardResult>;
+  upload(
+    input: DraftBase & {
+      id: OutgoingId;
+      fileName: string;
+      mimeType: string;
+      body: AttachmentBody;
+      fromAddress: string;
+      editor: Editor;
+      from?: NewRowFrom;
+    },
+  ): Promise<AddAttachmentResult>;
+  removeAttachment(
+    input: DraftBase & {
+      id: OutgoingId;
+      attachmentId: number;
+      editor: Editor;
+    },
+  ): Promise<RemoveAttachmentResult>;
+};
+
+const NOTHING_CARRIED = {
+  attachmentIds: [],
+  carriedFrom: [],
+  quote: false,
+  threaded: false,
 };
 
 const byteLength = (text: string) => new TextEncoder().encode(text).byteLength;
@@ -235,6 +257,43 @@ export function createMailboxOutgoing(
     };
   };
 
+  // The words are already safe in the new draft, so a file that can't be read just stays
+  // out of it, and what comes back tells the person so.
+  const carryOver = async (id: OutgoingId, carry: CopyCarry) => {
+    const quote = await copyQuote(carry);
+    const files: NewFile[] = [];
+    for (const file of carry.files) {
+      const r2Key = attachmentUploadKey(carry.toPrefix, crypto.randomUUID());
+      if (await copyObject(file.r2_key, r2Key)) {
+        files.push({ ...file, r2_key: r2Key });
+      }
+    }
+    const held = await stub.carryIntoOutgoingCopy(id, { quote, files });
+    return held ?? { holds: NOTHING_CARRIED, files: [] };
+  };
+
+  const copyObject = async (from: string, to: string): Promise<boolean> => {
+    try {
+      const object = await bucket.get(from);
+      if (!object) return false;
+      await bucket.put(to, await object.arrayBuffer());
+      return true;
+    } catch (error) {
+      console.error("A file couldn't be copied to a new draft.", error);
+      return false;
+    }
+  };
+
+  const copyQuote = async ({ quote, fromPrefix, toPrefix }: CopyCarry) => {
+    if (!quote) return null;
+    const copied = await Promise.all(
+      [quoteHtmlKey, quoteTextKey].map((key) =>
+        copyObject(key(fromPrefix), key(toPrefix)),
+      ),
+    );
+    return copied.every(Boolean) ? quote : null;
+  };
+
   return {
     list: async (viewerId) =>
       (await stub.listOutgoing(viewerId)) as OutgoingSummary[],
@@ -275,54 +334,36 @@ export function createMailboxOutgoing(
       };
     },
 
-    async save({
-      id,
-      baseRevision,
-      content,
-      editor,
-      ownDomain,
-      from,
-      leaving,
-    }) {
+    async save({ content, ownDomain, from, ...save }) {
+      const { id, editor } = save;
       const clean = await cleanContent(content, ownDomain);
       const create = await newRow(id, clean.content, from, editor);
       if (create === "nothing") return { status: "nothing" };
-      return (await stub.saveOutgoing({
-        id,
-        baseRevision,
+      const result = (await stub.saveOutgoing({
+        ...save,
         ...clean,
-        editor,
+        copyId: await copyIdOf(id, save.session),
+        mailboxId,
         r2Prefix: prefixOf(id),
         create,
-        leaving,
-      })) as SaveResult;
+      })) as StoredSave;
+      if (result.status !== "copied") return result;
+      const { carry, ...copied } = result;
+      return carry
+        ? { ...copied, ...(await carryOver(copied.id, carry)) }
+        : copied;
     },
 
-    async saveKept({
+    async send({
       id,
-      copyId,
       baseRevision,
+      session,
       content,
       editor,
       ownDomain,
+      fromName,
       from,
     }) {
-      const clean = await cleanContent(content, ownDomain);
-      const create = await newRow(id, clean.content, from, editor);
-      if (create === "nothing") return { status: "nothing" };
-      return (await stub.saveKeptOutgoing({
-        id,
-        copyId,
-        baseRevision,
-        ...clean,
-        editor,
-        r2Prefix: prefixOf(id),
-        copyR2Prefix: prefixOf(copyId),
-        create,
-      })) as KeptSaveResult;
-    },
-
-    async send({ id, content, editor, ownDomain, fromName, from }) {
       const cleaned = await cleanContent(content, ownDomain);
       const clean = {
         ...cleaned,
@@ -367,6 +408,8 @@ export function createMailboxOutgoing(
       }
       return (await stub.scheduleOutgoing({
         id,
+        baseRevision,
+        session,
         ...clean,
         editor,
         r2Prefix: prefixOf(id),
@@ -378,9 +421,19 @@ export function createMailboxOutgoing(
 
     undo: (id) => stub.undoOutgoing(id),
     reopen: (id) => stub.reopenOutgoing(id),
-    discard: (id) => stub.discardOutgoing(id),
+    discard: (input) => stub.discardOutgoing(input),
 
-    async upload({ id, fileName, mimeType, body, fromAddress, editor, from }) {
+    async upload({
+      id,
+      baseRevision,
+      session,
+      fileName,
+      mimeType,
+      body,
+      fromAddress,
+      editor,
+      from,
+    }) {
       if (body.declaredBytes === null) {
         return {
           status: "refused",
@@ -446,6 +499,8 @@ export function createMailboxOutgoing(
         : undefined;
       const result = (await stub.addOutgoingAttachment({
         id,
+        baseRevision,
+        session,
         filename: cleanFileName(fileName) ?? "Attachment",
         mimeType: cleanMimeType(mimeType),
         size: bytes.byteLength,
@@ -455,11 +510,10 @@ export function createMailboxOutgoing(
         fromAddress,
         create,
       })) as AddAttachmentResult;
-      if (result.status === "refused") await bucket.delete([r2Key]);
+      if (result.status !== "added") await bucket.delete([r2Key]);
       return result;
     },
 
-    removeAttachment: (id, attachmentId) =>
-      stub.removeOutgoingAttachment(id, attachmentId),
+    removeAttachment: (input) => stub.removeOutgoingAttachment(input),
   };
 }

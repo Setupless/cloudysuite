@@ -18,7 +18,7 @@ import {
 } from "react";
 import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
-import { copyHoldsSomething, holdsSomethingAdded } from "../added";
+import { holdsSomethingAdded } from "../added";
 import { useOffline } from "../../pwa/connectivity";
 import {
   forgetKeptDraft,
@@ -51,11 +51,21 @@ import {
   sendDraft,
 } from "../functions";
 import { discardWhenSettled, nothingToDiscard } from "../discard";
-import { isHeld, isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
+  behindText,
+  changedText,
+  discardBehindText,
+  isLeftOut,
+  leftOutOf,
+  leftOutText,
+  sentBesideText,
+} from "../kept";
+import {
+  type DraftChange,
   type DraftContent,
   type DraftForEditor,
   fitsSendLimit,
+  isHeld,
   MAX_ATTACHMENTS,
   NOTHING_PREFILLED,
   type OutgoingAttachment,
@@ -68,6 +78,8 @@ import { type ComposeSession, useCompose } from "./compose-context";
 import {
   composeContextQuery,
   composeKeys,
+  DraftMovedOn,
+  type UploadedFile,
   UploadRefused,
   uploadAttachment,
 } from "./queries";
@@ -85,7 +97,14 @@ const LOCKED_NOTICE =
   "This message has already gone, or someone else has sent it, so your changes can't join it. They're kept on this device.";
 const LOCKED_KEPT_TOAST =
   "This message has already gone, so your changes will go to Drafts as a new draft.";
+const OPENED_A_COPY =
+  "This is a new draft, saved beside one that changed while it was being written. Look in Drafts for the other version.";
+const FILE_WENT_WRONG = "We couldn't attach that file. Try again.";
 const SAVED_TO_DRAFTS = "Saved to Drafts.";
+// However often the draft moves on under a Send, the person's words only need one new draft.
+const SEND_TRIES = 3;
+const SEND_KEPT_MOVING =
+  "Someone keeps changing this draft, so it wasn't sent. Your words are still here. Try again.";
 const CHANGED_ELSEWHERE =
   "This draft changed somewhere else while you were clearing it, so it's still in Drafts.";
 const DISCARD_UNFINISHED =
@@ -101,6 +120,17 @@ type Loaded = {
 };
 
 const EMPTY: Loaded = { draft: null, quoteHtml: null, notice: null };
+
+// What decides whether a save holds anything new. The address it goes out from and leaving
+// out the quote choose among what's there, so they aren't new words.
+const wordsOf = ({ to, cc, bcc, subject, html }: DraftContent) =>
+  JSON.stringify([to, cc, bcc, subject, html]);
+
+type SaveAim = {
+  // Sending or changing files needs this person's own draft even with no new words.
+  force?: boolean;
+  whenLocked?: "copy";
+};
 
 const NOTHING_HELD = {
   attachmentIds: [],
@@ -232,9 +262,9 @@ function EditorForm({
   const {
     mailboxId,
     userId,
-    openDraft,
     close: closeSession,
     reopen,
+    moveSession,
   } = useCompose();
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -270,8 +300,17 @@ function EditorForm({
   // The last save runs as the form unmounts, when the editor element has already gone.
   const lastHtml = useRef(content?.html ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
+  // The draft on screen. Words can move to a new draft beside it while this form stays.
+  const draftId = useRef(session.id);
+  const [editorSession] = useState(() => crypto.randomUUID() as string);
   // Zero means there is no row yet: a reply is still only what it opened with.
   const revision = useRef(loaded.draft?.revision ?? 0);
+  // What this screen and the server last agreed on, which a save compares itself to. Null
+  // means it can't tell, so the words count as new.
+  const agreed = useRef<string | null>(null);
+  const movedFound = useRef(0);
+  const lastChange = useRef<DraftChange | null>(null);
+  const failedSaveCount = useRef(0);
   // Words from this device have never reached the server, so they still need saving.
   const dirty = useRef(session.kind === "kept");
   // Whether the latest words are on this device, and which copy there is this editor's
@@ -350,16 +389,33 @@ function EditorForm({
           attachments: attachmentsNow.current,
         })
       : undefined;
+  const refreshList = () =>
+    void queryClient.invalidateQueries({
+      queryKey: composeKeys.outgoing(mailboxId),
+    });
   const refreshKept = () =>
     void queryClient.invalidateQueries({
       queryKey: keptDraftsQuery(userId).queryKey,
     });
   const composeMode = () =>
     session.kind === "start" ? session.mode : (loaded.draft?.mode ?? "new");
+  const baseNow = () => ({
+    baseRevision: revision.current,
+    session: editorSession,
+  });
+  const writtenNow = (content: DraftContent) =>
+    agreed.current !== wordsOf(content);
+  const shownNow = () =>
+    attachmentsNow.current.map(({ id, carriedFrom }) => ({ id, carriedFrom }));
+  const adoptRevision = (next: number | null) => {
+    if (next !== null) revision.current = Math.max(revision.current, next);
+  };
   const keptCopy = (content: DraftContent, keptAt: number) => ({
-    id: session.id,
+    id: draftId.current,
     mailboxId,
     keptAt,
+    session: editorSession,
+    written: writtenNow(content),
     content,
     revision: revision.current,
     mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
@@ -390,18 +446,20 @@ function EditorForm({
   const forgetHere = async () => {
     keptHere.current = false;
     if (keptVersion.current === 0) return;
-    await forgetKeptDraft(userId, session.id, keptVersion.current).catch(
+    await forgetKeptDraft(userId, draftId.current, keptVersion.current).catch(
       () => {},
     );
     keptVersion.current = 0;
     refreshKept();
   };
-  // The server's draft no longer has everything this screen shows. If the screen has
-  // gone, the note waits on this device so the person still finds out.
+  // The server's draft no longer has everything this screen shows, or the words moved to
+  // a draft of their own. If the screen has gone, the note waits on this device so the
+  // person still finds out.
   const noteLeftOut = async (
     had: OutgoingAttachment[],
     content: DraftContent,
     holds: Extract<SaveResult, { status: "saved" }>["holds"],
+    changed: DraftChange | null = null,
   ) => {
     const leftOut = leftOutOf(
       {
@@ -417,9 +475,13 @@ function EditorForm({
     if (!holds.quote) quoteHeld.current = null;
     if (!holds.threaded) parentHeld.current = null;
     if (mounted.current && lostConversation) setNotThreaded(true);
-    if (!isLeftOut(leftOut)) return;
-    leftOutFound.current += 1;
+    const anyLeftOut = isLeftOut(leftOut);
+    if (anyLeftOut) leftOutFound.current += 1;
+    if (!anyLeftOut && !changed) return;
     if (mounted.current) {
+      const lead = changed ? changedText(changed) : undefined;
+      if (lead && !anyLeftOut) setNotice(lead);
+      if (!anyLeftOut) return;
       const gone = had.filter((file) => !isHeld(file, holds));
       setAttachments((current) =>
         current.filter(
@@ -431,15 +493,15 @@ function EditorForm({
         ),
       );
       if (leftOut.quote) setIncludeQuote(false);
-      setLeftOutNotice(leftOutText(leftOut));
+      setLeftOutNotice(leftOutText(leftOut, lead));
       return;
     }
     await keepNote(userId, {
-      id: session.id,
+      id: draftId.current,
       mailboxId,
       subject: content.subject,
       leftOut,
-      changed: null,
+      changed,
     }).catch(() => {});
     refreshKept();
   };
@@ -455,15 +517,24 @@ function EditorForm({
     for (const file of carried.filter((one) => !keep(one))) {
       void callAction(() =>
         removeOutgoingAttachment({
-          data: { mailboxId, id: session.id, attachmentId: file.id },
+          data: {
+            mailboxId,
+            id: draftId.current,
+            attachmentId: file.id,
+            ...baseNow(),
+          },
         }),
-      ).catch(() => setAttachments((current) => [...current, file]));
+      )
+        .then((result) => {
+          if (result.status === "removed") adoptRevision(result.revision);
+        })
+        .catch(() => setAttachments((current) => [...current, file]));
     }
   };
 
   // `leaving` asks for a draft that now holds nothing to go, not just to wait.
   const flush = useCallback(
-    (leaving = false): Promise<void> => {
+    (leaving = false, aim: SaveAim = {}): Promise<void> => {
       clearTimeout(timer.current);
       const changed = dirty.current;
       dirty.current = false;
@@ -479,7 +550,7 @@ function EditorForm({
           }
           if (adds ? !changed : !(leaving && onServer)) return;
           // No later save can land. Words wait here for the person to choose.
-          if (lockedNow.current) {
+          if (lockedNow.current && aim.whenLocked !== "copy") {
             if (adds) {
               dirty.current = true;
               await keepHere(content);
@@ -493,8 +564,12 @@ function EditorForm({
               saveDraft({
                 data: {
                   mailboxId,
-                  id: session.id,
-                  baseRevision: revision.current,
+                  id: draftId.current,
+                  ...baseNow(),
+                  written: aim.force === true || writtenNow(content),
+                  fileComing: uploadingNow.current > 0,
+                  showing: shownNow(),
+                  whenLocked: aim.whenLocked ?? "report",
                   content,
                   start: startNow(content),
                   leaving: !adds,
@@ -520,16 +595,42 @@ function EditorForm({
                 return;
               case "nothing":
                 return;
+              case "behind":
+                if (result.changed && mounted.current) {
+                  setNotice(behindText(result.changed));
+                }
+                return;
+              case "copied": {
+                await forgetHere();
+                draftId.current = result.id;
+                revision.current = result.revision;
+                agreed.current = wordsOf(content);
+                movedFound.current += 1;
+                lastChange.current = result.changed;
+                lockedNow.current = false;
+                setLocked(false);
+                setProblem(null);
+                setSaved(true);
+                moveSession(session.editor, result.id);
+                setAttachments(result.files);
+                await noteLeftOut(had, content, result.holds, result.changed);
+                refreshList();
+                // Earlier work from this screen already went out from that draft.
+                if (result.state !== "draft") {
+                  lockedNow.current = true;
+                  dirty.current = true;
+                  setLocked(true);
+                  setSaved(false);
+                  await keepHere(content);
+                }
+                return;
+              }
             }
             await forgetHere();
-            revision.current = result.revision;
+            adoptRevision(result.revision);
+            agreed.current = wordsOf(content);
             setSaved(true);
             if (!onServer) adoptCarried(result.carried);
-            if (result.overwrote) {
-              setNotice(
-                `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
-              );
-            }
             await noteLeftOut(had, content, result.holds);
           } catch (error) {
             const message = (error as Error).message;
@@ -546,6 +647,7 @@ function EditorForm({
             }
             dirty.current = true;
             saveFailed.current = true;
+            failedSaveCount.current += 1;
             lastSaveError.current = message;
             await keepHere(content);
             if (noAccessNow) {
@@ -561,7 +663,7 @@ function EditorForm({
         });
       return saving.current;
     },
-    [mailboxId, session.id],
+    [mailboxId],
   );
 
   // What might not outlive this page goes on the device before this returns.
@@ -593,8 +695,12 @@ function EditorForm({
     void saveDraft({
       data: {
         mailboxId,
-        id: session.id,
-        baseRevision: revision.current,
+        id: draftId.current,
+        ...baseNow(),
+        written: writtenNow(content),
+        fileComing: false,
+        showing: shownNow(),
+        whenLocked: "report",
         content,
         start: startNow(content),
         leaving: !adds,
@@ -636,11 +742,6 @@ function EditorForm({
     touched();
   }, [from, to, cc, bcc, subject, includeQuote, touched]);
 
-  const refreshList = () =>
-    void queryClient.invalidateQueries({
-      queryKey: composeKeys.outgoing(mailboxId),
-    });
-
   const keptToast = () => {
     if (noAccess.current) {
       return {
@@ -653,12 +754,16 @@ function EditorForm({
         : lockedNow.current
           ? LOCKED_KEPT_TOAST
           : DRAFT_KEPT_AFTER_FAILURE,
-      action: { label: "Open", run: () => void reopen(session.id) },
+      action: { label: "Open", run: () => void reopen(draftId.current) },
     };
   };
 
   useEffect(() => {
     mounted.current = true;
+    // Words kept from an earlier screen say for themselves whether they hold anything new.
+    if (session.kind !== "kept" || !session.kept.written) {
+      agreed.current = wordsOf(read.current());
+    }
     // The first keystroke may be the last thing to happen before the page closes.
     void getReadyToKeepNow(userId).catch(() => {});
     return () => {
@@ -705,7 +810,7 @@ function EditorForm({
         if (left) {
           toast({
             message: left,
-            action: { label: "Open", run: () => void reopen(session.id) },
+            action: { label: "Open", run: () => void reopen(draftId.current) },
           });
         }
       });
@@ -715,10 +820,12 @@ function EditorForm({
   const closeEditor = async () => {
     const lockedBefore = lockedNow.current;
     const leftOutBefore = leftOutFound.current;
+    const movedBefore = movedFound.current;
     await flush(true);
     // Something the person needs to read has only just appeared.
     if (lockedNow.current && !lockedBefore && dirty.current) return;
     if (leftOutFound.current !== leftOutBefore) return;
+    if (movedFound.current !== movedBefore) return;
     if (dirty.current && keptHere.current) {
       close();
       toast(keptToast());
@@ -748,20 +855,27 @@ function EditorForm({
     // words on the toast wait for it.
     const outlasting = uploads.current.size > 0;
     if (outlasting) close();
+    let change: DraftChange | null = null;
     try {
       await discardWhenSettled({
         uploads: uploads.current,
         saving: saving.current,
         hasRow: () => revision.current > 0,
-        discard: () =>
-          callAction(() =>
-            discardOutgoing({ data: { mailboxId, id: session.id } }),
-          ),
+        discard: async () => {
+          const result = await callAction(() =>
+            discardOutgoing({
+              data: { mailboxId, id: draftId.current, ...baseNow() },
+            }),
+          );
+          if (result.status === "behind") change = result.changed;
+        },
       });
       await forgetHere();
       if (!outlasting) close();
       refreshList();
-      toast({ message: "Draft discarded." });
+      toast({
+        message: change ? discardBehindText(change) : "Draft discarded.",
+      });
     } catch (error) {
       discarding.current = false;
       if (outlasting) {
@@ -775,46 +889,24 @@ function EditorForm({
   };
 
   const saveAsNewDraft = async () => {
-    await flush();
-    const content = read.current();
-    if (!copyHoldsSomething(content, prefill)) {
-      await forgetHere();
-      dirty.current = false;
-      close();
-      toast({ message: "There was nothing new to save." });
+    const movedBefore = movedFound.current;
+    const failedBefore = failedSaveCount.current;
+    dirty.current = true;
+    await flush(false, { force: true, whenLocked: "copy" });
+    if (movedFound.current !== movedBefore) {
+      toast({ message: "Saved as a new draft." });
       return;
     }
-    try {
-      const id = await keptCopyId(session.id, keptVersion.current);
-      await callAction(() =>
-        saveDraft({
-          data: { mailboxId, id, baseRevision: 0, content },
-        }),
-      );
-      const leftOut = leftOutOf(
-        {
-          attachments: attachmentsNow.current,
-          quote: quoteHeld.current,
-          parent: parentHeld.current,
-          mode: composeMode(),
-          includeQuote: content.includeQuote,
-        },
-        NOTHING_HELD,
-      );
-      await forgetHere();
-      dirty.current = false;
-      leftUnasked.current = false;
-      refreshList();
-      openDraft(
-        id,
-        isLeftOut(leftOut) ? { warning: leftOutText(leftOut) } : {},
-      );
-      toast({ message: "Saved as a new draft." });
-    } catch (error) {
+    if (failedSaveCount.current !== failedBefore) {
       setSaveProblem(
-        `We couldn't save a new draft, so your words are still here and on this device. ${(error as Error).message}`,
+        `We couldn't save a new draft, so your words are still here and on this device. ${lastSaveError.current}`,
       );
+      return;
     }
+    await forgetHere();
+    dirty.current = false;
+    close();
+    toast({ message: "There was nothing new to save." });
   };
 
   const send = async () => {
@@ -829,47 +921,61 @@ function EditorForm({
     }
     setProblem(null);
     setSending(true);
-    // What was on screen may have gone from the server's draft, and sending without it
-    // would be silent. A message with only words has nothing to lose this way.
-    const couldLoseSomething =
-      attachments.length > 0 || parentHeld.current || quoteHeld.current;
-    if (couldLoseSomething) {
+    // Anything typed while a save runs isn't a reason to stop: Send reads the fields again.
+    const stoppedBySaving = async (aim: SaveAim) => {
       const leftOutBefore = leftOutFound.current;
       saveFailed.current = false;
       dirty.current = true;
-      await flush();
-      // Anything typed while that save ran isn't a reason to stop: Send reads the fields again.
+      await flush(false, aim);
       if (saveFailed.current) {
         setSending(false);
         setProblem(
           `We couldn't send this, because the latest version wouldn't save. ${lastSaveError.current}`,
         );
-        return;
+        return true;
       }
       if (lockedNow.current || leftOutFound.current !== leftOutBefore) {
         setSending(false);
-        return;
+        return true;
       }
-    }
-    clearTimeout(timer.current);
-    dirty.current = false;
-    sendingNow.current = true;
-    await saving.current;
+      return false;
+    };
+    // What was on screen may have gone from the server's draft, and sending without it
+    // would be silent. A message with only words has nothing to lose this way.
+    const couldLoseSomething =
+      attachments.length > 0 || parentHeld.current || quoteHeld.current;
+    if (couldLoseSomething && (await stoppedBySaving({}))) return;
+    const movedBefore = movedFound.current;
     try {
-      await call(() =>
-        sendDraft({
-          data: {
-            mailboxId,
-            id: session.id,
-            baseRevision: revision.current,
-            content: read.current(),
-            start: startNow(read.current()),
-          },
-        }),
-      );
+      for (let tries = 0; ; tries += 1) {
+        clearTimeout(timer.current);
+        dirty.current = false;
+        sendingNow.current = true;
+        await saving.current;
+        const content = read.current();
+        const { status } = await call(() =>
+          sendDraft({
+            data: {
+              mailboxId,
+              id: draftId.current,
+              ...baseNow(),
+              content,
+              start: startNow(content),
+            },
+          }),
+        );
+        if (status === "scheduled") break;
+        // The draft moved on, so the words on this screen go from this person's own draft.
+        sendingNow.current = false;
+        if (tries + 1 === SEND_TRIES) throw new Error(SEND_KEPT_MOVING);
+        if (await stoppedBySaving({ force: true })) return;
+      }
       await forgetHere();
       close();
       refreshList();
+      if (movedFound.current !== movedBefore && lastChange.current) {
+        toast({ message: sentBesideText(lastChange.current) });
+      }
     } catch (error) {
       sendingNow.current = false;
       dirty.current = true;
@@ -877,6 +983,31 @@ function EditorForm({
       setProblem((error as Error).message);
       void flush();
     }
+  };
+
+  // A file can't join a draft that has moved on, so it follows this person's words to their
+  // own. It goes again if the words moved while it was on its way.
+  const uploadBeside = async (file: File): Promise<UploadedFile> => {
+    for (let tries = 0; tries < SEND_TRIES; tries += 1) {
+      const target = draftId.current;
+      try {
+        const uploaded = await uploadAttachment(
+          mailboxId,
+          target,
+          file,
+          startNow(read.current()),
+          baseNow(),
+        );
+        if (target === draftId.current) return uploaded;
+      } catch (error) {
+        if (!(error instanceof DraftMovedOn)) throw error;
+        if (target === draftId.current) {
+          dirty.current = true;
+          await flush(false, { force: true });
+        }
+      }
+    }
+    throw new UploadRefused(FILE_WENT_WRONG);
   };
 
   const addFiles = async (files: File[]) => {
@@ -916,15 +1047,10 @@ function EditorForm({
       ) {
         const { name } = file;
         try {
-          const uploaded = await uploadAttachment(
-            mailboxId,
-            session.id,
-            file,
-            startNow(read.current()),
-          );
+          const uploaded = await uploadBeside(file);
           if (revision.current === 0) {
-            revision.current = uploaded.revision;
             adoptCarried(uploaded.carried);
+            adoptRevision(uploaded.revision);
             if (uploaded.originalGone && !discarding.current) {
               await noteLeftOut(
                 attachmentsNow.current,
@@ -933,12 +1059,11 @@ function EditorForm({
               );
             }
           }
+          adoptRevision(uploaded.revision);
           setAttachments((current) => [...current, uploaded.attachment]);
         } catch (error) {
           setProblem(
-            error instanceof UploadRefused
-              ? error.message
-              : "We couldn't attach that file. Try again.",
+            error instanceof UploadRefused ? error.message : FILE_WENT_WRONG,
           );
         } finally {
           uploadingNow.current -= 1;
@@ -964,11 +1089,28 @@ function EditorForm({
       return;
     }
     try {
-      await callAction(() =>
+      const result = await callAction(() =>
         removeOutgoingAttachment({
-          data: { mailboxId, id: session.id, attachmentId: attachment.id },
+          data: {
+            mailboxId,
+            id: draftId.current,
+            attachmentId: attachment.id,
+            ...baseNow(),
+          },
         }),
       );
+      if (result.status === "removed") {
+        adoptRevision(result.revision);
+        return;
+      }
+      // Taking a file off someone's newer draft isn't this person's to do. Their own new
+      // draft simply won't have it.
+      const movedBefore = movedFound.current;
+      dirty.current = true;
+      await flush(false, { force: true });
+      if (movedFound.current === movedBefore) {
+        setAttachments((current) => [...current, attachment]);
+      }
     } catch (error) {
       setAttachments((current) => [...current, attachment]);
       setProblem((error as Error).message);
@@ -1089,14 +1231,14 @@ function EditorForm({
 
         <div className="flex items-center gap-2 border-b border-line py-1.5">
           <label
-            htmlFor={`${session.id}-from`}
+            htmlFor={`${session.editor}-from`}
             className="w-10 flex-none text-sm text-secondary"
           >
             From
           </label>
           {addresses.length > 1 ? (
             <select
-              id={`${session.id}-from`}
+              id={`${session.editor}-from`}
               value={effectiveFrom}
               onChange={(event) => setFrom(event.target.value)}
               className="min-w-0 flex-1 cursor-pointer rounded bg-transparent py-1 text-sm text-text outline-accent focus-visible:outline-2"
@@ -1109,7 +1251,7 @@ function EditorForm({
             </select>
           ) : (
             <output
-              id={`${session.id}-from`}
+              id={`${session.editor}-from`}
               className="min-w-0 flex-1 truncate py-1 text-sm"
             >
               {effectiveFrom}
@@ -1150,13 +1292,13 @@ function EditorForm({
         )}
         <div className="flex items-center gap-2 border-b border-line py-1.5">
           <label
-            htmlFor={`${session.id}-subject`}
+            htmlFor={`${session.editor}-subject`}
             className="w-14 flex-none text-sm text-secondary"
           >
             Subject
           </label>
           <input
-            id={`${session.id}-subject`}
+            id={`${session.editor}-subject`}
             type="text"
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
@@ -1311,7 +1453,11 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
             }),
           )
         : call(() => getDraft({ data: { mailboxId, id: session.id } })).then(
-            (result) => ({ ...result, notice: null }),
+            (result) => ({
+              ...result,
+              notice:
+                result.draft.isCopy && !session.warning ? OPENED_A_COPY : null,
+            }),
           );
     load
       .then((result) => {
@@ -1323,8 +1469,9 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     return () => {
       ignore = true;
     };
-    // The session's id says everything that matters about it.
-  }, [mailboxId, session.id, attempt]);
+    // The session's editor says everything that matters about it. Its id can change only
+    // while the form is showing, which has already loaded.
+  }, [mailboxId, session.editor, attempt]);
 
   // Words kept on this device must open with no connection, so they bring their own From.
   const addresses =
@@ -1355,7 +1502,7 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
   }
   return (
     <EditorForm
-      key={session.id}
+      key={session.editor}
       session={session}
       loaded={loaded}
       addresses={addresses}

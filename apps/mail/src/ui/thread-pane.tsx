@@ -97,7 +97,7 @@ function ReplyArea({
   ) {
     return (
       <div className="py-3">
-        <ComposeEditor key={session.id} session={session} />
+        <ComposeEditor key={session.editor} session={session} />
       </div>
     );
   }

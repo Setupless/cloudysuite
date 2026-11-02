@@ -7,19 +7,14 @@ import { openMailboxAs } from "../access";
 import type { MailboxId } from "../types";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
 import { readReplySource } from "./reply-source";
-import type {
-  DraftStart,
-  Editor,
-  KeptSaveResult,
-  OutgoingId,
-  SaveResult,
-} from "./types";
+import type { DraftStart, Editor, SaveResult } from "./types";
 import {
+  parseDiscardInput,
   parseOutgoingInput,
   parsePrefillInput,
   parseRemoveAttachmentInput,
   parseSaveInput,
-  parseSaveKeptInput,
+  parseSendInput,
   parseSuggestInput,
 } from "./wire";
 import { parseMailboxInput } from "../wire";
@@ -130,6 +125,11 @@ export const saveDraft = createServerFn({ method: "POST" })
     return mailbox.outgoing.save({
       id: data.id,
       baseRevision: data.baseRevision,
+      session: data.session,
+      written: data.written,
+      fileComing: data.fileComing,
+      showing: data.showing,
+      whenLocked: data.whenLocked,
       content: data.content,
       editor,
       ownDomain: await ownDomain(),
@@ -138,25 +138,10 @@ export const saveDraft = createServerFn({ method: "POST" })
     });
   });
 
-export const saveKeptDraft = createServerFn({ method: "POST" })
-  .validator(parseSaveKeptInput)
-  .handler(async ({ data }): Promise<KeptSaveResult> => {
-    const { mailbox, editor } = await open(data.mailboxId);
-    return mailbox.outgoing.saveKept({
-      id: data.id,
-      copyId: data.copyId,
-      baseRevision: data.baseRevision,
-      content: data.content,
-      editor,
-      ownDomain: await ownDomain(),
-      from: await newRowFrom(mailbox, data.mailboxId, data.start),
-    });
-  });
-
 // The client's From is only a request. The address must belong to this mailbox, checked
 // here against the directory, in the same call that holds the mailbox's grant.
 export const sendDraft = createServerFn({ method: "POST" })
-  .validator(parseSaveInput)
+  .validator(parseSendInput)
   .handler(async ({ data }) => {
     const { mailbox, editor } = await open(data.mailboxId);
     const sender = await refuseSenderOutsideMailbox(
@@ -169,6 +154,8 @@ export const sendDraft = createServerFn({ method: "POST" })
     if (start && !source) throw refuse(404, ORIGINAL_GONE);
     const result = await mailbox.outgoing.send({
       id: data.id,
+      baseRevision: data.baseRevision,
+      session: data.session,
       content: data.content,
       editor,
       ownDomain: await ownDomain(),
@@ -184,7 +171,7 @@ export const sendDraft = createServerFn({ method: "POST" })
         "This message has already gone, or someone else has sent it.",
       );
     }
-    return { status: "scheduled" as const };
+    return { status: result.status };
   });
 
 export const undoSend = createServerFn({ method: "POST" })
@@ -202,25 +189,33 @@ export const reopenOutgoing = createServerFn({ method: "POST" })
   });
 
 export const discardOutgoing = createServerFn({ method: "POST" })
-  .validator(parseOutgoingInput)
+  .validator(parseDiscardInput)
   .handler(async ({ data }) => {
-    const { mailbox } = await open(data.mailboxId);
-    return { discarded: await mailbox.outgoing.discard(data.id) };
+    const { mailbox, editor } = await open(data.mailboxId);
+    return mailbox.outgoing.discard({
+      id: data.id,
+      baseRevision: data.baseRevision,
+      session: data.session,
+      editor,
+    });
   });
 
 export const removeOutgoingAttachment = createServerFn({ method: "POST" })
   .validator(parseRemoveAttachmentInput)
   .handler(async ({ data }) => {
-    const { mailbox } = await open(data.mailboxId);
-    const removed = await mailbox.outgoing.removeAttachment(
-      data.id as OutgoingId,
-      data.attachmentId,
-    );
-    if (!removed) {
+    const { mailbox, editor } = await open(data.mailboxId);
+    const result = await mailbox.outgoing.removeAttachment({
+      id: data.id,
+      attachmentId: data.attachmentId,
+      baseRevision: data.baseRevision,
+      session: data.session,
+      editor,
+    });
+    if (result.status === "locked") {
       throw refuse(
         409,
         "This message is already on its way, so its files can't change.",
       );
     }
-    return { removed };
+    return result;
   });

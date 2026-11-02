@@ -332,4 +332,12 @@ export const MIGRATIONS: Migrations = [
     `UPDATE outgoing SET prefill_to = to_addresses, prefill_cc = cc_addresses, prefill_subject = subject WHERE mode <> 'new' AND revision = 1`,
     `UPDATE outgoing_attachments SET carried_from = 0 WHERE r2_key LIKE '%/forwarded/%'`,
   ],
+  // A save based on an older version of a draft becomes a new draft beside it. `last_session`
+  // tells an editor's own earlier write from someone else's, `copied_from` marks the new
+  // draft, and `copied_from_file` lets a screen match a copied file to the one it showed.
+  [
+    `ALTER TABLE outgoing ADD COLUMN last_session TEXT`,
+    `ALTER TABLE outgoing ADD COLUMN copied_from TEXT`,
+    `ALTER TABLE outgoing_attachments ADD COLUMN copied_from_file INTEGER`,
+  ],
 ];

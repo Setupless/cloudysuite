@@ -1,9 +1,5 @@
 import type { Address } from "../types";
-import {
-  type DraftContent,
-  type DraftPrefill,
-  NOTHING_PREFILLED,
-} from "./types";
+import type { DraftContent, DraftPrefill } from "./types";
 import { cleanSubject } from "./validate";
 
 const MARKUP = /<!--[\s\S]*?-->|<[^>]*>/g;
@@ -42,12 +38,3 @@ export function holdsSomethingAdded(
     !samePeople(cc, prefill.cc)
   );
 }
-
-// A copy made beside a draft is a new message with no files, and with no prefill of its
-// own. It has to hold something both as that and as the reply it was written in.
-export const copyHoldsSomething = (
-  content: Pick<DraftContent, "to" | "cc" | "bcc" | "subject" | "html">,
-  prefill: DraftPrefill,
-): boolean =>
-  holdsSomethingAdded({ content, uploads: 0 }, prefill) &&
-  holdsSomethingAdded({ content, uploads: 0 }, NOTHING_PREFILLED);
