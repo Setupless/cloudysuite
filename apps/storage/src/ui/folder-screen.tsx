@@ -10,7 +10,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import {
   createFolder as createFolderOnServer,
@@ -25,11 +25,7 @@ import {
   storageKeys,
 } from "../queries";
 import { type ItemId, parseItemId } from "../types";
-import {
-  DetailsPanel,
-  type PanelAccess,
-  type PanelSubject,
-} from "./details-panel";
+import { DetailsPanel, type PanelSubject } from "./details-panel";
 import { FileTable } from "./file-table";
 import {
   Breadcrumb,
@@ -43,12 +39,12 @@ import {
 import { personOf } from "./people";
 import type { Destination } from "./upload-queue";
 
-function EmptyFolder() {
+function EmptyFolder({ canEdit = true }: { canEdit?: boolean }) {
   return (
     <div className="mx-auto my-[60px] flex max-w-[280px] flex-col items-center gap-2 text-center text-sm text-secondary">
       <IconFolder size={30} stroke={1.75} aria-hidden />
       <strong className="font-semibold text-text">This folder is empty</strong>
-      <span>Drop files here or choose Upload.</span>
+      {canEdit && <span>Drop files here or choose Upload.</span>}
     </div>
   );
 }
@@ -96,7 +92,9 @@ function Folder({
   if (query.isError) return <Problem message={query.error.message} />;
   if (!first) return null;
 
-  const title = first.folder?.name ?? first.drive.name;
+  const { place } = first;
+  const title =
+    first.folder?.name ?? (place.kind === "drive" ? place.drive.name : "");
   const destination: Destination = {
     kind: "folder",
     driveId,
@@ -105,47 +103,76 @@ function Folder({
   };
   const selected =
     listed?.kind === "file"
-      ? { file: listed, people }
+      ? {
+          file: listed,
+          people,
+          canEdit: first.canEdit || first.editableIds.includes(listed.id),
+        }
       : selectedId !== null
         ? fetched.data
         : null;
-  const access: PanelAccess =
-    first.drive.kind === "personal"
-      ? { kind: "personal", me }
-      : { kind: "team", name: first.drive.name, colour: first.drive.colour };
   const subject: PanelSubject = selected
     ? {
         kind: "file",
         driveId,
         file: selected.file,
         addedBy: personOf(selected.people, selected.file.createdBy).name,
+        canEdit: selected.canEdit,
+        shared: first.shared,
       }
     : {
         kind: "folder",
         name: title,
         contains: first.contains,
-        changedAt: first.folder?.changedAt ?? first.drive.changedAt,
+        changedAt:
+          first.folder?.changedAt ??
+          (place.kind === "drive" ? place.drive.changedAt : null),
         createdBy: personOf(
           people,
-          first.folder?.createdBy ?? first.driveCreatedBy ?? "",
+          first.folder?.createdBy ??
+            (place.kind === "drive" ? place.driveCreatedBy : null) ??
+            "",
         ).name,
-        actionable: first.folder ? { driveId, folder: first.folder } : null,
+        driveId,
+        folder: first.folder,
+        team:
+          place.kind === "drive" &&
+          place.drive.kind === "team" &&
+          first.folder === null
+            ? {
+                driveId,
+                name: place.drive.name,
+                role: place.role,
+              }
+            : null,
+        canEdit: first.canEdit,
+        shared: first.shared,
       };
 
   const isDriveRoot = folderId === null;
-  const trail = [
-    ...(isDriveRoot
-      ? []
-      : [
+  // Above a share, nothing has a name this person may see.
+  const start =
+    place.kind === "shared"
+      ? [
           {
-            key: driveId,
-            link: (
-              <FolderLink driveId={driveId} folderId={null}>
-                {first.drive.name}
-              </FolderLink>
-            ),
+            key: "shared",
+            link: <Link to="/storage/shared">Shared with me</Link>,
           },
-        ]),
+        ]
+      : isDriveRoot
+        ? []
+        : [
+            {
+              key: driveId,
+              link: (
+                <FolderLink driveId={driveId} folderId={null}>
+                  {place.drive.name}
+                </FolderLink>
+              ),
+            },
+          ];
+  const trail = [
+    ...start,
     ...first.ancestors.map((ancestor) => ({
       key: ancestor.id,
       link: (
@@ -156,16 +183,18 @@ function Folder({
     })),
   ];
 
-  return (
-    <DropZone destination={destination} className={SCREEN}>
+  const contents = (
+    <>
       <div className="min-w-0 flex-1 pb-4">
         <Breadcrumb trail={trail} current={title} />
         <PageTop title={title}>
-          <PageActions destination={destination} onNewFolder={createFolder} />
+          {first.canEdit && (
+            <PageActions destination={destination} onNewFolder={createFolder} />
+          )}
         </PageTop>
-        {first.folder && <SkipToDetails />}
+        {first.folder && first.canEdit && <SkipToDetails />}
         {items.length === 0 ? (
-          <EmptyFolder />
+          <EmptyFolder canEdit={first.canEdit} />
         ) : (
           <FileTable
             rows={items.map((item) => ({ driveId, item }))}
@@ -193,8 +222,15 @@ function Folder({
           </div>
         )}
       </div>
-      <DetailsPanel subject={subject} access={access} />
+      <DetailsPanel subject={subject} me={me} />
+    </>
+  );
+  return first.canEdit ? (
+    <DropZone destination={destination} className={SCREEN}>
+      {contents}
     </DropZone>
+  ) : (
+    <div className={SCREEN}>{contents}</div>
   );
 }
 
@@ -278,9 +314,13 @@ export function MyFilesScreen({ me }: { me: SignedIn }) {
           contains: 0,
           changedAt: null,
           createdBy: me.name,
-          actionable: null,
+          driveId: null,
+          folder: null,
+          team: null,
+          canEdit: true,
+          shared: false,
         }}
-        access={{ kind: "personal", me }}
+        me={me}
       />
     </DropZone>
   );

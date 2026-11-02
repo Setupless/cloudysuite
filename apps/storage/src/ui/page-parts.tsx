@@ -1,6 +1,11 @@
 import type { DriveId } from "@cloudysuite/access";
 import { Button, Modal, Notice, TextField } from "@cloudysuite/ui";
-import { IconChevronRight, IconPlus, IconUpload } from "@tabler/icons-react";
+import {
+  IconChevronRight,
+  IconPlus,
+  IconTrashX,
+  IconUpload,
+} from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import {
   type DragEvent,
@@ -171,6 +176,51 @@ export function NameDialog({
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+export function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="text-sm text-secondary">{body}</p>
+      {error && <Notice tone="danger">{error}</Notice>}
+      <div className="flex justify-end gap-2">
+        <Button variant="toolbar" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="danger"
+          icon={IconTrashX}
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            setError(null);
+            onConfirm()
+              .then(onClose)
+              .catch((failure: Error) => {
+                setError(failure.message);
+                setPending(false);
+              });
+          }}
+        >
+          {confirmLabel}
+        </Button>
+      </div>
     </Modal>
   );
 }

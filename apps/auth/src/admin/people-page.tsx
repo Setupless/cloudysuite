@@ -20,6 +20,7 @@ import {
   cancelInvite,
   changeMyFilesLimit,
   changeRole,
+  handOverDrive,
   inviteMember,
   type InviteDelivery,
   removeMember,
@@ -30,6 +31,8 @@ import {
 } from "./functions";
 import { AddressField } from "./address-field";
 import { AdminPage } from "./admin-page";
+import type { DriveToClaim } from "./handover";
+import { handedOverName } from "./handover-text";
 import type { InviteRow, PersonRow } from "./people";
 import { StorageLimitForm } from "./storage-limit-form";
 
@@ -38,6 +41,7 @@ type PeopleView = {
   people: PersonRow[];
   invites: InviteRow[];
   emailDomains: string[];
+  drivesToClaim: DriveToClaim[];
 };
 
 function DeliveryNotice({
@@ -184,8 +188,7 @@ function InviteItem({ invite }: { invite: InviteRow }) {
   );
 }
 
-type ActionKey =
-  "reset" | "promote" | "demote" | "suspend" | "resume" | "remove";
+type ActionKey = "reset" | "promote" | "demote" | "suspend" | "resume";
 
 const ACTIONS: Record<
   ActionKey,
@@ -241,27 +244,127 @@ const ACTIONS: Record<
     danger: false,
     run: (userId) => unsuspendMember({ data: { userId } }),
   },
-  remove: {
-    label: "Remove",
-    title: (name) => `Remove ${name}?`,
-    body: (name) =>
-      `${name}'s account goes away, and they lose access to every mailbox. No mail is deleted: their mailbox stays, and you can give someone else access under Email addresses. Their files aren't deleted either, but for now nobody else can open their My files, or a team folder only they are on.`,
-    confirm: "Remove",
-    danger: true,
-    run: (userId) => removeMember({ data: { userId } }),
-  },
 };
 
-function PersonActions({ person }: { person: PersonRow }) {
+const folderCount = (count: number) =>
+  count === 1 ? "A team folder" : `${count} team folders`;
+
+function RecipientField({
+  value,
+  people,
+  onChange,
+}: {
+  value: string;
+  people: readonly PersonRow[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <SelectField
+      label="Who receives their files"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="">Choose someone</option>
+      {people.map((other) => (
+        <option key={other.id} value={other.id}>
+          {other.name}
+        </option>
+      ))}
+    </SelectField>
+  );
+}
+
+function RemoveDialog({
+  person,
+  others,
+  onClose,
+}: {
+  person: PersonRow;
+  others: readonly PersonRow[];
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const { pending, error, run } = useAction();
+  const [recipientId, setRecipientId] = useState("");
+  const { myFiles, aloneIn, managedAlone } = person.filesToHand;
+  const needsRecipient = myFiles || aloneIn > 0;
+  const recipient =
+    others.find((other) => other.id === recipientId)?.name ??
+    "the person you choose";
+  return (
+    <Modal title={`Remove ${person.name}?`} onClose={onClose}>
+      <p className="text-sm text-secondary">
+        {person.name}'s account goes away, and they lose access to every
+        mailbox. No mail is deleted: their mailbox stays, and you can give
+        someone else access under Email addresses.
+      </p>
+      {needsRecipient && (
+        <>
+          <RecipientField
+            value={recipientId}
+            people={others}
+            onChange={setRecipientId}
+          />
+          <p className="text-sm text-secondary">
+            None of their files are deleted, and you don't get to see them
+            unless you choose yourself.
+            {myFiles &&
+              ` Their My files arrives for ${recipient} as a new team folder called "${handedOverName(person.name)}", and ${recipient} manages it.`}
+            {aloneIn > 0 &&
+              ` ${folderCount(aloneIn)} only ${person.name} was on ${aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`}
+          </p>
+        </>
+      )}
+      {managedAlone > 0 && (
+        <p className="text-sm text-secondary">
+          {folderCount(managedAlone)} {person.name} managed alone{" "}
+          {managedAlone === 1 ? "stays" : "stay"} with the people on{" "}
+          {managedAlone === 1 ? "it" : "them"}, and one of them becomes the
+          manager.
+        </p>
+      )}
+      {error && <Notice tone="danger">{error}</Notice>}
+      <div className="flex justify-end gap-2">
+        <Button variant="quiet" onClick={onClose}>
+          Go back
+        </Button>
+        <Button
+          variant="danger"
+          disabled={pending || (needsRecipient && recipientId === "")}
+          onClick={() =>
+            run(async () => {
+              const outcome = await removeMember({
+                data: { userId: person.id, recipientId: recipientId || null },
+              });
+              if (!outcome.ok) return outcome.message;
+              onClose();
+              await router.invalidate();
+            })
+          }
+        >
+          Remove
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+function PersonActions({
+  person,
+  others,
+}: {
+  person: PersonRow;
+  others: readonly PersonRow[];
+}) {
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [confirming, setConfirming] = useState<ActionKey | null>(null);
+  const [removing, setRemoving] = useState(false);
   const [link, setLink] = useState<string | null>(null);
   const keys: ActionKey[] = [
     "reset",
     person.role === "admin" ? "demote" : "promote",
     person.suspended ? "resume" : "suspend",
-    "remove",
   ];
   const action = confirming && ACTIONS[confirming];
 
@@ -277,7 +380,17 @@ function PersonActions({ person }: { person: PersonRow }) {
             {ACTIONS[key].label}
           </Button>
         ))}
+        <Button variant="danger" onClick={() => setRemoving(true)}>
+          Remove
+        </Button>
       </div>
+      {removing && (
+        <RemoveDialog
+          person={person}
+          others={others}
+          onClose={() => setRemoving(false)}
+        />
+      )}
       {action && (
         <Modal
           title={action.title(person.name)}
@@ -374,7 +487,15 @@ function MyFilesLimit({ person }: { person: PersonRow }) {
   );
 }
 
-function PersonItem({ person, isYou }: { person: PersonRow; isYou: boolean }) {
+function PersonItem({
+  person,
+  isYou,
+  others,
+}: {
+  person: PersonRow;
+  isYou: boolean;
+  others: readonly PersonRow[];
+}) {
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-3">
@@ -393,12 +514,60 @@ function PersonItem({ person, isYou }: { person: PersonRow; isYou: boolean }) {
         </div>
       </div>
       <MyFilesLimit person={person} />
-      {!isYou && <PersonActions person={person} />}
+      {!isYou && <PersonActions person={person} others={others} />}
+    </li>
+  );
+}
+
+function ClaimItem({
+  drive,
+  people,
+}: {
+  drive: DriveToClaim;
+  people: readonly PersonRow[];
+}) {
+  const router = useRouter();
+  const { pending, error, run } = useAction();
+  const [recipientId, setRecipientId] = useState("");
+  return (
+    <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
+      <p className="font-medium">
+        {drive.kind === "personal"
+          ? "My files of someone who was removed"
+          : drive.name}
+      </p>
+      <p className="text-sm text-secondary">
+        {drive.fileCount === 1 ? "1 file" : `${drive.fileCount} files`}
+      </p>
+      <RecipientField
+        value={recipientId}
+        people={people}
+        onChange={setRecipientId}
+      />
+      {error && <Notice tone="danger">{error}</Notice>}
+      <div>
+        <Button
+          variant="action"
+          disabled={pending || recipientId === ""}
+          onClick={() =>
+            run(async () => {
+              const outcome = await handOverDrive({
+                data: { driveId: drive.id, recipientId },
+              });
+              if (!outcome.ok) return outcome.message;
+              await router.invalidate();
+            })
+          }
+        >
+          Hand over
+        </Button>
+      </div>
     </li>
   );
 }
 
 export function PeoplePage({ view }: { view: PeopleView }) {
+  const active = view.people.filter((person) => !person.suspended);
   return (
     <AdminPage
       title="People"
@@ -414,6 +583,18 @@ export function PeoplePage({ view }: { view: PeopleView }) {
           </ul>
         </Section>
       )}
+      {view.drivesToClaim.length > 0 && (
+        <Section
+          title="Files waiting for someone"
+          description="These belonged to people removed before files could be handed over. Nobody can open them until you choose who receives them, and nothing is deleted."
+        >
+          <ul className="flex flex-col divide-y divide-line">
+            {view.drivesToClaim.map((drive) => (
+              <ClaimItem key={drive.id} drive={drive} people={active} />
+            ))}
+          </ul>
+        </Section>
+      )}
       <Section title="Members">
         <ul className="flex flex-col divide-y divide-line">
           {view.people.map((person) => (
@@ -421,6 +602,7 @@ export function PeoplePage({ view }: { view: PeopleView }) {
               key={person.id}
               person={person}
               isYou={person.id === view.youId}
+              others={active.filter((other) => other.id !== person.id)}
             />
           ))}
         </ul>

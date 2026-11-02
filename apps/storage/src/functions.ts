@@ -1,14 +1,21 @@
 import { env } from "cloudflare:workers";
-import type { DriveId, UserId } from "@cloudysuite/access";
+import {
+  type DriveId,
+  type DriveRole,
+  levelOfRole,
+  type UserId,
+} from "@cloudysuite/access";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { and, asc, count, eq, inArray, sql, sum } from "drizzle-orm";
+import { and, asc, count, eq, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
-import { openDriveAs, openDriveToEdit, requireStorageUser } from "./access";
+import { noAccess, openDriveAs, requireStorageUser } from "./access";
+import type { DriveClient } from "./client";
 import { moveRefusal, readStorageRoom } from "./limits";
 import { ensureMyDrive } from "./my-drive";
 import { parseItemName } from "./names";
+import { type People, peopleOf } from "./people-lookup";
 import {
   type DriveItem,
   type DriveSummary,
@@ -39,14 +46,13 @@ import {
 } from "./wire";
 
 const TEAM_COLOURS = 6;
-// D1 allows 100 bound values in a statement.
-const PEOPLE_CHUNK = 90;
 const MEMBERS_SHOWN = 3;
 
 export type TeamFolderCard = DriveSummary & {
   fileCount: number;
   changedAt: number;
   members: Person[];
+  role: DriveRole;
 };
 
 export type Directory = {
@@ -59,21 +65,7 @@ export type Directory = {
   myFiles: { usedBytes: number; limitBytes: number } | null;
 };
 
-export type People = Record<string, Person>;
-
-async function peopleOf(ids: Iterable<string>): Promise<People> {
-  const db = drizzle(env.DB);
-  const unique = [...new Set(ids)] as UserId[];
-  const people: People = {};
-  for (let start = 0; start < unique.length; start += PEOPLE_CHUNK) {
-    const rows = await db
-      .select({ id: user.id, name: user.name, email: user.email })
-      .from(user)
-      .where(inArray(user.id, unique.slice(start, start + PEOPLE_CHUNK)));
-    for (const row of rows) people[row.id] = row;
-  }
-  return people;
-}
+export type { People };
 
 // Reads D1 only, so Home and the sidebar wake no Durable Object.
 export const getDirectory = createServerFn({ method: "GET" }).handler(
@@ -92,6 +84,7 @@ export const getDirectory = createServerFn({ method: "GET" }).handler(
           changedAt: drives.changedAt,
           usedBytes: drives.usedBytes,
           limitBytes: drives.limitBytes,
+          role: driveAccess.role,
         })
         .from(driveAccess)
         .innerJoin(drives, eq(drives.id, driveAccess.driveId))
@@ -170,12 +163,23 @@ export const createTeamFolder = createServerFn({ method: "POST" })
     return id;
   });
 
-export type FolderPage = FolderListing & {
-  drive: DriveSummary & { changedAt: number };
-  // Who made the drive, for the panel's "Created by" at its root.
-  driveCreatedBy: UserId | null;
-  people: People;
-};
+// A person reaching a folder through a share learns nothing about the drive around it.
+export type FolderPlace =
+  | {
+      kind: "drive";
+      drive: DriveSummary & { changedAt: number };
+      // Who made the drive, for the panel's "Created by" at its root.
+      driveCreatedBy: UserId | null;
+      role: DriveRole;
+    }
+  | { kind: "shared" };
+
+export type FolderPage = FolderListing & { place: FolderPlace; people: People };
+
+// Someone not on the drive gets one answer for anything out of their reach, whether it
+// exists or not.
+const gone = (drive: DriveClient, message: string) =>
+  drive.role === null ? noAccess() : refusal(404, message);
 
 export const getFolder = createServerFn({ method: "GET" })
   .validator(parseFolderInput)
@@ -183,7 +187,18 @@ export const getFolder = createServerFn({ method: "GET" })
     const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
     const listing = await drive.list(data.folderId, data.cursor);
-    if (!listing) throw refusal(404, NO_SUCH_FOLDER);
+    if (!listing) throw gone(drive, NO_SUCH_FOLDER);
+    const itemPeople = [
+      ...listing.items.map((item) => item.createdBy),
+      ...(listing.folder ? [listing.folder.createdBy] : []),
+    ];
+    if (drive.role === null) {
+      return {
+        ...listing,
+        place: { kind: "shared" },
+        people: await peopleOf(env.DB, itemPeople),
+      };
+    }
 
     const db = drizzle(env.DB);
     const [[row], managers] = await db.batch([
@@ -213,11 +228,14 @@ export const getFolder = createServerFn({ method: "GET" })
     const driveCreatedBy = managers[0]?.userId ?? null;
     return {
       ...listing,
-      drive: { ...row, changedAt: row.changedAt.getTime() },
-      driveCreatedBy,
-      people: await peopleOf([
-        ...listing.items.map((item) => item.createdBy),
-        ...(listing.folder ? [listing.folder.createdBy] : []),
+      place: {
+        kind: "drive",
+        drive: { ...row, changedAt: row.changedAt.getTime() },
+        driveCreatedBy,
+        role: drive.role,
+      },
+      people: await peopleOf(env.DB, [
+        ...itemPeople,
         ...(driveCreatedBy ? [driveCreatedBy] : []),
       ]),
     };
@@ -228,21 +246,30 @@ export const getFile = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
-    const file = await drive.file(data.fileId);
-    return file ? { file, people: await peopleOf([file.createdBy]) } : null;
+    const opened = await drive.opened(data.fileId);
+    if (opened?.item.kind !== "file") return null;
+    const file: FileItem = opened.item;
+    return {
+      file,
+      canEdit: opened.canEdit,
+      shared: opened.shared,
+      people: await peopleOf(env.DB, [file.createdBy]),
+    };
   });
 
 export const createFolder = createServerFn({ method: "POST" })
   .validator(parseNewFolderInput)
   .handler(async ({ data }): Promise<FolderItem> => {
     const me = await requireStorageUser(getRequest());
-    const drive = await openDriveToEdit(me.id, data.driveId);
+    const drive = await openDriveAs(me.id, data.driveId);
     const parsed = parseItemName(data.name);
     if (!parsed.ok) throw refusal(400, parsed.message);
     const result = await drive.createFolder(data.parentId, parsed);
     switch (result.status) {
       case "created":
         return result.item;
+      case "noAccess":
+        throw noAccess();
       case "nameTaken":
         throw refusal(409, nameTakenMessage(parsed.name));
       case "noParent":
@@ -252,7 +279,10 @@ export const createFolder = createServerFn({ method: "POST" })
     }
   });
 
-export type RecentFile = { file: FileItem; drive: DriveSummary };
+export type RecentFile = {
+  file: FileItem;
+  drive: DriveSummary & { role: DriveRole };
+};
 
 // The one read on Home that wakes objects, and only those of drives holding files.
 export const getRecent = createServerFn({ method: "GET" })
@@ -266,6 +296,7 @@ export const getRecent = createServerFn({ method: "GET" })
           kind: drives.kind,
           name: drives.name,
           colour: drives.colour,
+          role: driveAccess.role,
         })
         .from(driveAccess)
         .innerJoin(drives, eq(drives.id, driveAccess.driveId))
@@ -285,7 +316,10 @@ export const getRecent = createServerFn({ method: "GET" })
         .slice(0, data.limit);
       return {
         files,
-        people: await peopleOf(files.map(({ file }) => file.createdBy)),
+        people: await peopleOf(
+          env.DB,
+          files.map(({ file }) => file.createdBy),
+        ),
       };
     },
   );
@@ -294,13 +328,15 @@ export const renameItem = createServerFn({ method: "POST" })
   .validator(parseRenameInput)
   .handler(async ({ data }): Promise<DriveItem> => {
     const me = await requireStorageUser(getRequest());
-    const drive = await openDriveToEdit(me.id, data.driveId);
+    const drive = await openDriveAs(me.id, data.driveId);
     const parsed = parseItemName(data.name);
     if (!parsed.ok) throw refusal(400, parsed.message);
     const result = await drive.rename(data.itemId, parsed);
     switch (result.status) {
       case "renamed":
         return result.item;
+      case "noAccess":
+        throw noAccess();
       case "nameTaken":
         throw refusal(409, nameTakenMessage(parsed.name));
       case "gone":
@@ -315,14 +351,16 @@ export const moveItem = createServerFn({ method: "POST" })
   .validator(parseMoveInput)
   .handler(async ({ data }): Promise<"moved" | "finishing"> => {
     const me = await requireStorageUser(getRequest());
-    const from = await openDriveToEdit(me.id, data.driveId);
-    const to = await openDriveToEdit(me.id, data.toDriveId);
+    const from = await openDriveAs(me.id, data.driveId);
+    const to = await openDriveAs(me.id, data.toDriveId);
     const item = await from.item(data.itemId);
-    if (!item) throw refusal(404, NO_SUCH_ITEM);
+    if (!item) throw gone(from, NO_SUCH_ITEM);
     const result = await from.move(data.itemId, to, data.toParentId);
     switch (result.status) {
       case "moved":
         return "moved";
+      case "noAccess":
+        throw noAccess();
       case "pending":
         return "finishing";
       case "nameTaken":
@@ -343,6 +381,7 @@ export const moveItem = createServerFn({ method: "POST" })
           moveRefusal(
             await readStorageRoom(env.DB, data.toDriveId),
             result.bytes,
+            to.role === null,
           ),
         );
       case "tooMany":
@@ -354,23 +393,29 @@ export const trashItem = createServerFn({ method: "POST" })
   .validator(parseItemInput)
   .handler(async ({ data }): Promise<void> => {
     const me = await requireStorageUser(getRequest());
-    const drive = await openDriveToEdit(me.id, data.driveId);
+    const drive = await openDriveAs(me.id, data.driveId);
     const result = await drive.trash(data.itemId);
+    if (result.status === "noAccess") throw noAccess();
     if (result.status === "gone") throw refusal(404, NO_SUCH_ITEM);
     if (result.status === "busy") throw refusal(409, ITEM_BUSY);
   });
 
-async function drivesOf(me: UserId): Promise<DriveSummary[]> {
-  return drizzle(env.DB)
+// Can view doesn't reach Trash, so this is the drives a person can change.
+async function drivesToChange(me: UserId): Promise<DriveSummary[]> {
+  const rows = await drizzle(env.DB)
     .select({
       id: drives.id,
       kind: drives.kind,
       name: drives.name,
       colour: drives.colour,
+      role: driveAccess.role,
     })
     .from(driveAccess)
     .innerJoin(drives, eq(drives.id, driveAccess.driveId))
     .where(eq(driveAccess.userId, me));
+  return rows
+    .filter(({ role }) => levelOfRole(role) === "edit")
+    .map(({ role: _role, ...drive }) => drive);
 }
 
 export type TrashLine = { entry: TrashEntry; drive: DriveSummary };
@@ -383,7 +428,7 @@ export const getTrash = createServerFn({ method: "GET" }).handler(
   async (): Promise<{ lines: TrashLine[]; more: boolean }> => {
     const me = await requireStorageUser(getRequest());
     const lists = await Promise.all(
-      (await drivesOf(me.id)).map(async (drive) => {
+      (await drivesToChange(me.id)).map(async (drive) => {
         const client = await openDriveAs(me.id, drive.id);
         const entries = await client.trashEntries(TRASH_SHOWN + 1);
         return entries.map((entry) => ({ entry, drive }));
@@ -406,8 +451,9 @@ export const restoreItem = createServerFn({ method: "POST" })
       data,
     }): Promise<Extract<RestoreResult, { status: "restored" }>> => {
       const me = await requireStorageUser(getRequest());
-      const drive = await openDriveToEdit(me.id, data.driveId);
+      const drive = await openDriveAs(me.id, data.driveId);
       const result = await drive.restore(data.itemId);
+      if (result.status === "noAccess") throw noAccess();
       if (result.status === "gone") throw refusal(404, NO_SUCH_ITEM);
       if (result.status === "folderBusy") throw refusal(409, FOLDER_BUSY);
       return result;
@@ -418,16 +464,17 @@ export const deleteItemForever = createServerFn({ method: "POST" })
   .validator(parseItemInput)
   .handler(async ({ data }): Promise<void> => {
     const me = await requireStorageUser(getRequest());
-    const drive = await openDriveToEdit(me.id, data.driveId);
-    await drive.deleteForever(data.itemId);
+    const drive = await openDriveAs(me.id, data.driveId);
+    const refused = await drive.deleteForever(data.itemId);
+    if (refused) throw noAccess();
   });
 
 export const emptyTrash = createServerFn({ method: "POST" }).handler(
   async (): Promise<void> => {
     const me = await requireStorageUser(getRequest());
     const results = await Promise.allSettled(
-      (await drivesOf(me.id)).map(async ({ id }) => {
-        const drive = await openDriveToEdit(me.id, id);
+      (await drivesToChange(me.id)).map(async ({ id }) => {
+        const drive = await openDriveAs(me.id, id);
         await drive.emptyTrash();
       }),
     );

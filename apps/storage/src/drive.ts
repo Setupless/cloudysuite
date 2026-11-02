@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { DriveId, UserId } from "@cloudysuite/access";
+import type { AccessLevel, DriveId, UserId } from "@cloudysuite/access";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import { isUploadGone } from "@cloudysuite/transfer";
 import { moveReceiver } from "./client";
@@ -7,6 +7,7 @@ import { MIGRATIONS } from "./migrations";
 import { type MoveDelivery, movedBytes, type ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
 import {
+  type Actor,
   type CommitResult,
   type CompletionPlan,
   DriveStore,
@@ -14,22 +15,33 @@ import {
   type NewUpload,
   type NewUploadResult,
   type PartPlan,
+  SHARE_INDEX_RETRY_MS,
   USAGE_RETRY_MS,
 } from "./store";
 import type {
-  DriveItem,
+  CloseResult,
   FileItem,
   FolderListing,
   ItemId,
+  ItemShares,
   MoveResult,
   NewFolderResult,
+  NoAccess,
+  OpenedItem,
   RenameResult,
   RestoreResult,
+  SharedLine,
+  ShareResult,
   TrashEntry,
   TrashResult,
   UploadView,
 } from "./types";
-import { claimDriveSpace, claimMoveSpace, writeDriveUsage } from "./usage";
+import {
+  claimDriveSpace,
+  claimMoveSpace,
+  writeDriveUsage,
+  writeShareIndex,
+} from "./usage";
 
 const SWEEP_LIMIT = 50;
 const SWEEP_RETRY_MS = 60 * 60 * 1000;
@@ -41,6 +53,7 @@ const MOVE_RETRY_MS = 60_000;
 // After this, a drive that still hasn't answered no longer holds the sender's rows locked.
 const MOVE_GIVE_UP_MS = 60 * 60 * 1000;
 const MOVES_PER_WAKE_UP = 5;
+const SHARE_INDEX_BATCH = 30;
 
 export class Drive extends DurableObject<Env> {
   readonly #store: DriveStore;
@@ -61,28 +74,36 @@ export class Drive extends DurableObject<Env> {
     this.#store = new DriveStore(db);
   }
 
-  list(parentId: ItemId | null, cursor: string | null): FolderListing | null {
-    return this.#store.list(parentId, cursor);
+  list(
+    actor: Actor,
+    parentId: ItemId | null,
+    cursor: string | null,
+  ): FolderListing | null {
+    return this.#store.list(actor, parentId, cursor);
   }
 
-  item(id: ItemId): DriveItem | null {
-    return this.#store.item(id);
+  opened(actor: Actor, id: ItemId): OpenedItem | null {
+    return this.#store.opened(actor, id);
   }
 
-  recent(limit: number): FileItem[] {
-    return this.#store.recent(limit);
+  recent(actor: Actor, limit: number): FileItem[] {
+    return this.#store.recent(actor, limit);
   }
 
-  r2KeyOf(id: ItemId): string | null {
-    return this.#store.r2KeyOf(id);
+  r2KeyOf(actor: Actor, id: ItemId): string | null {
+    return this.#store.r2KeyOf(actor, id);
+  }
+
+  mayAddTo(actor: Actor, parentId: ItemId | null): boolean {
+    return this.#store.mayAddTo(actor, parentId);
   }
 
   async createFolder(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     parentId: ItemId | null;
     name: Extract<ParsedName, { ok: true }>;
-    createdBy: UserId;
   }): Promise<NewFolderResult> {
     const result = this.#store.createFolder({ ...input, now: Date.now() });
     if (result.status === "created") await this.#afterChange();
@@ -99,38 +120,49 @@ export class Drive extends DurableObject<Env> {
     return upload;
   }
 
-  async createUpload(upload: NewUpload): Promise<NewUploadResult> {
+  async createUpload(
+    actor: Actor,
+    upload: NewUpload,
+  ): Promise<NoAccess | NewUploadResult> {
+    if (!this.#store.mayAddTo(actor, upload.parentId)) {
+      return { status: "noAccess" };
+    }
     const created = this.#store.createUpload(upload, Date.now());
     await this.#scheduleNextWakeUp();
     return created;
   }
 
-  partPlan(id: ItemId, partNumber: number): PartPlan {
-    return this.#store.partPlan(id, partNumber);
+  partPlan(actor: Actor, id: ItemId, partNumber: number): PartPlan {
+    return this.#store.partPlan(actor, id, partNumber);
   }
 
-  async recordPart(id: ItemId, partNumber: number, etag: string) {
-    this.#store.recordPart(id, partNumber, etag, Date.now());
+  async recordPart(actor: Actor, id: ItemId, partNumber: number, etag: string) {
+    this.#store.recordPart(actor, id, partNumber, etag, Date.now());
     await this.#scheduleNextWakeUp();
   }
 
   // R2 no longer has this upload, so choosing the file again must start a new one.
-  async forgetUpload(id: ItemId): Promise<void> {
-    this.#store.removeUpload(id);
+  async forgetUpload(actor: Actor, id: ItemId): Promise<void> {
+    this.#store.forgetUpload(actor, id);
     await this.#scheduleNextWakeUp();
   }
 
-  completionPlan(id: ItemId): CompletionPlan {
-    return this.#store.completionPlan(id);
+  completionPlan(actor: Actor, id: ItemId): CompletionPlan {
+    return this.#store.completionPlan(actor, id);
   }
 
   // With no limit set, a D1 failure can't hold up a file. The flag retries the totals.
   async commitUpload(
+    actor: Actor,
     id: ItemId,
     driveId: DriveId,
     limited: boolean,
   ): Promise<CommitResult> {
     const result = await this.#oneAtATime(async (): Promise<CommitResult> => {
+      // Ahead of the claim, so someone out of reach can't move this drive's figure.
+      if (!this.#store.mayContinueUpload(actor, id)) {
+        return { status: "noAccess" };
+      }
       const size = limited ? this.#store.uncommittedSize(id) : null;
       if (size !== null) {
         this.#store.flagUsageWrite(driveId, Date.now());
@@ -145,7 +177,7 @@ export class Drive extends DurableObject<Env> {
           return { status: "overLimit" };
         }
       }
-      return this.#store.commitUpload(id, driveId, Date.now());
+      return this.#store.commitUpload(actor, id, driveId, Date.now());
     });
     if (result.status === "committed" || result.status === "folderBusy") {
       await this.#afterChange();
@@ -158,6 +190,7 @@ export class Drive extends DurableObject<Env> {
   }
 
   async rename(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     name: Extract<ParsedName, { ok: true }>;
@@ -168,6 +201,7 @@ export class Drive extends DurableObject<Env> {
   }
 
   async moveWithin(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     toParentId: ItemId | null;
@@ -178,6 +212,7 @@ export class Drive extends DurableObject<Env> {
   }
 
   async moveToDrive(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     toDriveId: DriveId;
@@ -186,6 +221,7 @@ export class Drive extends DurableObject<Env> {
     const moveId = crypto.randomUUID();
     const now = Date.now();
     const begun = this.#store.beginMoveOut({
+      actor: input.actor,
       moveId,
       id: input.id,
       fromDriveId: input.driveId,
@@ -293,17 +329,22 @@ export class Drive extends DurableObject<Env> {
     await this.#afterChange();
   }
 
-  async trash(input: { driveId: DriveId; id: ItemId }): Promise<TrashResult> {
+  async trash(input: {
+    actor: Actor;
+    driveId: DriveId;
+    id: ItemId;
+  }): Promise<TrashResult> {
     const result = this.#store.trash({ ...input, now: Date.now() });
     if (result.status === "trashed") await this.#afterChange();
     return result;
   }
 
-  trashEntries(limit: number): TrashEntry[] {
-    return this.#store.trashEntries(Date.now(), limit);
+  trashEntries(actor: Actor, limit: number): TrashEntry[] {
+    return this.#store.trashEntries(actor, Date.now(), limit);
   }
 
   async restore(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
   }): Promise<RestoreResult> {
@@ -312,14 +353,58 @@ export class Drive extends DurableObject<Env> {
     return result;
   }
 
-  async deleteForever(id: ItemId): Promise<void> {
-    this.#store.markForPurge(id);
+  async deleteForever(actor: Actor, id: ItemId): Promise<NoAccess | void> {
+    if (!this.#store.markForPurge(actor, id)) return { status: "noAccess" };
     await this.#purgeNow();
   }
 
-  async emptyTrash(): Promise<void> {
-    this.#store.markAllForPurge(Date.now());
+  async emptyTrash(actor: Actor): Promise<NoAccess | void> {
+    if (!this.#store.markAllForPurge(actor, Date.now())) {
+      return { status: "noAccess" };
+    }
     await this.#purgeNow();
+  }
+
+  async sharePeople(input: {
+    actor: Actor;
+    id: ItemId;
+    people: readonly UserId[];
+    level: AccessLevel;
+  }): Promise<ShareResult> {
+    const result = this.#store.sharePeople({ ...input, now: Date.now() });
+    if (result.status === "done") await this.#afterShareChange();
+    return result;
+  }
+
+  async unshare(input: {
+    actor: Actor;
+    id: ItemId;
+    userId: UserId;
+  }): Promise<ShareResult> {
+    const result = this.#store.unshare({ ...input, now: Date.now() });
+    if (result.status === "done") await this.#afterShareChange();
+    return result;
+  }
+
+  setEveryone(input: { actor: Actor; id: ItemId; on: boolean }): ShareResult {
+    return this.#store.setEveryone({ ...input, now: Date.now() });
+  }
+
+  sharesOn(actor: Actor, id: ItemId): ItemShares | null {
+    return this.#store.sharesOn(actor, id);
+  }
+
+  sharedWith(actor: Actor, limit: number): SharedLine[] {
+    return this.#store.sharedWith(actor, limit);
+  }
+
+  // The manager check is on D1, which the caller read for this request.
+  close(driveId: DriveId): CloseResult {
+    return this.#store.close(driveId, Date.now());
+  }
+
+  reopen(): void {
+    this.#store.reopen();
   }
 
   async #purgeNow(): Promise<void> {
@@ -333,6 +418,7 @@ export class Drive extends DurableObject<Env> {
   async #afterChange(): Promise<void> {
     await this.#scheduleNextWakeUp();
     await this.#writeUsage();
+    await this.#writeShareIndex();
     await this.#scheduleNextWakeUp();
   }
 
@@ -340,6 +426,31 @@ export class Drive extends DurableObject<Env> {
     const run = this.#d1Writes.then(job);
     this.#d1Writes = run.catch(() => {});
     return run;
+  }
+
+  async #afterShareChange(): Promise<void> {
+    await this.#scheduleNextWakeUp();
+    await this.#writeShareIndex();
+    await this.#scheduleNextWakeUp();
+  }
+
+  // Only a failure stops it early, and the alarm picks up what's left.
+  #writeShareIndex(): Promise<void> {
+    return this.#oneAtATime(async () => {
+      const driveId = this.#store.usage()?.driveId;
+      if (!driveId) return;
+      try {
+        for (;;) {
+          const writes = this.#store.shareIndexWrites(SHARE_INDEX_BATCH);
+          if (writes.length === 0) return;
+          await writeShareIndex(this.env.DB, driveId, writes);
+          this.#store.finishShareIndexWrites(writes);
+        }
+      } catch (error) {
+        console.error("Could not save what's shared. Trying again.", error);
+        this.#store.postponeShareIndexWrites(Date.now() + SHARE_INDEX_RETRY_MS);
+      }
+    });
   }
 
   #writeUsage(): Promise<void> {
@@ -365,6 +476,7 @@ export class Drive extends DurableObject<Env> {
       this.#store.nextPurgeAt(),
       this.#store.nextR2DeletionAt(),
       this.#store.nextMoveAt(),
+      this.#store.nextShareIndexWriteAt(),
     ].filter((time) => time !== null);
     return due.length > 0
       ? // The runtime refuses a time of 0, which "due now" in the queues is stored as.
@@ -380,6 +492,7 @@ export class Drive extends DurableObject<Env> {
     if (purged || (dueAt !== null && dueAt <= Date.now())) {
       await this.#writeUsage();
     }
+    await this.#writeShareIndex();
     await this.#sweepUploads();
     await this.#scheduleNextWakeUp();
   }

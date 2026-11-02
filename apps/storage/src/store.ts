@@ -1,4 +1,10 @@
-import type { DriveId, UserId } from "@cloudysuite/access";
+import {
+  type AccessLevel,
+  type DriveId,
+  type DriveRole,
+  levelOfRole,
+  type UserId,
+} from "@cloudysuite/access";
 import type { SqlDriver, SqlRow, SqlValue } from "@cloudysuite/object-sql";
 import { partCountFor } from "@cloudysuite/transfer";
 import {
@@ -14,13 +20,20 @@ import { nameKeyOf, numberedName, type ParsedName } from "./names";
 import type {
   DriveItem,
   FileItem,
+  CloseResult,
   FolderItem,
   FolderListing,
   ItemId,
+  ItemShare,
+  ItemShares,
   MoveResult,
   NewFolderResult,
+  NoAccess,
+  OpenedItem,
   RenameResult,
   RestoreResult,
+  SharedLine,
+  ShareResult,
   TrashEntry,
   TrashResult,
   UploadView,
@@ -29,6 +42,7 @@ import { MAX_ITEMS_ACROSS_DRIVES, TRASH_MS } from "./types";
 
 export const UPLOAD_EXPIRY_MS = 3 * 24 * 60 * 60 * 1000;
 export const USAGE_RETRY_MS = 60_000;
+export const SHARE_INDEX_RETRY_MS = 60_000;
 const PAGE_SIZE = 200;
 // Long enough for any late copy of a delivery to have arrived or died.
 const SETTLED_MOVE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -108,6 +122,51 @@ function decodeCursor(cursor: string): [kind: string, nameKey: string] {
   return [cursor.slice(0, colon), cursor.slice(colon + 1)];
 }
 
+// Who is asking. It comes from checkDriveAccess on the request that's asking, so taking
+// someone off a drive counts from their next request. Role is null for someone not on
+// the drive's list.
+export type Actor = { userId: UserId; role: DriveRole | null };
+
+// topId is the outermost shared folder or file at or above the item, and null when the
+// person can see the whole drive.
+export type Reach = { level: AccessLevel; topId: ItemId | null };
+
+export type ShareIndexWrite = {
+  itemId: string;
+  userId: string;
+  revision: number;
+  present: boolean;
+};
+
+type ShareRow = SqlRow & {
+  item_id: string;
+  kind: "person" | "organisation";
+  user_id: string | null;
+  level: AccessLevel;
+  shared_by: string;
+  shared_at: number;
+};
+
+function parseShare(row: ShareRow): ItemShare {
+  const fields = {
+    sharedBy: row.shared_by as UserId,
+    sharedAt: row.shared_at,
+  };
+  switch (row.kind) {
+    case "person":
+      return {
+        ...fields,
+        kind: "person",
+        userId: row.user_id as UserId,
+        level: row.level,
+      };
+    case "organisation":
+      return { ...fields, kind: "organisation", level: "view" };
+  }
+}
+
+const NO_ACCESS: NoAccess = { status: "noAccess" };
+
 export type Usage = {
   driveId: DriveId;
   usedBytes: number;
@@ -136,6 +195,7 @@ export type FoundUpload = {
 };
 
 export type PartPlan =
+  | NoAccess
   | { status: "finished" }
   | { status: "unknown" }
   | { status: "folderGone" }
@@ -149,6 +209,7 @@ export type PartPlan =
     };
 
 export type CompletionPlan =
+  | NoAccess
   | { status: "finished"; item: FileItem }
   | { status: "unknown" }
   | { status: "folderGone" }
@@ -165,7 +226,8 @@ export type CommitResult =
   | { status: "unknown" }
   | { status: "folderGone" }
   | { status: "folderBusy" }
-  | { status: "overLimit" };
+  | { status: "overLimit" }
+  | NoAccess;
 
 export type NewUploadResult =
   { status: "created" | "lost"; upload: UploadView } | { status: "folderGone" };
@@ -183,6 +245,67 @@ export class DriveStore {
 
   #rows<Row extends SqlRow>(query: string, ...bindings: SqlValue[]): Row[] {
     return this.#db.exec<Row>(query, ...bindings).toArray();
+  }
+
+  // The one rule for what a person can do to one item. Being on the drive reaches all of
+  // it. Otherwise a share must be on the item or a folder it's in right now, walking up
+  // from the item itself, so an id from anywhere else finds nothing, and moving something
+  // out of a shared folder ends what it got from that folder. Trash takes a share's reach
+  // away without removing the share: a folder in Trash holds no parent, and everything in
+  // it carries trash_id.
+  reachOf(actor: Actor, id: ItemId | null): Reach | null {
+    const onDrive = actor.role ? levelOfRole(actor.role) : null;
+    if (id === null) return onDrive ? { level: onDrive, topId: null } : null;
+    const chain = this.#rows<{
+      id: string;
+      trash_id: string | null;
+      share_level: AccessLevel | null;
+    }>(
+      `${CHAIN}
+       SELECT chain.id, items.trash_id, shares.level AS share_level
+       FROM chain JOIN items ON items.id = chain.id
+       LEFT JOIN shares ON shares.item_id = chain.id
+         AND (shares.kind = 'organisation' OR shares.user_id = ?)
+       ORDER BY chain.depth`,
+      id,
+      actor.userId,
+    );
+    const inPlace = chain.length > 0 && chain.every((row) => !row.trash_id);
+    const matches = inPlace
+      ? chain.filter((row) => row.share_level !== null)
+      : [];
+    const edits =
+      onDrive === "edit" || matches.some((row) => row.share_level === "edit");
+    if (!onDrive && matches.length === 0) return null;
+    return {
+      level: edits ? "edit" : "view",
+      topId: onDrive ? null : (matches.at(-1)?.id as ItemId),
+    };
+  }
+
+  #canEdit(actor: Actor, id: ItemId | null): boolean {
+    return this.reachOf(actor, id)?.level === "edit";
+  }
+
+  // Being on the drive is the only way to reach its Trash as a whole.
+  #canEditDrive(actor: Actor): boolean {
+    return actor.role !== null && levelOfRole(actor.role) === "edit";
+  }
+
+  #trimmed<Item extends DriveItem>(item: Item, reach: Reach): Item {
+    return item.id === reach.topId ? { ...item, parentId: null } : item;
+  }
+
+  opened(actor: Actor, id: ItemId): OpenedItem | null {
+    const reach = this.reachOf(actor, id);
+    const item = reach && this.item(id);
+    return reach && item
+      ? {
+          item: this.#trimmed(item, reach),
+          canEdit: reach.level === "edit",
+          shared: reach.topId !== null,
+        }
+      : null;
   }
 
   // Trashed items don't exist for anything a person reads.
@@ -213,6 +336,19 @@ export class DriveStore {
     return item?.kind === "file" ? item : null;
   }
 
+  #isClosed(): boolean {
+    return (
+      this.#rows("SELECT 1 AS found FROM drive_state WHERE closed = 1").length >
+      0
+    );
+  }
+
+  // Whether this person may add something here. A folder that's gone is answered later,
+  // the same as for anything else the person can edit.
+  mayAddTo(actor: Actor, parentId: ItemId | null): boolean {
+    return !this.#isClosed() && this.#canEdit(actor, parentId);
+  }
+
   #folderState(id: ItemId): FolderState {
     const [row] = this.#rows<{ move_id: string | null }>(
       "SELECT move_id FROM items WHERE id = ? AND kind = 'folder' AND trash_id IS NULL",
@@ -223,9 +359,16 @@ export class DriveStore {
   }
 
   // Null when the folder doesn't exist, so a bad link can't look like an empty folder.
-  list(parentId: ItemId | null, cursor: string | null): FolderListing | null {
-    const folder = parentId === null ? null : this.#folder(parentId);
-    if (parentId !== null && folder === null) return null;
+  list(
+    actor: Actor,
+    parentId: ItemId | null,
+    cursor: string | null,
+  ): FolderListing | null {
+    const reach = this.reachOf(actor, parentId);
+    if (!reach) return null;
+    const found = parentId === null ? null : this.#folder(parentId);
+    if (parentId !== null && found === null) return null;
+    const folder = found && this.#trimmed(found, reach);
 
     const after = cursor ? decodeCursor(cursor) : null;
     const rows = this.#rows<ItemRow>(
@@ -241,8 +384,21 @@ export class DriveStore {
     const page = rows.slice(0, PAGE_SIZE);
     const last = page.at(-1);
     return {
+      shared: reach.topId !== null,
+      canEdit: reach.level === "edit",
+      editableIds:
+        reach.level === "edit"
+          ? []
+          : this.#rows<{ id: string }>(
+              `SELECT items.id FROM items JOIN shares ON shares.item_id = items.id
+               WHERE coalesce(items.parent_id, '') = ? AND items.trash_id IS NULL
+                 AND shares.user_id = ? AND shares.level = 'edit'`,
+              parentId ?? "",
+              actor.userId,
+            ).map((row) => row.id as ItemId),
       folder,
-      ancestors: parentId === null ? [] : this.#ancestors(parentId),
+      ancestors:
+        parentId === null ? [] : this.#ancestors(parentId, reach.topId),
       contains: folder
         ? folder.contains
         : (this.#rows<{ total: number }>(
@@ -256,16 +412,27 @@ export class DriveStore {
     };
   }
 
-  #ancestors(id: ItemId): FolderItem[] {
-    return this.#rows<ItemRow>(
+  // Names above topId stay out of it, because the person can't reach those folders.
+  #ancestors(id: ItemId, topId: ItemId | null): FolderItem[] {
+    const all = this.#rows<ItemRow>(
       `${CHAIN}
        SELECT items.*, 0 AS contains FROM items JOIN chain ON items.id = chain.id
        WHERE chain.depth > 0 ORDER BY chain.depth DESC`,
       id,
     ).map(parseItem) as FolderItem[];
+    if (topId === null) return all;
+    const top = all.findIndex((folder) => folder.id === topId);
+    if (top === -1) return [];
+    return all
+      .slice(top)
+      .map((folder) =>
+        folder.id === topId ? { ...folder, parentId: null } : folder,
+      );
   }
 
-  recent(limit: number): FileItem[] {
+  // Recent is what's in the drives a person is on. It doesn't reach into shares.
+  recent(actor: Actor, limit: number): FileItem[] {
+    if (actor.role === null) return [];
     return this.#rows<ItemRow>(
       `SELECT items.*, 0 AS contains FROM items WHERE kind = 'file' AND trash_id IS NULL
        ORDER BY changed_at DESC, id LIMIT ?`,
@@ -315,15 +482,16 @@ export class DriveStore {
   }
 
   createFolder(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     parentId: ItemId | null;
     name: Extract<ParsedName, { ok: true }>;
-    createdBy: UserId;
     now: number;
   }): NewFolderResult {
-    const { driveId, id, parentId, name, createdBy, now } = input;
+    const { actor, driveId, id, parentId, name, now } = input;
     return this.#db.transaction((): NewFolderResult => {
+      if (!this.mayAddTo(actor, parentId)) return NO_ACCESS;
       const parent = parentId === null ? "open" : this.#folderState(parentId);
       if (parent === "gone") return { status: "noParent" };
       if (parent === "locked") return { status: "folderBusy" };
@@ -337,7 +505,7 @@ export class DriveStore {
         parentId,
         name.name,
         name.nameKey,
-        createdBy,
+        actor.userId,
         now,
         now,
       );
@@ -349,6 +517,27 @@ export class DriveStore {
 
   folderExists(id: ItemId): boolean {
     return this.#folder(id) !== null;
+  }
+
+  // Someone on the drive can carry on any upload to it. Through a share, only their own,
+  // and only while they can still edit where it's going. The finished case matters as much:
+  // a file's id is also its upload's, so this mustn't describe a file out of reach.
+  mayContinueUpload(actor: Actor, id: ItemId): boolean {
+    if (this.#canEditDrive(actor)) return true;
+    const upload = this.#upload(id);
+    if (upload) {
+      return (
+        upload.created_by === actor.userId &&
+        this.#canEdit(actor, upload.parent_id as ItemId | null)
+      );
+    }
+    // Whoever started an upload hears why it ended, even with no reach left to the folder.
+    const closed = this.#rows(
+      "SELECT 1 AS found FROM uploads WHERE id = ? AND closing = 1 AND created_by = ?",
+      id,
+      actor.userId,
+    );
+    return closed.length > 0 || this.#canEdit(actor, id);
   }
 
   #uploadView(row: UploadRow): UploadView {
@@ -439,7 +628,8 @@ export class DriveStore {
     );
   }
 
-  partPlan(id: ItemId, partNumber: number): PartPlan {
+  partPlan(actor: Actor, id: ItemId, partNumber: number): PartPlan {
+    if (!this.mayContinueUpload(actor, id)) return NO_ACCESS;
     if (this.#finishedFile(id)) return { status: "finished" };
     const row = this.#upload(id);
     if (!row) {
@@ -464,9 +654,15 @@ export class DriveStore {
     };
   }
 
-  recordPart(id: ItemId, partNumber: number, etag: string, now: number): void {
+  recordPart(
+    actor: Actor,
+    id: ItemId,
+    partNumber: number,
+    etag: string,
+    now: number,
+  ): void {
     this.#db.transaction(() => {
-      if (!this.#upload(id)) return;
+      if (!this.#upload(id) || !this.mayContinueUpload(actor, id)) return;
       this.#db.exec(
         `INSERT INTO upload_parts (upload_id, part_number, etag) VALUES (?, ?, ?)
          ON CONFLICT (upload_id, part_number) DO UPDATE SET etag = excluded.etag`,
@@ -478,7 +674,8 @@ export class DriveStore {
     });
   }
 
-  completionPlan(id: ItemId): CompletionPlan {
+  completionPlan(actor: Actor, id: ItemId): CompletionPlan {
+    if (!this.mayContinueUpload(actor, id)) return NO_ACCESS;
     const finished = this.#finishedFile(id);
     if (finished) return { status: "finished", item: finished };
     const row = this.#upload(id);
@@ -501,8 +698,14 @@ export class DriveStore {
 
   // The item takes the upload's id, so a repeat finds it and changes nothing. A taken
   // name is decided here, inside the transaction that claims the new one.
-  commitUpload(id: ItemId, driveId: DriveId, now: number): CommitResult {
+  commitUpload(
+    actor: Actor,
+    id: ItemId,
+    driveId: DriveId,
+    now: number,
+  ): CommitResult {
     return this.#db.transaction((): CommitResult => {
+      if (!this.mayContinueUpload(actor, id)) return NO_ACCESS;
       const finished = this.#finishedFile(id);
       if (finished) return { status: "committed", item: finished };
       const row = this.#upload(id);
@@ -567,12 +770,20 @@ export class DriveStore {
     );
   }
 
+  forgetUpload(actor: Actor, id: ItemId): void {
+    // A closed upload is the sweep's to remove, because it still has R2 data to clear.
+    if (this.#upload(id) && this.mayContinueUpload(actor, id)) {
+      this.removeUpload(id);
+    }
+  }
+
   removeUpload(id: string): void {
     this.#db.exec("DELETE FROM upload_parts WHERE upload_id = ?", id);
     this.#db.exec("DELETE FROM uploads WHERE id = ?", id);
   }
 
-  r2KeyOf(id: ItemId): string | null {
+  r2KeyOf(actor: Actor, id: ItemId): string | null {
+    if (!this.reachOf(actor, id)) return null;
     const [row] = this.#rows<{ r2_key: string | null }>(
       "SELECT r2_key FROM items WHERE id = ? AND trash_id IS NULL",
       id,
@@ -617,13 +828,15 @@ export class DriveStore {
   // Taken names are refused rather than numbered, because the person is choosing this
   // name and can choose another. Only the name's own case can change onto itself.
   rename(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     name: Extract<ParsedName, { ok: true }>;
     now: number;
   }): RenameResult {
-    const { driveId, id, name, now } = input;
+    const { actor, driveId, id, name, now } = input;
     return this.#db.transaction((): RenameResult => {
+      if (!this.#canEdit(actor, id)) return NO_ACCESS;
       const item = this.item(id);
       if (!item) return { status: "gone" };
       if (this.#isLocked(id)) return { status: "busy" };
@@ -667,13 +880,17 @@ export class DriveStore {
   }
 
   moveWithin(input: {
+    actor: Actor;
     driveId: DriveId;
     id: ItemId;
     toParentId: ItemId | null;
     now: number;
   }): MoveResult {
-    const { driveId, id, toParentId, now } = input;
+    const { actor, driveId, id, toParentId, now } = input;
     return this.#db.transaction((): MoveResult => {
+      if (!this.#canEdit(actor, id) || !this.#canEdit(actor, toParentId)) {
+        return NO_ACCESS;
+      }
       const item = this.item(id);
       if (!item) return { status: "gone" };
       if (this.#isLocked(id)) return { status: "busy" };
@@ -705,6 +922,7 @@ export class DriveStore {
   }
 
   beginMoveOut(input: {
+    actor: Actor;
     moveId: string;
     id: ItemId;
     fromDriveId: DriveId;
@@ -713,9 +931,18 @@ export class DriveStore {
     tryAt: number;
     giveUpAt: number;
   }): MoveResult | { status: "begun" } {
-    const { moveId, id, fromDriveId, toDriveId, toParentId, tryAt, giveUpAt } =
-      input;
+    const {
+      actor,
+      moveId,
+      id,
+      fromDriveId,
+      toDriveId,
+      toParentId,
+      tryAt,
+      giveUpAt,
+    } = input;
     return this.#db.transaction(() => {
+      if (!this.#canEdit(actor, id)) return NO_ACCESS;
       if (!this.item(id)) return { status: "gone" as const };
       if (this.#treeIsLocked(id)) return { status: "busy" as const };
       const [count] = this.#rows<{ total: number }>(
@@ -803,6 +1030,7 @@ export class DriveStore {
     const phase = this.#incomingPhase(move.moveId);
     if (phase === "abandoned") return { status: "noDestination" };
     if (phase !== null) return { status: "received" };
+    if (this.#isClosed()) return { status: "noDestination" };
     if (move.toParentId !== null) {
       const destination = this.#folderState(move.toParentId);
       if (destination === "gone") return { status: "noDestination" };
@@ -943,6 +1171,7 @@ export class DriveStore {
       let files = 0;
       for (const row of rows) {
         this.#closeUploadsIn(row.id);
+        this.#dropShares(row.id, now);
         this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
         if (row.kind === "file") {
           bytes += row.size ?? 0;
@@ -1014,9 +1243,15 @@ export class DriveStore {
 
   // Bytes stay counted until they're deleted forever. Files leave the file count now,
   // because the count is what people see on a team folder.
-  trash(input: { driveId: DriveId; id: ItemId; now: number }): TrashResult {
-    const { driveId, id, now } = input;
+  trash(input: {
+    actor: Actor;
+    driveId: DriveId;
+    id: ItemId;
+    now: number;
+  }): TrashResult {
+    const { actor, driveId, id, now } = input;
     return this.#db.transaction((): TrashResult => {
+      if (!this.#canEdit(actor, id)) return NO_ACCESS;
       const item = this.item(id);
       if (!item) return { status: "gone" };
       if (this.#treeIsLocked(id)) return { status: "busy" };
@@ -1031,11 +1266,13 @@ export class DriveStore {
         id,
       );
       this.#db.exec(
-        `UPDATE items SET parent_id = NULL, trashed_from = ?, trashed_at = ?, purge_at = ?
+        `UPDATE items SET parent_id = NULL, trashed_from = ?, trashed_at = ?, purge_at = ?,
+           trashed_by = ?
          WHERE id = ?`,
         item.parentId,
         now,
         now + TRASH_MS,
+        actor.userId,
         id,
       );
       this.#touchChain(item.parentId, now);
@@ -1044,7 +1281,8 @@ export class DriveStore {
     });
   }
 
-  trashEntries(now: number, limit: number): TrashEntry[] {
+  trashEntries(actor: Actor, now: number, limit: number): TrashEntry[] {
+    if (!this.#canEditDrive(actor)) return [];
     return this.#rows<
       SqlRow & {
         id: string;
@@ -1084,16 +1322,33 @@ export class DriveStore {
 
   // A taken name keeps both, because the person didn't choose a name here and refusing
   // would leave the item stuck in Trash.
-  restore(input: { driveId: DriveId; id: ItemId; now: number }): RestoreResult {
-    const { driveId, id, now } = input;
+  restore(input: {
+    actor: Actor;
+    driveId: DriveId;
+    id: ItemId;
+    now: number;
+  }): RestoreResult {
+    const { actor, driveId, id, now } = input;
     return this.#db.transaction((): RestoreResult => {
-      const [top] = this.#rows<{ name: string; trashed_from: string | null }>(
-        "SELECT name, trashed_from FROM items WHERE id = ? AND purge_at > ?",
+      const [top] = this.#rows<{
+        name: string;
+        trashed_from: string | null;
+        trashed_by: string | null;
+      }>(
+        "SELECT name, trashed_from, trashed_by FROM items WHERE id = ? AND purge_at > ?",
         id,
         now,
       );
+      const from = (top?.trashed_from ?? null) as ItemId | null;
+      if (!this.#canEditDrive(actor)) {
+        // Someone reaching it through a share gets Undo for their own delete and nothing
+        // else. Trash stays out of their sight.
+        const undoable =
+          top?.trashed_by === actor.userId &&
+          (this.#canEdit(actor, from) || this.#hasEditShare(actor, id));
+        if (!undoable) return NO_ACCESS;
+      }
       if (!top) return { status: "gone" };
-      const from = top.trashed_from as ItemId | null;
       const folder = from === null ? "open" : this.#folderState(from);
       if (folder === "locked") return { status: "folderBusy" };
       const folderGone = folder === "gone";
@@ -1113,7 +1368,7 @@ export class DriveStore {
       );
       this.#db.exec(
         `UPDATE items SET parent_id = ?, name = ?, name_key = ?, trash_id = NULL,
-           trashed_from = NULL, trashed_at = NULL, purge_at = NULL
+           trashed_from = NULL, trashed_at = NULL, purge_at = NULL, trashed_by = NULL
          WHERE id = ?`,
         parentId,
         name,
@@ -1131,16 +1386,30 @@ export class DriveStore {
     });
   }
 
+  #hasEditShare(actor: Actor, id: ItemId): boolean {
+    return (
+      this.#rows(
+        "SELECT 1 AS found FROM shares WHERE item_id = ? AND user_id = ? AND level = 'edit'",
+        id,
+        actor.userId,
+      ).length > 0
+    );
+  }
+
   // Only ever matches something already in Trash, and repeating it changes nothing.
-  markForPurge(id: ItemId): void {
+  markForPurge(actor: Actor, id: ItemId): boolean {
+    if (!this.#canEditDrive(actor)) return false;
     this.#db.exec(
       "UPDATE items SET purge_at = 0 WHERE id = ? AND purge_at IS NOT NULL",
       id,
     );
+    return true;
   }
 
-  markAllForPurge(now: number): void {
+  markAllForPurge(actor: Actor, now: number): boolean {
+    if (!this.#canEditDrive(actor)) return false;
     this.#db.exec("UPDATE items SET purge_at = 0 WHERE trashed_at <= ?", now);
+    return true;
   }
 
   nextPurgeAt(): number | null {
@@ -1186,6 +1455,7 @@ export class DriveStore {
           bytes += row.size ?? 0;
         }
         this.#closeUploadsIn(row.id);
+        this.#dropShares(row.id, now);
         this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
       }
       this.#noteChange(usage.driveId, -bytes, 0, now);
@@ -1236,6 +1506,228 @@ export class DriveStore {
         "SELECT min(not_before) AS next FROM r2_deletions",
       )[0]?.next ?? null
     );
+  }
+
+  // Sharing is for what the person can edit, so a Can view person gets no further than
+  // this. Saying it twice changes the level and nothing else.
+  #withEditableItem(actor: Actor, id: ItemId, change: () => void): ShareResult {
+    return this.#db.transaction((): ShareResult => {
+      if (!this.#canEdit(actor, id)) return NO_ACCESS;
+      if (!this.item(id)) return { status: "gone" };
+      if (this.#treeIsLocked(id)) return { status: "busy" };
+      change();
+      return { status: "done" };
+    });
+  }
+
+  sharePeople(input: {
+    actor: Actor;
+    id: ItemId;
+    people: readonly UserId[];
+    level: AccessLevel;
+    now: number;
+  }): ShareResult {
+    const { actor, id, people, level, now } = input;
+    return this.#withEditableItem(actor, id, () => {
+      for (const userId of people) {
+        this.#db.exec(
+          `INSERT INTO shares (item_id, kind, user_id, level, shared_by, shared_at)
+           VALUES (?, 'person', ?, ?, ?, ?)
+           ON CONFLICT (item_id, coalesce(user_id, '')) DO UPDATE SET level = excluded.level`,
+          id,
+          userId,
+          level,
+          actor.userId,
+          now,
+        );
+        this.#queueIndexWrite(id, userId, now);
+      }
+    });
+  }
+
+  unshare(input: {
+    actor: Actor;
+    id: ItemId;
+    userId: UserId;
+    now: number;
+  }): ShareResult {
+    const { actor, id, userId, now } = input;
+    return this.#withEditableItem(actor, id, () => {
+      this.#db.exec(
+        "DELETE FROM shares WHERE item_id = ? AND user_id = ?",
+        id,
+        userId,
+      );
+      this.#queueIndexWrite(id, userId, now);
+    });
+  }
+
+  setEveryone(input: {
+    actor: Actor;
+    id: ItemId;
+    on: boolean;
+    now: number;
+  }): ShareResult {
+    const { actor, id, on, now } = input;
+    return this.#withEditableItem(actor, id, () => {
+      if (on) {
+        this.#db.exec(
+          `INSERT INTO shares (item_id, kind, user_id, level, shared_by, shared_at)
+           VALUES (?, 'organisation', NULL, 'view', ?, ?)
+           ON CONFLICT (item_id, coalesce(user_id, '')) DO NOTHING`,
+          id,
+          actor.userId,
+          now,
+        );
+      } else {
+        this.#db.exec(
+          "DELETE FROM shares WHERE item_id = ? AND kind = 'organisation'",
+          id,
+        );
+      }
+    });
+  }
+
+  sharesOn(actor: Actor, id: ItemId): ItemShares | null {
+    const reach = this.reachOf(actor, id);
+    if (!reach || !this.item(id)) return null;
+    const rows = this.#rows<ShareRow & { depth: number }>(
+      `${CHAIN}
+       SELECT shares.*, chain.depth FROM shares JOIN chain ON shares.item_id = chain.id
+       ORDER BY chain.depth, shares.shared_at`,
+      id,
+    );
+    return {
+      here: rows.filter((row) => row.depth === 0).map(parseShare),
+      above: rows.filter((row) => row.depth > 0).map(parseShare),
+      canEdit: reach.level === "edit",
+    };
+  }
+
+  // Only what was shared with this person directly. A share on a folder comes back as the
+  // folder, and a trashed item stays out until it's restored.
+  sharedWith(actor: Actor, limit: number): SharedLine[] {
+    return this.#rows<
+      ItemRow & {
+        share_level: AccessLevel;
+        shared_by: string;
+        shared_at: number;
+      }
+    >(
+      `SELECT items.*, shares.level AS share_level, shares.shared_by, shares.shared_at,
+         (SELECT count(*) FROM items AS child WHERE coalesce(child.parent_id, '') = items.id AND child.trash_id IS NULL) AS contains
+       FROM items JOIN shares ON shares.item_id = items.id
+       WHERE shares.user_id = ? AND items.trash_id IS NULL
+       ORDER BY shares.shared_at DESC, items.id LIMIT ?`,
+      actor.userId,
+      limit,
+    ).flatMap((row) => {
+      const reach = this.reachOf(actor, row.id as ItemId);
+      return reach
+        ? [
+            {
+              item: { ...parseItem(row), parentId: null },
+              level: row.share_level,
+              canEdit: reach.level === "edit",
+              sharedBy: row.shared_by as UserId,
+              sharedAt: row.shared_at,
+            },
+          ]
+        : [];
+    });
+  }
+
+  #queueIndexWrite(itemId: string, userId: string, now: number): void {
+    this.#db.exec(
+      `INSERT INTO share_index_writes (item_id, user_id, revision, try_at)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT (item_id, user_id) DO UPDATE SET
+         revision = revision + 1, try_at = excluded.try_at`,
+      itemId,
+      userId,
+      now + SHARE_INDEX_RETRY_MS,
+    );
+  }
+
+  #dropShares(itemId: string, now: number): void {
+    for (const { user_id: userId } of this.#rows<{ user_id: string }>(
+      "SELECT user_id FROM shares WHERE item_id = ? AND user_id IS NOT NULL",
+      itemId,
+    )) {
+      this.#queueIndexWrite(itemId, userId, now);
+    }
+    this.#db.exec("DELETE FROM shares WHERE item_id = ?", itemId);
+  }
+
+  shareIndexWrites(limit: number): ShareIndexWrite[] {
+    return this.#rows<{
+      item_id: string;
+      user_id: string;
+      revision: number;
+      present: number;
+    }>(
+      `SELECT writes.item_id, writes.user_id, writes.revision,
+         EXISTS (SELECT 1 FROM shares
+           WHERE shares.item_id = writes.item_id AND shares.user_id = writes.user_id) AS present
+       FROM share_index_writes AS writes ORDER BY writes.try_at LIMIT ?`,
+      limit,
+    ).map((row) => ({
+      itemId: row.item_id,
+      userId: row.user_id,
+      revision: row.revision,
+      present: row.present === 1,
+    }));
+  }
+
+  // A change made while the write was on its way has a new revision, so it stays queued.
+  finishShareIndexWrites(written: readonly ShareIndexWrite[]): void {
+    this.#db.transaction(() => {
+      for (const write of written) {
+        this.#db.exec(
+          "DELETE FROM share_index_writes WHERE item_id = ? AND user_id = ? AND revision = ?",
+          write.itemId,
+          write.userId,
+          write.revision,
+        );
+      }
+    });
+  }
+
+  postponeShareIndexWrites(retryAt: number): void {
+    this.#db.exec("UPDATE share_index_writes SET try_at = ?", retryAt);
+  }
+
+  nextShareIndexWriteAt(): number | null {
+    return (
+      this.#rows<{ next: number | null }>(
+        "SELECT min(try_at) AS next FROM share_index_writes",
+      )[0]?.next ?? null
+    );
+  }
+
+  // Trash and uploads count. Nothing can land after this, so what was found empty stays
+  // empty until the drive's D1 row is gone. Repeating it finds the same answer.
+  close(driveId: DriveId, now: number): CloseResult {
+    return this.#db.transaction((): CloseResult => {
+      const held = this.#rows(
+        `SELECT 1 AS found FROM items
+         UNION ALL SELECT 1 FROM uploads
+         UNION ALL SELECT 1 FROM moves_out LIMIT 1`,
+      );
+      if (held.length > 0) return { status: "notEmpty" };
+      this.#db.exec(
+        `INSERT INTO drive_state (id, drive_id, used_bytes, file_count, changed_at, closed)
+         VALUES (1, ?, 0, 0, ?, 1)
+         ON CONFLICT (id) DO UPDATE SET closed = 1`,
+        driveId,
+        now,
+      );
+      return { status: "closed" };
+    });
+  }
+
+  reopen(): void {
+    this.#db.exec("UPDATE drive_state SET closed = 0");
   }
 
   usage(): Usage | null {

@@ -163,7 +163,7 @@ function addDrives() {
     );
   }
   sqlite.run(
-    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'manager'), (?, ?, 'member')",
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'manager'), (?, ?, 'editor')",
     [marketing, alice, finance, alice],
   );
 }
@@ -177,14 +177,14 @@ test("someone on a drive's list gets a grant with their role", async () => {
   expect(managed.grant.role).toBe("manager");
   const joined = await checkDriveAccess(d1, alice, finance);
   if (!joined.allowed) throw new Error("expected access");
-  expect(joined.grant.role).toBe("member");
+  expect(joined.grant.role).toBe("editor");
 });
 
-test("someone not on a drive's list, or a drive that doesn't exist, is refused", async () => {
+test("someone not on a drive's list gets a grant with no role, and a missing drive is refused", async () => {
   addDrives();
-  expect(await checkDriveAccess(d1, bob, marketing)).toEqual({
-    allowed: false,
-  });
+  const stranger = await checkDriveAccess(d1, bob, marketing);
+  if (!stranger.allowed) throw new Error("expected a grant with no role");
+  expect(stranger.grant.role).toBeNull();
   const missing = "00000000-0000-4000-8000-000000000000" as DriveId;
   expect(await checkDriveAccess(d1, alice, missing)).toEqual({
     allowed: false,

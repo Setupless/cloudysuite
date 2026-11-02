@@ -5,11 +5,13 @@ import {
   readJevUsage,
   writeJevKey,
 } from "@cloudysuite/jev";
+import { isBanned } from "@cloudysuite/access";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
+  type DriveId,
   type MailboxId,
   type MailboxRole,
   type OrgRole,
@@ -35,12 +37,22 @@ import {
   resolveOverHttps,
 } from "./domains";
 import {
+  appointNextManagers,
+  claimDrive,
+  type DriveToClaim,
+  handOverFiles,
+  listDrivesToClaim,
+  readFilesToHand,
+} from "./handover";
+import {
+  readDriveId,
   readFlag,
   readJevAcknowledgement,
   readLimitBytes,
   readMailboxId,
   readMailboxRole,
   readOrgRole,
+  readRecipientId,
   readText,
   readToggleableApp,
   readUserId,
@@ -117,12 +129,14 @@ export const getPeople = createServerFn({ method: "GET" })
       people: PersonRow[];
       invites: InviteRow[];
       emailDomains: string[];
+      drivesToClaim: DriveToClaim[];
     }> => {
-      const [view, emailDomains] = await Promise.all([
+      const [view, emailDomains, drivesToClaim] = await Promise.all([
         listPeople(env.DB),
         readEmailDomains(env.DB),
+        listDrivesToClaim(env.DB),
       ]);
-      return { youId: context.admin.id, ...view, emailDomains };
+      return { youId: context.admin.id, ...view, emailDomains, drivesToClaim };
     },
   );
 
@@ -235,12 +249,48 @@ export const unsuspendMember = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const CHOOSE_RECIPIENT = refuse(
+  "Choose who receives their files before you remove them.",
+);
+const RECIPIENT_CANT = refuse(
+  "That person can't receive files right now. Choose someone else.",
+);
+
+async function recipientIsReady(userId: UserId): Promise<boolean> {
+  const [row] = await drizzle(env.DB)
+    .select({ banned: user.banned, banExpires: user.banExpires })
+    .from(user)
+    .where(eq(user.id, userId));
+  return row !== undefined && !isBanned(row);
+}
+
+// Handing over comes first and is one transaction. If removing the account then fails,
+// choosing Remove again finds the files already handed over and finishes the job.
 export const removeMember = createServerFn({ method: "POST" })
   .middleware([adminOnly])
-  .validator((input: { userId: string }) => ({ userId: readUserId(input) }))
+  .validator((input: { userId: string; recipientId: string | null }) => ({
+    userId: readUserId(input),
+    recipientId: input.recipientId === null ? null : readRecipientId(input),
+  }))
   .handler(async ({ data, context }): Promise<Outcome> => {
     if (data.userId === context.admin.id) return NOT_YOURSELF;
-    if (!(await personExists(data.userId))) return PERSON_GONE;
+    const [person] = await drizzle(env.DB)
+      .select({ name: user.name })
+      .from(user)
+      .where(eq(user.id, data.userId));
+    if (!person) return PERSON_GONE;
+
+    const files = (await readFilesToHand(env.DB)).get(data.userId);
+    if (files && (files.myFiles || files.aloneIn > 0)) {
+      if (!data.recipientId) return CHOOSE_RECIPIENT;
+    }
+    if (data.recipientId === data.userId) return RECIPIENT_CANT;
+    if (data.recipientId) {
+      if (!(await recipientIsReady(data.recipientId))) return RECIPIENT_CANT;
+      await handOverFiles(env.DB, data.userId, person.name, data.recipientId);
+    } else {
+      await appointNextManagers(env.DB, data.userId);
+    }
     const request = getRequest();
     const { auth } = await getAuth(request);
     await auth.api.removeUser({
@@ -260,6 +310,19 @@ export const changeMyFilesLimit = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<Outcome> => {
     if (!(await personExists(data.userId))) return PERSON_GONE;
     await setMyFilesLimit(env.DB, data.userId, data.limitBytes);
+    return { ok: true };
+  });
+
+// Files from someone removed before an admin could choose who receives them.
+export const handOverDrive = createServerFn({ method: "POST" })
+  .middleware([adminOnly])
+  .validator((input: { driveId: string; recipientId: string }) => ({
+    driveId: readDriveId(input),
+    recipientId: readRecipientId(input),
+  }))
+  .handler(async ({ data }): Promise<Outcome> => {
+    if (!(await recipientIsReady(data.recipientId))) return RECIPIENT_CANT;
+    await claimDrive(env.DB, data.driveId as DriveId, data.recipientId);
     return { ok: true };
   });
 

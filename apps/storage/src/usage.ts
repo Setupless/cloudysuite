@@ -1,8 +1,8 @@
-import type { DriveId } from "@cloudysuite/access";
+import type { DriveId, UserId } from "@cloudysuite/access";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { drives, orgSettings } from "../../../src/db/schema";
-import type { Usage } from "./store";
+import { driveShares, drives, orgSettings } from "../../../src/db/schema";
+import type { ShareIndexWrite, Usage } from "./store";
 
 // Absolute values, so writing the same usage twice changes nothing.
 export async function writeDriveUsage(
@@ -62,4 +62,34 @@ export async function claimMoveSpace(
     )
     .returning({ id: drives.id });
   return claimed.length > 0;
+}
+
+// Saying what's true now, so a repeat changes nothing. The person or drive may have gone
+// since, in which case there's no row to write, and that isn't a failure to retry.
+export async function writeShareIndex(
+  database: D1Database,
+  driveId: DriveId,
+  writes: readonly ShareIndexWrite[],
+): Promise<void> {
+  const db = drizzle(database);
+  const [first, ...rest] = writes.map(({ itemId, userId, present }) =>
+    present
+      ? db.run(
+          sql`INSERT INTO drive_shares (user_id, drive_id, item_id)
+              SELECT ${userId}, ${driveId}, ${itemId}
+              WHERE EXISTS (SELECT 1 FROM user WHERE id = ${userId})
+                AND EXISTS (SELECT 1 FROM drives WHERE id = ${driveId})
+              ON CONFLICT DO NOTHING`,
+        )
+      : db
+          .delete(driveShares)
+          .where(
+            and(
+              eq(driveShares.userId, userId as UserId),
+              eq(driveShares.driveId, driveId),
+              eq(driveShares.itemId, itemId),
+            ),
+          ),
+  );
+  if (first) await db.batch([first, ...rest]);
 }

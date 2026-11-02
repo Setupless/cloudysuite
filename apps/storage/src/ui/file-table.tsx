@@ -45,8 +45,8 @@ function Cells({
   );
 }
 
-function PersonCell({ people, item }: { people: People; item: DriveItem }) {
-  const person = personOf(people, item.createdBy);
+function PersonCell({ people, id }: { people: People; id: string }) {
+  const person = personOf(people, id);
   return (
     <span title={person.name}>
       <Avatar person={person} size="small" />
@@ -58,11 +58,13 @@ function FolderRow({
   driveId,
   folder,
   people,
+  personId,
   changed,
 }: {
   driveId: DriveId;
   folder: FolderItem;
   people: People;
+  personId: string;
   changed: string;
 }) {
   return (
@@ -78,7 +80,7 @@ function FolderRow({
           </span>
         }
         name={folder.name}
-        person={<PersonCell people={people} item={folder} />}
+        person={<PersonCell people={people} id={personId} />}
         changed={changed}
         size={itemCount(folder.contains)}
       />
@@ -89,12 +91,14 @@ function FolderRow({
 function FileRow({
   file,
   people,
+  personId,
   selected,
   changed,
   onSelect,
 }: {
   file: FileItem;
   people: People;
+  personId: string;
   selected: boolean;
   changed: string;
   onSelect: (id: ItemId) => void;
@@ -117,7 +121,7 @@ function FileRow({
           </span>
         }
         name={file.name}
-        person={<PersonCell people={people} item={file} />}
+        person={<PersonCell people={people} id={personId} />}
         changed={changed}
         size={formatBytes(file.size)}
       />
@@ -125,14 +129,22 @@ function FileRow({
   );
 }
 
-export type TableRow = { driveId: DriveId; item: DriveItem };
+// Shared with me shows who shared and when, in place of who added it and when it changed.
+export type TableRow = {
+  driveId: DriveId;
+  item: DriveItem;
+  person?: string;
+  at?: number;
+};
 
 export function FileTable({
   rows,
   people,
   selectedId,
+  dateLabel = "Changed",
   onSelect,
 }: {
+  dateLabel?: string;
   rows: readonly TableRow[];
   people: People;
   selectedId: ItemId | null;
@@ -141,8 +153,7 @@ export function FileTable({
   // The server knows neither the reader's time zone nor their language.
   const hydrated = useHydrated();
   const now = new Date();
-  const changed = (item: DriveItem) =>
-    hydrated ? formatChanged(item.changedAt, now) : " ";
+  const changed = (at: number) => (hydrated ? formatChanged(at, now) : " ");
   return (
     <div>
       <div
@@ -150,26 +161,28 @@ export function FileTable({
       >
         <span>Name</span>
         <span className={OPTIONAL_COLUMN} />
-        <span className={OPTIONAL_COLUMN}>Changed</span>
+        <span className={OPTIONAL_COLUMN}>{dateLabel}</span>
         <span>Size</span>
       </div>
       <div className="flex flex-col">
-        {rows.map(({ driveId, item }) =>
+        {rows.map(({ driveId, item, person, at }) =>
           item.kind === "folder" ? (
             <FolderRow
               key={item.id}
               driveId={driveId}
               folder={item}
               people={people}
-              changed={changed(item)}
+              personId={person ?? item.createdBy}
+              changed={changed(at ?? item.changedAt)}
             />
           ) : (
             <FileRow
               key={item.id}
               file={item}
               people={people}
+              personId={person ?? item.createdBy}
               selected={item.id === selectedId}
-              changed={changed(item)}
+              changed={changed(at ?? item.changedAt)}
               onSelect={onSelect}
             />
           ),

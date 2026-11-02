@@ -114,4 +114,39 @@ export const MIGRATIONS: Migrations = [
     // Lets someone still sending hear why the upload stopped, until the sweep removes it.
     `ALTER TABLE uploads ADD COLUMN folder_gone INTEGER NOT NULL DEFAULT 0`,
   ],
+  [
+    // Rows stay while the item is in Trash, which is how access comes back on restore.
+    // item_id has no foreign key for the same reason trashed_from doesn't: the row that
+    // removes an item removes its shares in the same transaction.
+    `CREATE TABLE shares (
+      item_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('person', 'organisation')),
+      user_id TEXT,
+      level TEXT NOT NULL CHECK (level IN ('view', 'edit')),
+      shared_by TEXT NOT NULL,
+      shared_at INTEGER NOT NULL,
+      CHECK (
+        (kind = 'person' AND user_id IS NOT NULL) OR
+        (kind = 'organisation' AND user_id IS NULL AND level = 'view')
+      )
+    )`,
+    `CREATE UNIQUE INDEX shares_one_each ON shares(item_id, coalesce(user_id, ''))`,
+    `CREATE INDEX shares_for_person ON shares(user_id) WHERE user_id IS NOT NULL`,
+    // D1 lists which items to ask about for Shared with me. Each row here says one pair
+    // needs writing, and what to write is read from shares when the write runs, so a
+    // repeat or a late write can't put back something old. revision tells a write apart
+    // from a change made while it was on its way.
+    `CREATE TABLE share_index_writes (
+      item_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      try_at INTEGER NOT NULL,
+      PRIMARY KEY (item_id, user_id)
+    ) WITHOUT ROWID`,
+    // Who chose Delete, so someone who reached it through a share can undo that.
+    `ALTER TABLE items ADD COLUMN trashed_by TEXT`,
+    // Set just before a team folder's D1 row goes, so nothing can land in it after it
+    // was found empty.
+    `ALTER TABLE drive_state ADD COLUMN closed INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];

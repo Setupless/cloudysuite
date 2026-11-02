@@ -6,6 +6,7 @@ import {
   IconPlus,
   IconTrash,
   IconUserCircle,
+  IconUsers,
 } from "@tabler/icons-react";
 import {
   type DehydratedState,
@@ -51,6 +52,13 @@ function Navigation({
   const { driveId } = useParams({ strict: false });
   const isHome = ["", "/storage"].includes(pathname.replace(/\/$/, ""));
   const isMyFiles = useInMyFiles(directory);
+  // Inside a drive that isn't on the person's list, they got there through a share.
+  const isShared =
+    pathname.endsWith("/shared") ||
+    (driveId !== undefined &&
+      directory !== undefined &&
+      driveId !== directory.myDriveId &&
+      !directory.teamFolders.some((folder) => folder.id === driveId));
   return (
     <>
       <Link
@@ -64,6 +72,10 @@ function Navigation({
       <Link to="/storage/my-files" className={itemClass(isMyFiles)}>
         <IconUserCircle size={18} stroke={1.75} aria-hidden />
         My files
+      </Link>
+      <Link to="/storage/shared" className={itemClass(isShared)}>
+        <IconUsers size={18} stroke={1.75} aria-hidden />
+        Shared with me
       </Link>
       <h3 className="px-2.5 pt-3 pb-1 text-xs font-semibold text-secondary">
         Team folders
@@ -153,7 +165,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       {naming && (
         <NameDialog
           title="New team folder"
-          hint="Only you can open it for now."
+          hint="You'll manage it, and you can add people once it's made."
           submitLabel="Create team folder"
           onSubmit={async (name) => {
             const driveId = await call(() =>

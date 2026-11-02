@@ -12,6 +12,7 @@ import type { Drive } from "./drive";
 import { hasLimit, limitRefusal, NO_ROOM_NOW, readStorageRoom } from "./limits";
 import { parseItemName } from "./names";
 import type {
+  Actor,
   CommitResult,
   CompletionPlan,
   NewUploadResult,
@@ -21,6 +22,7 @@ import {
   FOLDER_BUSY,
   type FileItem,
   type ItemId,
+  type NoAccess,
   NO_SUCH_FOLDER,
   parseItemId,
   type UploadView,
@@ -29,6 +31,10 @@ import {
 const MAX_FINGERPRINT_LENGTH = 128;
 const MAX_MIME_TYPE_LENGTH = 127;
 const MIME_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
+
+const NO_UPLOAD_ACCESS_MESSAGE =
+  "You can't add files here. Ask someone with Can edit to add you, or to upload it for you.";
+const NO_ACCESS = refuse(403, NO_UPLOAD_ACCESS_MESSAGE);
 
 const UPLOAD_ENDED = refuse(
   409,
@@ -71,6 +77,7 @@ export function createDriveUploads(
   stub: DurableObjectStub<Drive>,
   grant: DriveGrant,
 ): DriveUploads {
+  const actor: Actor = { userId: grant.userId, role: grant.role };
   return {
     async start(input) {
       const { parentId, name, size, mimeType, fingerprint } = (input ??
@@ -97,12 +104,14 @@ export function createDriveUploads(
       }
       const parsed = parseItemName(name);
       if (!parsed.ok) return refuse(400, parsed.message);
+      if (!(await stub.mayAddTo(actor, parent))) return NO_ACCESS;
       if (parent !== null && !(await stub.folderExists(parent))) {
         return refuse(404, NO_SUCH_FOLDER);
       }
       const refused = limitRefusal(
         await readStorageRoom(database, grant.driveId),
         size,
+        grant.role === null,
       );
       if (refused) return refuse(413, refused);
 
@@ -119,26 +128,30 @@ export function createDriveUploads(
       const id = crypto.randomUUID() as ItemId;
       const r2Key = `drives/${grant.driveId}/files/${id}`;
       const multipart = await bucket.createMultipartUpload(r2Key);
-      const created = (await stub.createUpload({
+      const created = (await stub.createUpload(actor, {
         ...found,
         id,
         mimeType: cleanMimeType(mimeType),
         r2Key,
         r2UploadId: multipart.uploadId,
-      })) as NewUploadResult;
-      if (created.status === "folderGone") {
+      })) as NoAccess | NewUploadResult;
+      if (created.status === "noAccess" || created.status === "folderGone") {
         await multipart.abort().catch((error: unknown) => {
           console.error("Could not stop an unused upload.", error);
         });
-        return refuse(404, NO_SUCH_FOLDER);
+        return created.status === "noAccess"
+          ? NO_ACCESS
+          : refuse(404, NO_SUCH_FOLDER);
       }
       if (created.status === "lost") await multipart.abort();
       return { ok: true, value: created.upload };
     },
 
     async putPart(id, partNumber, body) {
-      const plan = (await stub.partPlan(id, partNumber)) as PartPlan;
+      const plan = (await stub.partPlan(actor, id, partNumber)) as PartPlan;
       switch (plan.status) {
+        case "noAccess":
+          return NO_ACCESS;
         case "unknown":
           return UPLOAD_ENDED;
         case "folderGone":
@@ -171,11 +184,11 @@ export function createDriveUploads(
         const part = await bucket
           .resumeMultipartUpload(plan.r2Key, plan.r2UploadId)
           .uploadPart(partNumber, bytes);
-        await stub.recordPart(id, partNumber, part.etag);
+        await stub.recordPart(actor, id, partNumber, part.etag);
         return { ok: true, value: null };
       } catch (error) {
         if (isUploadGone(error)) {
-          await stub.forgetUpload(id);
+          await stub.forgetUpload(actor, id);
           return UPLOAD_ENDED;
         }
         throw error;
@@ -185,7 +198,8 @@ export function createDriveUploads(
     // Safe to repeat. A crash after R2 finished the file makes R2 refuse the second
     // try, so what counts is whether the whole file is there under its key.
     async complete(id) {
-      const plan = (await stub.completionPlan(id)) as CompletionPlan;
+      const plan = (await stub.completionPlan(actor, id)) as CompletionPlan;
+      if (plan.status === "noAccess") return NO_ACCESS;
       if (plan.status === "unknown") return UPLOAD_ENDED;
       if (plan.status === "folderGone") return FOLDER_ENDED;
       if (plan.status === "finished") return { ok: true, value: plan.item };
@@ -211,7 +225,7 @@ export function createDriveUploads(
           const stored = await bucket.head(plan.r2Key);
           if (stored?.size !== plan.size) {
             if (isUploadGone(error)) {
-              await stub.forgetUpload(id);
+              await stub.forgetUpload(actor, id);
               return UPLOAD_ENDED;
             }
             throw error;
@@ -220,6 +234,7 @@ export function createDriveUploads(
       }
 
       const committed = (await stub.commitUpload(
+        actor,
         id,
         grant.driveId,
         hasLimit(await readStorageRoom(database, grant.driveId)),
@@ -227,6 +242,8 @@ export function createDriveUploads(
       switch (committed.status) {
         case "committed":
           return { ok: true, value: committed.item };
+        case "noAccess":
+          return NO_ACCESS;
         case "unknown":
           return UPLOAD_ENDED;
         case "folderGone":
@@ -239,6 +256,7 @@ export function createDriveUploads(
             limitRefusal(
               await readStorageRoom(database, grant.driveId),
               plan.size,
+              grant.role === null,
             ) ?? NO_ROOM_NOW,
           );
       }

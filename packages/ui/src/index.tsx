@@ -1,5 +1,5 @@
 import type { Icon } from "@tabler/icons-react";
-import { IconCheck, IconCopy } from "@tabler/icons-react";
+import { IconCheck, IconCopy, IconX } from "@tabler/icons-react";
 import {
   type ComponentProps,
   type ReactNode,
@@ -194,10 +194,12 @@ export function Badge({
 export function Modal({
   title,
   onClose,
+  closeButton = false,
   children,
 }: {
   title: string;
   onClose: () => void;
+  closeButton?: boolean;
   children: ReactNode;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -211,7 +213,21 @@ export function Modal({
       className="m-auto w-full max-w-md rounded border border-line bg-panel p-5 text-text backdrop:bg-text backdrop:opacity-30"
     >
       <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <div className="flex items-start gap-2">
+          <h2 className="mr-auto min-w-0 text-lg font-semibold break-words">
+            {title}
+          </h2>
+          {closeButton && (
+            <button
+              type="button"
+              aria-label="Close"
+              className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2"
+              onClick={onClose}
+            >
+              <IconX size={18} stroke={1.75} aria-hidden />
+            </button>
+          )}
+        </div>
         {children}
       </div>
     </dialog>

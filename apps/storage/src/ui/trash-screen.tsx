@@ -1,4 +1,4 @@
-import { Button, Modal, Notice, useHydrated } from "@cloudysuite/ui";
+import { Button, useHydrated } from "@cloudysuite/ui";
 import {
   IconFolder,
   IconRestore,
@@ -24,7 +24,7 @@ import {
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { useRestore } from "./item-actions";
-import { Breadcrumb, PageTop, Problem } from "./page-parts";
+import { Breadcrumb, ConfirmDialog, PageTop, Problem } from "./page-parts";
 
 const COLUMNS =
   "grid grid-cols-[minmax(0,1fr)_60px] items-center gap-2.5 sm:grid-cols-[minmax(0,1fr)_110px_84px_60px]";
@@ -50,51 +50,6 @@ function Icon({ line }: { line: TrashLine }) {
         }}
       />
     </span>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  body,
-  confirmLabel,
-  onConfirm,
-  onClose,
-}: {
-  title: string;
-  body: string;
-  confirmLabel: string;
-  onConfirm: () => Promise<void>;
-  onClose: () => void;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  return (
-    <Modal title={title} onClose={onClose}>
-      <p className="text-sm text-secondary">{body}</p>
-      {error && <Notice tone="danger">{error}</Notice>}
-      <div className="flex justify-end gap-2">
-        <Button variant="toolbar" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          variant="danger"
-          icon={IconTrashX}
-          disabled={pending}
-          onClick={() => {
-            setPending(true);
-            setError(null);
-            onConfirm()
-              .then(onClose)
-              .catch((failure: Error) => {
-                setError(failure.message);
-                setPending(false);
-              });
-          }}
-        >
-          {confirmLabel}
-        </Button>
-      </div>
-    </Modal>
   );
 }
 
