@@ -205,6 +205,47 @@ test("an upload can't continue or be finished through someone else's id", async 
   expect(mine.createdBy).toBe(BOB);
 });
 
+test("someone uploading through a share hears that the folder went, not that they have no access", async () => {
+  await shareWithBob("edit");
+  const started = await bob.uploads.start({
+    parentId: sub.id,
+    name: "late.png",
+    size: BYTES.length,
+    mimeType: "image/png",
+    fingerprint: "late",
+  });
+  if (!started.ok) throw new Error(started.message);
+  await kit.drive.trash(sub.id);
+  await kit.drive.deleteForever(sub.id);
+
+  for (const answer of [
+    await bob.uploads.putPart(started.value.id, 1, partBody),
+    await bob.uploads.complete(started.value.id),
+  ]) {
+    expect(answer).toMatchObject({ ok: false, status: 409 });
+  }
+});
+
+test("someone else can't learn about a closed upload", async () => {
+  await addToDrive("viewer");
+  const started = await kit.drive.uploads.start({
+    parentId: sub.id,
+    name: "theirs.png",
+    size: BYTES.length,
+    mimeType: "image/png",
+    fingerprint: "theirs",
+  });
+  if (!started.ok) throw new Error(started.message);
+  await kit.drive.trash(sub.id);
+  await kit.drive.deleteForever(sub.id);
+
+  const bobNow = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  expect(await bobNow.uploads.complete(started.value.id)).toMatchObject({
+    ok: false,
+    status: 403,
+  });
+});
+
 test("a breadcrumb stops at what the person can reach", async () => {
   await shareWithBob("view");
   const listing = await bob.list(sub.id, null);

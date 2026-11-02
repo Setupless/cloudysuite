@@ -531,7 +531,13 @@ export class DriveStore {
         this.#canEdit(actor, upload.parent_id as ItemId | null)
       );
     }
-    return this.#canEdit(actor, id);
+    // Whoever started an upload hears why it ended, even with no reach left to the folder.
+    const closed = this.#rows(
+      "SELECT 1 AS found FROM uploads WHERE id = ? AND closing = 1 AND created_by = ?",
+      id,
+      actor.userId,
+    );
+    return closed.length > 0 || this.#canEdit(actor, id);
   }
 
   #uploadView(row: UploadRow): UploadView {
@@ -765,7 +771,10 @@ export class DriveStore {
   }
 
   forgetUpload(actor: Actor, id: ItemId): void {
-    if (this.mayContinueUpload(actor, id)) this.removeUpload(id);
+    // A closed upload is the sweep's to remove, because it still has R2 data to clear.
+    if (this.#upload(id) && this.mayContinueUpload(actor, id)) {
+      this.removeUpload(id);
+    }
   }
 
   removeUpload(id: string): void {
