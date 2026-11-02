@@ -14,7 +14,7 @@ import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
 import { isEditorLink } from "./editor-tags";
 import { holdsSomethingAdded } from "./added";
-import { discardWhenSettled } from "./discard";
+import { discardWhenSettled, nothingToDiscard } from "./discard";
 import {
   isLeftOut,
   keptAsText,
@@ -790,6 +790,24 @@ test("a discard waits for a file on its way, then removes the row it made", asyn
   upload.resolve();
   await running;
   expect(discarded).toEqual(["discarded"]);
+});
+
+test("Discard skips the question only when no words can still reach anywhere", () => {
+  const idle = {
+    hasRow: false,
+    savesUnderWay: 0,
+    uploadsUnderWay: 0,
+    keptOnDevice: false,
+    addsSomething: false,
+  };
+  expect(nothingToDiscard(idle)).toBe(true);
+  // The first save lands after the fields were emptied, and would make a row.
+  expect(nothingToDiscard({ ...idle, savesUnderWay: 1 })).toBe(false);
+  expect(nothingToDiscard({ ...idle, uploadsUnderWay: 1 })).toBe(false);
+  // A failed save left the earlier words on this device.
+  expect(nothingToDiscard({ ...idle, keptOnDevice: true })).toBe(false);
+  expect(nothingToDiscard({ ...idle, hasRow: true })).toBe(false);
+  expect(nothingToDiscard({ ...idle, addsSomething: true })).toBe(false);
 });
 
 test("a discard still asks after a failed upload, which may have landed", async () => {

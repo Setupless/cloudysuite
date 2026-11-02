@@ -50,7 +50,7 @@ import {
   prefillDraft,
   sendDraft,
 } from "../functions";
-import { discardWhenSettled } from "../discard";
+import { discardWhenSettled, nothingToDiscard } from "../discard";
 import { isHeld, isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
   type DraftContent,
@@ -1228,8 +1228,15 @@ function EditorForm({
           title="Discard draft"
           aria-label="Discard draft"
           onClick={() => {
-            // With no row and nothing added, there is nothing to lose or to ask about.
-            if (revision.current === 0 && !addsSomething(read.current())) {
+            if (
+              nothingToDiscard({
+                hasRow: revision.current > 0,
+                savesUnderWay: savesUnderWay.current,
+                uploadsUnderWay: uploads.current.size,
+                keptOnDevice: keptHere.current,
+                addsSomething: addsSomething(read.current()),
+              })
+            ) {
               close();
             } else {
               setConfirmingDiscard(true);

@@ -18,3 +18,18 @@ export async function discardWhenSettled({
   await saving;
   if (uploadsRan || hasRow()) await discard();
 }
+
+// A save or file still on its way can make a row after the editor has gone, and a save
+// that fails can leave its words on the device, so those need the discard too.
+export const nothingToDiscard = (now: {
+  hasRow: boolean;
+  savesUnderWay: number;
+  uploadsUnderWay: number;
+  keptOnDevice: boolean;
+  addsSomething: boolean;
+}): boolean =>
+  !now.hasRow &&
+  now.savesUnderWay === 0 &&
+  now.uploadsUnderWay === 0 &&
+  !now.keptOnDevice &&
+  !now.addsSomething;
