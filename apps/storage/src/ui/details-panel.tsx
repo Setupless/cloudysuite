@@ -28,6 +28,7 @@ import { formatBytes, formatChanged, itemCount } from "./format";
 import { ItemActions } from "./item-actions";
 import { ConfirmDialog, NameDialog } from "./page-parts";
 import { ShareDialog } from "./share-dialog";
+import { StarButton } from "./star-button";
 import { TeamDialog } from "./team-dialog";
 
 export type TeamRoot = { driveId: DriveId; name: string; role: DriveRole };
@@ -290,9 +291,19 @@ export function DetailsPanel({
             <IconFolder size={38} stroke={1.75} aria-hidden />
           )}
         </div>
-        <h2 className="text-[15px] font-semibold break-words">
-          {subject.kind === "file" ? subject.file.name : subject.name}
-        </h2>
+        <div className="flex items-start gap-1">
+          <h2 className="min-w-0 flex-1 text-[15px] font-semibold break-words">
+            {subject.kind === "file" ? subject.file.name : subject.name}
+          </h2>
+          {subject.kind === "file" ? (
+            <StarButton driveId={subject.driveId} item={subject.file} />
+          ) : (
+            subject.driveId &&
+            subject.folder && (
+              <StarButton driveId={subject.driveId} item={subject.folder} />
+            )
+          )}
+        </div>
         {subject.kind === "file" && (
           <div className="flex flex-wrap gap-1.5">
             {subject.canEdit && (

@@ -4,6 +4,7 @@ import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
 import {
   IconHome,
   IconPlus,
+  IconStar,
   IconTrash,
   IconUserCircle,
   IconUsers,
@@ -26,6 +27,7 @@ import { call, directoryQuery, storageKeys } from "../queries";
 import { formatBytes } from "./format";
 import { StorageMeter } from "./storage-meter";
 import { NameDialog } from "./page-parts";
+import { SearchBox } from "./search-box";
 import { teamColour } from "./team-colour";
 import { UploadTray } from "./upload-tray";
 
@@ -76,6 +78,13 @@ function Navigation({
       <Link to="/storage/shared" className={itemClass(isShared)}>
         <IconUsers size={18} stroke={1.75} aria-hidden />
         Shared with me
+      </Link>
+      <Link
+        to="/storage/starred"
+        className={itemClass(pathname.endsWith("/starred"))}
+      >
+        <IconStar size={18} stroke={1.75} aria-hidden />
+        Starred
       </Link>
       <h3 className="px-2.5 pt-3 pb-1 text-xs font-semibold text-secondary">
         Team folders
@@ -152,6 +161,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       app="storage"
       user={user}
       navigationLabel="Storage"
+      headerContent={<SearchBox />}
       navigation={
         <Navigation
           directory={directory}

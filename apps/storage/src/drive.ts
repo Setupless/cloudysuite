@@ -6,6 +6,8 @@ import { moveReceiver } from "./client";
 import { MIGRATIONS } from "./migrations";
 import { type MoveDelivery, movedBytes, type ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
+import { SearchStore } from "./search-store";
+import { StarStore } from "./star-store";
 import {
   type Actor,
   type CommitResult,
@@ -30,8 +32,11 @@ import type {
   OpenedItem,
   RenameResult,
   RestoreResult,
+  SearchResult,
   SharedLine,
   ShareResult,
+  StarredLine,
+  StarResult,
   TrashEntry,
   TrashResult,
   UploadView,
@@ -57,6 +62,8 @@ const SHARE_INDEX_BATCH = 30;
 
 export class Drive extends DurableObject<Env> {
   readonly #store: DriveStore;
+  readonly #search: SearchStore;
+  readonly #stars: StarStore;
   // One write to D1 at a time and each reads the truth when it starts, so a slow early
   // write can't land after a later one and leave D1 behind, or wipe out a claim.
   #d1Writes: Promise<unknown> = Promise.resolve();
@@ -72,6 +79,8 @@ export class Drive extends DurableObject<Env> {
     };
     applyMigrations(db, MIGRATIONS);
     this.#store = new DriveStore(db);
+    this.#search = new SearchStore(db, this.#store);
+    this.#stars = new StarStore(db, this.#store);
   }
 
   list(
@@ -396,6 +405,30 @@ export class Drive extends DurableObject<Env> {
 
   sharedWith(actor: Actor, limit: number): SharedLine[] {
     return this.#store.sharedWith(actor, limit);
+  }
+
+  search(actor: Actor, text: string, limit: number): SearchResult {
+    return this.#search.search(actor, text, limit);
+  }
+
+  async setStar(input: {
+    actor: Actor;
+    id: ItemId;
+    on: boolean;
+  }): Promise<StarResult> {
+    const result = this.#stars.setStar({ ...input, now: Date.now() });
+    if (result.status === "done" && input.actor.role === null) {
+      await this.#afterShareChange();
+    }
+    return result;
+  }
+
+  starIds(actor: Actor): ItemId[] {
+    return this.#stars.starIds(actor);
+  }
+
+  starred(actor: Actor, limit: number): StarredLine[] {
+    return this.#stars.starred(actor, limit);
   }
 
   // The manager check is on D1, which the caller read for this request.

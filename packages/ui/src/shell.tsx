@@ -28,6 +28,8 @@ export type AppShellProps = {
   navigation?: ReactNode;
   // Pinned to the bottom of the sidebar.
   sidebarFooter?: ReactNode;
+  // In the top bar, between the menu button and the person's picture.
+  headerContent?: ReactNode;
   children: ReactNode;
 };
 
@@ -81,6 +83,7 @@ export function AppShell({
   navigationLabel,
   navigation,
   sidebarFooter,
+  headerContent,
   children,
 }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -147,6 +150,7 @@ export function AppShell({
           >
             <IconMenu2 size={22} stroke={1.75} aria-hidden />
           </button>
+          {headerContent}
           <button
             type="button"
             popoverTarget={personMenu}

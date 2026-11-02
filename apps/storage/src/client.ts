@@ -22,8 +22,11 @@ import type {
   OpenedItem,
   RenameResult,
   RestoreResult,
+  SearchResult,
   SharedLine,
   ShareResult,
+  StarredLine,
+  StarResult,
   TrashEntry,
   TrashResult,
 } from "./types";
@@ -73,6 +76,10 @@ export type DriveClient = {
   setEveryone(id: ItemId, on: boolean): Promise<ShareResult>;
   sharesOn(id: ItemId): Promise<ItemShares | null>;
   sharedWith(limit: number): Promise<SharedLine[]>;
+  search(text: string, limit: number): Promise<SearchResult>;
+  setStar(id: ItemId, on: boolean): Promise<StarResult>;
+  starIds(): Promise<ItemId[]>;
+  starred(limit: number): Promise<StarredLine[]>;
   // Only for a manager of a team folder, which the caller has checked.
   close(): Promise<CloseResult>;
   reopen(): Promise<void>;
@@ -162,6 +169,13 @@ export function openDrive(env: Env, grant: DriveGrant): DriveClient {
       (await stub.sharesOn(actor, id)) as ItemShares | null,
     sharedWith: async (limit) =>
       (await stub.sharedWith(actor, limit)) as SharedLine[],
+    search: async (text, limit) =>
+      (await stub.search(actor, text, limit)) as SearchResult,
+    setStar: async (id, on) =>
+      (await stub.setStar({ actor, id, on })) as StarResult,
+    starIds: async () => (await stub.starIds(actor)) as ItemId[],
+    starred: async (limit) =>
+      (await stub.starred(actor, limit)) as StarredLine[],
     close: async () => (await stub.close(driveId)) as CloseResult,
     reopen: () => stub.reopen(),
 

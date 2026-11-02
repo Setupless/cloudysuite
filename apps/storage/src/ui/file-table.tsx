@@ -9,10 +9,13 @@ import { focusDetailsOnNextFile } from "./details-focus";
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { personOf } from "./people";
+import { StarButton } from "./star-button";
 
 const COLUMNS =
-  "grid grid-cols-[minmax(0,1fr)_60px] items-center gap-2.5 sm:grid-cols-[minmax(0,1fr)_34px_84px_60px]";
+  "grid grid-cols-[minmax(0,1fr)_60px_28px] items-center gap-2.5 sm:grid-cols-[minmax(0,1fr)_34px_84px_60px_28px]";
 const OPTIONAL_COLUMN = "max-sm:hidden";
+// Over the row's last column: its margin and padding from the right.
+const STAR_SLOT = "absolute top-1/2 right-[18px] flex -translate-y-1/2";
 const ROW = `${COLUMNS} mx-2 w-[calc(100%-1rem)] cursor-pointer rounded px-2.5 py-[7px] text-left text-sm outline-accent hover:bg-field focus-visible:outline-2`;
 
 function Cells({
@@ -41,6 +44,7 @@ function Cells({
         {changed}
       </span>
       <span className="truncate text-[13px] text-secondary">{size}</span>
+      <span />
     </>
   );
 }
@@ -163,30 +167,35 @@ export function FileTable({
         <span className={OPTIONAL_COLUMN} />
         <span className={OPTIONAL_COLUMN}>{dateLabel}</span>
         <span>Size</span>
+        <span />
       </div>
       <div className="flex flex-col">
-        {rows.map(({ driveId, item, person, at }) =>
-          item.kind === "folder" ? (
-            <FolderRow
-              key={item.id}
-              driveId={driveId}
-              folder={item}
-              people={people}
-              personId={person ?? item.createdBy}
-              changed={changed(at ?? item.changedAt)}
-            />
-          ) : (
-            <FileRow
-              key={item.id}
-              file={item}
-              people={people}
-              personId={person ?? item.createdBy}
-              selected={item.id === selectedId}
-              changed={changed(at ?? item.changedAt)}
-              onSelect={onSelect}
-            />
-          ),
-        )}
+        {rows.map(({ driveId, item, person, at }) => (
+          <div key={item.id} className="relative">
+            {item.kind === "folder" ? (
+              <FolderRow
+                driveId={driveId}
+                folder={item}
+                people={people}
+                personId={person ?? item.createdBy}
+                changed={changed(at ?? item.changedAt)}
+              />
+            ) : (
+              <FileRow
+                file={item}
+                people={people}
+                personId={person ?? item.createdBy}
+                selected={item.id === selectedId}
+                changed={changed(at ?? item.changedAt)}
+                onSelect={onSelect}
+              />
+            )}
+            {/* Beside the row, because a button can't go inside a link or a button. */}
+            <span className={STAR_SLOT}>
+              <StarButton driveId={driveId} item={item} />
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

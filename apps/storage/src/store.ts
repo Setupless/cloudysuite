@@ -397,8 +397,7 @@ export class DriveStore {
               actor.userId,
             ).map((row) => row.id as ItemId),
       folder,
-      ancestors:
-        parentId === null ? [] : this.#ancestors(parentId, reach.topId),
+      ancestors: parentId === null ? [] : this.ancestors(parentId, reach.topId),
       contains: folder
         ? folder.contains
         : (this.#rows<{ total: number }>(
@@ -413,7 +412,7 @@ export class DriveStore {
   }
 
   // Names above topId stay out of it, because the person can't reach those folders.
-  #ancestors(id: ItemId, topId: ItemId | null): FolderItem[] {
+  ancestors(id: ItemId, topId: ItemId | null): FolderItem[] {
     const all = this.#rows<ItemRow>(
       `${CHAIN}
        SELECT items.*, 0 AS contains FROM items JOIN chain ON items.id = chain.id
@@ -1128,6 +1127,8 @@ export class DriveStore {
     let files = 0;
     for (const row of rows) {
       this.#closeUploadsIn(row.id);
+      // Someone who could open it while it was arriving may have starred it.
+      this.#dropShares(row.id, now);
       this.#db.exec("DELETE FROM items WHERE id = ?", row.id);
       if (row.kind === "file") {
         bytes += row.size ?? 0;
@@ -1540,7 +1541,7 @@ export class DriveStore {
           actor.userId,
           now,
         );
-        this.#queueIndexWrite(id, userId, now);
+        this.queueIndexWrite(id, userId, now);
       }
     });
   }
@@ -1558,7 +1559,7 @@ export class DriveStore {
         id,
         userId,
       );
-      this.#queueIndexWrite(id, userId, now);
+      this.queueIndexWrite(id, userId, now);
     });
   }
 
@@ -1637,7 +1638,7 @@ export class DriveStore {
     });
   }
 
-  #queueIndexWrite(itemId: string, userId: string, now: number): void {
+  queueIndexWrite(itemId: string, userId: string, now: number): void {
     this.#db.exec(
       `INSERT INTO share_index_writes (item_id, user_id, revision, try_at)
        VALUES (?, ?, 1, ?)
@@ -1651,12 +1652,15 @@ export class DriveStore {
 
   #dropShares(itemId: string, now: number): void {
     for (const { user_id: userId } of this.#rows<{ user_id: string }>(
-      "SELECT user_id FROM shares WHERE item_id = ? AND user_id IS NOT NULL",
+      `SELECT user_id FROM shares WHERE item_id = ? AND user_id IS NOT NULL
+       UNION SELECT user_id FROM stars WHERE item_id = ?`,
+      itemId,
       itemId,
     )) {
-      this.#queueIndexWrite(itemId, userId, now);
+      this.queueIndexWrite(itemId, userId, now);
     }
     this.#db.exec("DELETE FROM shares WHERE item_id = ?", itemId);
+    this.#db.exec("DELETE FROM stars WHERE item_id = ?", itemId);
   }
 
   shareIndexWrites(limit: number): ShareIndexWrite[] {
@@ -1667,8 +1671,10 @@ export class DriveStore {
       present: number;
     }>(
       `SELECT writes.item_id, writes.user_id, writes.revision,
-         EXISTS (SELECT 1 FROM shares
-           WHERE shares.item_id = writes.item_id AND shares.user_id = writes.user_id) AS present
+         (EXISTS (SELECT 1 FROM shares
+            WHERE shares.item_id = writes.item_id AND shares.user_id = writes.user_id)
+          OR EXISTS (SELECT 1 FROM stars
+            WHERE stars.item_id = writes.item_id AND stars.user_id = writes.user_id)) AS present
        FROM share_index_writes AS writes ORDER BY writes.try_at LIMIT ?`,
       limit,
     ).map((row) => ({

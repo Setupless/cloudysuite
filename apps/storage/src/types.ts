@@ -83,6 +83,15 @@ export type SharedLine = {
   sharedAt: number;
 };
 
+// A found item, with the names of the folders above it that this person can reach.
+export type SearchLine = { item: DriveItem; location: string[] };
+
+export type SearchResult = { lines: SearchLine[]; more: boolean };
+
+export type StarredLine = OpenedItem & { starredAt: number };
+
+export type StarResult = { status: "done" } | { status: "gone" } | NoAccess;
+
 export type ShareResult =
   { status: "done" } | { status: "gone" } | { status: "busy" } | NoAccess;
 

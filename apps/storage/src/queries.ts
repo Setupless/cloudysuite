@@ -1,6 +1,7 @@
 import {
   dehydrate,
   infiniteQueryOptions,
+  keepPreviousData,
   QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
@@ -18,6 +19,7 @@ import {
   getShareChoices,
   getSharedWithMe,
 } from "./sharing-functions";
+import { getStarIds, getStarred, searchEverything } from "./search-functions";
 import type { ItemId } from "./types";
 
 const CANNOT_REACH =
@@ -78,6 +80,9 @@ export const storageKeys = {
     ["storage", "access", driveId, itemId] as const,
   shareChoices: ["storage", "share-choices"] as const,
   shared: ["storage", "shared"] as const,
+  search: (text: string) => ["storage", "search", text] as const,
+  starred: ["storage", "starred"] as const,
+  starIds: (driveId: DriveId) => ["storage", "star-ids", driveId] as const,
 };
 
 export const directoryQuery = () =>
@@ -143,6 +148,25 @@ export const sharedQuery = () =>
     queryFn: () => call(() => getSharedWithMe()),
   });
 
+export const searchQuery = (text: string) =>
+  queryOptions({
+    queryKey: storageKeys.search(text),
+    queryFn: () => call(() => searchEverything({ data: { text } })),
+    placeholderData: keepPreviousData,
+  });
+
+export const starredQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.starred,
+    queryFn: () => call(() => getStarred()),
+  });
+
+export const starIdsQuery = (driveId: DriveId) =>
+  queryOptions({
+    queryKey: storageKeys.starIds(driveId),
+    queryFn: () => call(() => getStarIds({ data: { driveId } })),
+  });
+
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A
 // failed prefetch leaves the query empty, and the page shows the failure.
 export async function prefetchDirectory() {
@@ -170,6 +194,20 @@ export async function prefetchShared() {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await client.prefetchQuery(sharedQuery());
+  return dehydrate(client);
+}
+
+export async function prefetchSearch(text: string) {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  if (text.trim() !== "") await client.prefetchQuery(searchQuery(text));
+  return dehydrate(client);
+}
+
+export async function prefetchStarred() {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(starredQuery());
   return dehydrate(client);
 }
 
