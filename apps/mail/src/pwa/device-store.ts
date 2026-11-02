@@ -38,6 +38,9 @@ const noteKey = (id: OutgoingId) => `${NOTE_PREFIX}${id}`;
 // service worker's caches hold only the public build and an anonymous page. So clearing
 // this is enough, and nothing about which cache held what needs tracking.
 let opening: Promise<IDBDatabase> | null = null;
+// A connection already checked for its owner. It stops counting the moment anything starts
+// clearing the device, so `keepDraftNow` can't put mail back after a sign-out.
+let checked: { database: IDBDatabase; userId: UserId } | null = null;
 
 function open(): Promise<IDBDatabase> {
   opening ??= new Promise((resolve, reject) => {
@@ -54,9 +57,11 @@ function open(): Promise<IDBDatabase> {
       database.onversionchange = () => {
         database.close();
         opening = null;
+        checked = null;
       };
       database.onclose = () => {
         opening = null;
+        checked = null;
       };
       resolve(database);
     };
@@ -142,6 +147,31 @@ export const keepDraft = (userId: UserId, draft: KeptDraft) =>
   writeAsOwner(userId, [], (transaction) => {
     transaction.objectStore(META).put(draft, keptKey(draft.id));
   });
+
+export async function getReadyToKeepNow(userId: UserId): Promise<void> {
+  if (checked?.userId === userId) return;
+  const database = await open();
+  const owner = await requested(
+    database.transaction(META).objectStore(META).get(OWNER_KEY),
+  );
+  if ((owner as DeviceOwner | undefined)?.user.id === userId) {
+    checked = { database, userId };
+  }
+}
+
+// For a page that is closing, which gets no later turn for `writeAsOwner` to read the owner
+// in. Everything here reaches the browser before this returns, so the write outlives the page.
+export function keepDraftNow(userId: UserId, draft: KeptDraft): boolean {
+  if (checked?.userId !== userId) return false;
+  try {
+    const transaction = checked.database.transaction(META, "readwrite");
+    transaction.objectStore(META).put(draft, keptKey(draft.id));
+    transaction.commit();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function readAllAsOwner(
   userId: UserId,
@@ -387,6 +417,7 @@ export async function clearDevice(): Promise<void> {
   );
   const heldOpen = opening;
   opening = null;
+  checked = null;
   await heldOpen?.then((database) => database.close()).catch(() => {});
   await Promise.allSettled([
     deleteDatabase(),

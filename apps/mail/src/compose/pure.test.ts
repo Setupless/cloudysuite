@@ -14,6 +14,7 @@ import { toEmailBuilder } from "./outgoing-message";
 import { storedMessageId, threadingHeaders } from "./threading-headers";
 import { isEditorLink } from "./editor-tags";
 import { holdsSomethingAdded } from "./added";
+import { discardWhenSettled } from "./discard";
 import {
   isLeftOut,
   keptAsText,
@@ -766,4 +767,56 @@ test("a recipient's chip can't hide the real address behind a name that looks li
   }
   expect(recipientLabel(person(real, "Mallory Doe"))).toBe("Mallory Doe");
   expect(recipientLabel(person(real))).toBe(real);
+});
+
+const discardFrom = (uploads: Promise<unknown>[], rowAfter: () => boolean) => {
+  const discarded: string[] = [];
+  const running = discardWhenSettled({
+    uploads: new Set(uploads),
+    saving: Promise.resolve(),
+    hasRow: rowAfter,
+    discard: async () => discarded.push("discarded"),
+  });
+  return { discarded, running };
+};
+
+test("a discard waits for a file on its way, then removes the row it made", async () => {
+  const upload = Promise.withResolvers<void>();
+  let row = false;
+  const { discarded, running } = discardFrom([upload.promise], () => row);
+  await Bun.sleep(0);
+  expect(discarded).toEqual([]);
+  row = true;
+  upload.resolve();
+  await running;
+  expect(discarded).toEqual(["discarded"]);
+});
+
+test("a discard still asks after a failed upload, which may have landed", async () => {
+  const { discarded, running } = discardFrom([Promise.resolve()], () => false);
+  await running;
+  expect(discarded).toEqual(["discarded"]);
+});
+
+test("a discard asks nothing when no row exists and no file is on its way", async () => {
+  const { discarded, running } = discardFrom([], () => false);
+  await running;
+  expect(discarded).toEqual([]);
+});
+
+test("a discard waits for a first save still on its way", async () => {
+  const save = Promise.withResolvers<void>();
+  let row = false;
+  const discarded: string[] = [];
+  const running = discardWhenSettled({
+    uploads: new Set(),
+    saving: save.promise,
+    hasRow: () => row,
+    discard: async () => discarded.push("discarded"),
+  });
+  await Bun.sleep(0);
+  row = true;
+  save.resolve();
+  await running;
+  expect(discarded).toEqual(["discarded"]);
 });

@@ -20,7 +20,13 @@ import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
 import { copyHoldsSomething, holdsSomethingAdded } from "../added";
 import { useOffline } from "../../pwa/connectivity";
-import { forgetKeptDraft, keepDraft, keepNote } from "../../pwa/device-store";
+import {
+  forgetKeptDraft,
+  getReadyToKeepNow,
+  keepDraft,
+  keepDraftNow,
+  keepNote,
+} from "../../pwa/device-store";
 import {
   DRAFT_KEPT_AFTER_FAILURE,
   isOffline,
@@ -44,6 +50,7 @@ import {
   prefillDraft,
   sendDraft,
 } from "../functions";
+import { discardWhenSettled } from "../discard";
 import { isHeld, isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
   type DraftContent,
@@ -81,6 +88,11 @@ const LOCKED_KEPT_TOAST =
 const SAVED_TO_DRAFTS = "Saved to Drafts.";
 const CHANGED_ELSEWHERE =
   "This draft changed somewhere else while you were clearing it, so it's still in Drafts.";
+const DISCARD_UNFINISHED =
+  "We couldn't finish discarding this draft. If it's in Drafts, you can discard it there.";
+
+const outlivingThePage = (...[input, init]: Parameters<typeof fetch>) =>
+  fetch(input, { ...init, keepalive: true });
 
 type Loaded = {
   draft: DraftForEditor | null;
@@ -281,7 +293,13 @@ function EditorForm({
   // way may still have copied.
   const takenOff = useRef(new Set<number>());
   const uploadingNow = useRef(0);
+  const uploads = useRef(new Set<Promise<unknown>>());
+  const discarding = useRef(false);
+  const sendingNow = useRef(false);
   const saving = useRef<Promise<void>>(Promise.resolve());
+  // A closing page cancels ordinary requests, so words on their way still count as unsaved.
+  const savesUnderWay = useRef(0);
+  const saveFailed = useRef(false);
   // Moving to another list or conversation takes the editor away without a word.
   const leftUnasked = useRef(true);
   const close = () => {
@@ -338,26 +356,28 @@ function EditorForm({
     });
   const composeMode = () =>
     session.kind === "start" ? session.mode : (loaded.draft?.mode ?? "new");
+  const keptCopy = (content: DraftContent, keptAt: number) => ({
+    id: session.id,
+    mailboxId,
+    keptAt,
+    content,
+    revision: revision.current,
+    mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
+    prefill,
+    parent: parentHeld.current,
+    quote: quoteHeld.current,
+    quoteHtml: quoteHeld.current ? loaded.quoteHtml : null,
+    attachments: attachmentsNow.current,
+  });
+  const nextKeptAt = () => Math.max(Date.now(), keptVersion.current + 1);
   const keepHere = async (content: DraftContent) => {
     // A new version of the same words could outrun a move to Drafts already under way,
     // and come back as a second draft.
     const words = JSON.stringify(content);
     if (keptHere.current && words === keptWords.current) return;
-    const keptAt = Math.max(Date.now(), keptVersion.current + 1);
+    const keptAt = nextKeptAt();
     try {
-      keptHere.current = await keepDraft(userId, {
-        id: session.id,
-        mailboxId,
-        keptAt,
-        content,
-        revision: revision.current,
-        mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
-        prefill,
-        parent: parentHeld.current,
-        quote: quoteHeld.current,
-        quoteHtml: quoteHeld.current ? loaded.quoteHtml : null,
-        attachments: attachmentsNow.current,
-      });
+      keptHere.current = await keepDraft(userId, keptCopy(content, keptAt));
       if (keptHere.current) {
         keptVersion.current = keptAt;
         keptWords.current = words;
@@ -448,96 +468,148 @@ function EditorForm({
       const changed = dirty.current;
       dirty.current = false;
       const content = read.current();
-      saving.current = saving.current.then(async () => {
-        const adds = addsSomething(content);
-        const onServer = revision.current > 0;
-        if (!adds) {
-          setSaved(false);
-          await forgetHere();
-        }
-        if (adds ? !changed : !(leaving && onServer)) return;
-        // No later save can land. Words wait here for the person to choose.
-        if (lockedNow.current) {
-          if (adds) {
-            dirty.current = true;
-            await keepHere(content);
-          }
-          return;
-        }
-        // Files uploaded while this is on its way aren't in what the server answers with.
-        const had = attachmentsNow.current;
-        try {
-          const result = await callAction(() =>
-            saveDraft({
-              data: {
-                mailboxId,
-                id: session.id,
-                baseRevision: revision.current,
-                content,
-                start: startNow(content),
-                leaving: !adds,
-              },
-            }),
-          );
-          setSaveProblem(null);
-          noAccess.current = false;
-          switch (result.status) {
-            case "locked":
-              lockedNow.current = true;
-              if (adds) {
-                dirty.current = true;
-                setLocked(true);
-                await keepHere(content);
-              }
-              return;
-            case "removed":
-              revision.current = 0;
-              return;
-            case "changed":
-              stillInDrafts.current = CHANGED_ELSEWHERE;
-              return;
-            case "nothing":
-              return;
-          }
-          await forgetHere();
-          revision.current = result.revision;
-          setSaved(true);
-          if (!onServer) adoptCarried(result.carried);
-          if (result.overwrote) {
-            setNotice(
-              `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
-            );
-          }
-          await noteLeftOut(had, content, result.holds);
-        } catch (error) {
-          const message = (error as Error).message;
-          const noAccessNow =
-            error instanceof MailFailure && error.status === 403;
-          // Text with nothing in it isn't worth keeping or offering back.
+      if (changed) savesUnderWay.current += 1;
+      saving.current = saving.current
+        .then(async () => {
+          const adds = addsSomething(content);
+          const onServer = revision.current > 0;
           if (!adds) {
-            stillInDrafts.current = noAccessNow
-              ? message
-              : isOffline()
-                ? OFFLINE_DRAFT_NOT_REMOVED
-                : "We couldn't remove this draft, so it's still in Drafts. You can discard it there.";
+            setSaved(false);
+            await forgetHere();
+          }
+          if (adds ? !changed : !(leaving && onServer)) return;
+          // No later save can land. Words wait here for the person to choose.
+          if (lockedNow.current) {
+            if (adds) {
+              dirty.current = true;
+              await keepHere(content);
+            }
             return;
           }
-          dirty.current = true;
-          lastSaveError.current = message;
-          await keepHere(content);
-          if (noAccessNow) {
-            noAccess.current = true;
-            setSaveProblem(`${message} What you wrote is kept on this device.`);
+          // Files uploaded while this is on its way aren't in what the server answers with.
+          const had = attachmentsNow.current;
+          try {
+            const result = await callAction(() =>
+              saveDraft({
+                data: {
+                  mailboxId,
+                  id: session.id,
+                  baseRevision: revision.current,
+                  content,
+                  start: startNow(content),
+                  leaving: !adds,
+                },
+              }),
+            );
+            setSaveProblem(null);
+            noAccess.current = false;
+            switch (result.status) {
+              case "locked":
+                lockedNow.current = true;
+                if (adds) {
+                  dirty.current = true;
+                  setLocked(true);
+                  await keepHere(content);
+                }
+                return;
+              case "removed":
+                revision.current = 0;
+                return;
+              case "changed":
+                stillInDrafts.current = CHANGED_ELSEWHERE;
+                return;
+              case "nothing":
+                return;
+            }
+            await forgetHere();
+            revision.current = result.revision;
+            setSaved(true);
+            if (!onServer) adoptCarried(result.carried);
+            if (result.overwrote) {
+              setNotice(
+                `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
+              );
+            }
+            await noteLeftOut(had, content, result.holds);
+          } catch (error) {
+            const message = (error as Error).message;
+            const noAccessNow =
+              error instanceof MailFailure && error.status === 403;
+            // Text with nothing in it isn't worth keeping or offering back.
+            if (!adds) {
+              stillInDrafts.current = noAccessNow
+                ? message
+                : isOffline()
+                  ? OFFLINE_DRAFT_NOT_REMOVED
+                  : "We couldn't remove this draft, so it's still in Drafts. You can discard it there.";
+              return;
+            }
+            dirty.current = true;
+            saveFailed.current = true;
+            lastSaveError.current = message;
+            await keepHere(content);
+            if (noAccessNow) {
+              noAccess.current = true;
+              setSaveProblem(
+                `${message} What you wrote is kept on this device.`,
+              );
+            }
           }
-        }
-      });
+        })
+        .finally(() => {
+          if (changed) savesUnderWay.current -= 1;
+        });
       return saving.current;
     },
     [mailboxId, session.id],
   );
 
+  // What might not outlive this page goes on the device before this returns.
+  const keepOnDeviceNow = (content: DraftContent) => {
+    if (discarding.current || sendingNow.current) return;
+    if (!dirty.current && savesUnderWay.current === 0) return;
+    if (!addsSomething(content)) return;
+    const words = JSON.stringify(content);
+    if (keptHere.current && words === keptWords.current) return;
+    const keptAt = nextKeptAt();
+    if (keepDraftNow(userId, keptCopy(content, keptAt))) {
+      keptHere.current = true;
+      keptVersion.current = keptAt;
+      keptWords.current = words;
+    }
+  };
+
+  // No later turn is coming, and a save ahead of this one would hold it back forever, so
+  // this neither waits nor reads an answer. Words go to the device and the server at once,
+  // and both landing is safe: the device's copy finds the server already holds them.
+  const keepAsPageCloses = (leaving: boolean) => {
+    if (discarding.current || sendingNow.current) return;
+    const content = read.current();
+    const adds = addsSomething(content);
+    const unsaved = dirty.current || savesUnderWay.current > 0;
+    if (adds ? !unsaved : !(leaving && revision.current > 0)) return;
+    keepOnDeviceNow(content);
+    if (lockedNow.current || isOffline()) return;
+    void saveDraft({
+      data: {
+        mailboxId,
+        id: session.id,
+        baseRevision: revision.current,
+        content,
+        start: startNow(content),
+        leaving: !adds,
+      },
+      fetch: outlivingThePage,
+    }).catch(() => {});
+  };
+  const closingNow = useRef(keepAsPageCloses);
+  closingNow.current = keepAsPageCloses;
+  const hidingNow = useRef(() => keepOnDeviceNow(read.current()));
+  hidingNow.current = () => keepOnDeviceNow(read.current());
+
   const touched = useCallback(() => {
     if (body.current) lastHtml.current = body.current.innerHTML;
+    void getReadyToKeepNow(userId).catch(() => {});
     dirty.current = true;
     setSaved(false);
     clearTimeout(timer.current);
@@ -587,6 +659,8 @@ function EditorForm({
 
   useEffect(() => {
     mounted.current = true;
+    // The first keystroke may be the last thing to happen before the page closes.
+    void getReadyToKeepNow(userId).catch(() => {});
     return () => {
       mounted.current = false;
     };
@@ -599,10 +673,13 @@ function EditorForm({
 
   useEffect(() => {
     const onHide = () => {
-      if (document.visibilityState === "hidden") void flush();
+      if (document.visibilityState !== "hidden") return;
+      // A phone can end a hidden page with no further event.
+      hidingNow.current();
+      void flush();
     };
     const onPageHide = (event: PageTransitionEvent) =>
-      void flush(!event.persisted);
+      closingNow.current(!event.persisted);
     document.addEventListener("visibilitychange", onHide);
     addEventListener("pagehide", onPageHide);
     return () => {
@@ -664,19 +741,34 @@ function EditorForm({
   };
 
   const discard = async () => {
+    discarding.current = true;
     clearTimeout(timer.current);
     dirty.current = false;
-    await saving.current;
+    // A file can take minutes and the person has finished with this message, so only the
+    // words on the toast wait for it.
+    const outlasting = uploads.current.size > 0;
+    if (outlasting) close();
     try {
-      if (revision.current > 0) {
-        await callAction(() =>
-          discardOutgoing({ data: { mailboxId, id: session.id } }),
-        );
-      }
+      await discardWhenSettled({
+        uploads: uploads.current,
+        saving: saving.current,
+        hasRow: () => revision.current > 0,
+        discard: () =>
+          callAction(() =>
+            discardOutgoing({ data: { mailboxId, id: session.id } }),
+          ),
+      });
       await forgetHere();
-      close();
+      if (!outlasting) close();
+      refreshList();
       toast({ message: "Draft discarded." });
     } catch (error) {
+      discarding.current = false;
+      if (outlasting) {
+        refreshList();
+        toast({ tone: "danger", message: DISCARD_UNFINISHED });
+        return;
+      }
       dirty.current = true;
       setProblem((error as Error).message);
     }
@@ -743,15 +835,25 @@ function EditorForm({
       attachments.length > 0 || parentHeld.current || quoteHeld.current;
     if (couldLoseSomething) {
       const leftOutBefore = leftOutFound.current;
+      saveFailed.current = false;
       dirty.current = true;
       await flush();
-      if (dirty.current || leftOutFound.current !== leftOutBefore) {
+      // Anything typed while that save ran isn't a reason to stop: Send reads the fields again.
+      if (saveFailed.current) {
+        setSending(false);
+        setProblem(
+          `We couldn't send this, because the latest version wouldn't save. ${lastSaveError.current}`,
+        );
+        return;
+      }
+      if (lockedNow.current || leftOutFound.current !== leftOutBefore) {
         setSending(false);
         return;
       }
     }
     clearTimeout(timer.current);
     dirty.current = false;
+    sendingNow.current = true;
     await saving.current;
     try {
       await call(() =>
@@ -769,6 +871,7 @@ function EditorForm({
       close();
       refreshList();
     } catch (error) {
+      sendingNow.current = false;
       dirty.current = true;
       setSending(false);
       setProblem((error as Error).message);
@@ -777,7 +880,7 @@ function EditorForm({
   };
 
   const addFiles = async (files: File[]) => {
-    if (files.length === 0) return;
+    if (files.length === 0 || discarding.current) return;
     if (isOffline()) {
       setProblem(OFFLINE_ACTION_REFUSED);
       return;
@@ -806,7 +909,11 @@ function EditorForm({
     setUploading((names) => [...names, ...files.map((file) => file.name)]);
     const queue = [...files];
     const worker = async () => {
-      for (let file = queue.shift(); file; file = queue.shift()) {
+      for (
+        let file = queue.shift();
+        file && !discarding.current;
+        file = queue.shift()
+      ) {
         const { name } = file;
         try {
           const uploaded = await uploadAttachment(
@@ -818,7 +925,7 @@ function EditorForm({
           if (revision.current === 0) {
             revision.current = uploaded.revision;
             adoptCarried(uploaded.carried);
-            if (uploaded.originalGone) {
+            if (uploaded.originalGone && !discarding.current) {
               await noteLeftOut(
                 attachmentsNow.current,
                 read.current(),
@@ -842,7 +949,12 @@ function EditorForm({
         }
       }
     };
-    await Promise.all(Array.from({ length: PARALLEL_UPLOADS }, worker));
+    const running = Promise.all(
+      Array.from({ length: PARALLEL_UPLOADS }, worker),
+    );
+    uploads.current.add(running);
+    await running;
+    uploads.current.delete(running);
   };
 
   const removeAttachment = async (attachment: OutgoingAttachment) => {
