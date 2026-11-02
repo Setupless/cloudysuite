@@ -1,9 +1,11 @@
 import { badRequest, requireMailboxId, requireMessageId } from "../wire";
-import type { Address } from "../types";
+import type { Address, AttachmentId } from "../types";
 import {
   COMPOSE_MODES,
   type ComposeMode,
   type DraftContent,
+  type DraftStart,
+  MAX_ATTACHMENTS,
   MAX_BODY_BYTES,
   MAX_SUBJECT_LENGTH,
   type OutgoingId,
@@ -92,26 +94,37 @@ export const parseOutgoingInput = (raw: unknown) => {
   };
 };
 
-export const parseDiscardInput = (raw: unknown) => {
-  const { onlyAtRevision } = record(raw);
+const requireReplyTo = (input: Record<string, unknown>) => {
+  const mode = input.mode as ComposeMode;
+  if (!COMPOSE_MODES.includes(mode) || mode === "new") throw badRequest();
+  return { mode, parentMessageId: requireMessageId(input.parentMessageId) };
+};
+
+export const parsePrefillInput = (raw: unknown) => {
+  const input = record(raw);
   return {
-    ...parseOutgoingInput(raw),
-    ...(onlyAtRevision === undefined
-      ? {}
-      : { onlyAtRevision: requireRevision(onlyAtRevision) }),
+    mailboxId: requireMailboxId(input.mailboxId),
+    ...requireReplyTo(input),
   };
 };
 
-export const parseStartInput = (raw: unknown) => {
+export function parseDraftStart(raw: unknown): DraftStart {
   const input = record(raw);
-  const mode = input.mode as ComposeMode;
-  if (!COMPOSE_MODES.includes(mode) || mode === "new") throw badRequest();
+  const { carried, includeQuote } = input;
+  if (
+    !Array.isArray(carried) ||
+    carried.length > MAX_ATTACHMENTS ||
+    !carried.every((id) => Number.isSafeInteger(id) && id > 0) ||
+    typeof includeQuote !== "boolean"
+  ) {
+    throw badRequest();
+  }
   return {
-    ...parseOutgoingInput(raw),
-    mode,
-    parentMessageId: requireMessageId(input.parentMessageId),
+    ...requireReplyTo(input),
+    carried: carried as AttachmentId[],
+    includeQuote,
   };
-};
+}
 
 export const parseSaveInput = (raw: unknown) => {
   const input = record(raw);
@@ -119,6 +132,8 @@ export const parseSaveInput = (raw: unknown) => {
     ...parseOutgoingInput(raw),
     baseRevision: requireRevision(input.baseRevision),
     content: requireContent(input.content),
+    start: input.start === undefined ? undefined : parseDraftStart(input.start),
+    leaving: input.leaving === true,
   };
 };
 

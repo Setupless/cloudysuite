@@ -112,6 +112,7 @@ const refuse = (status: number, message: string): SendRefusal => ({
 export function refusalToSend(input: {
   content: DraftContent;
   plainText: string;
+  addedNothing: boolean;
   bodyBytes: number;
   quoteBytes: number;
   attachmentSizes: number[];
@@ -147,9 +148,8 @@ export function refusalToSend(input: {
     );
   }
   if (
-    !plainText.trim() &&
-    !content.includeQuote &&
-    attachmentSizes.length === 0
+    input.addedNothing ||
+    (!plainText.trim() && !content.includeQuote && attachmentSizes.length === 0)
   ) {
     return refuse(
       400,

@@ -6,10 +6,12 @@ import { createTestDatabase } from "../../../../src/db/test-database";
 import { openMailbox } from "../client";
 import { ingest } from "../ingest";
 import { rawKey } from "../r2-keys";
+import { readReplySource } from "./reply-source";
 import { createTestEnv, eml, MAILBOX_A, MAILBOX_B } from "../test-support";
 import type { Address, MailboxId, MessageDetail } from "../types";
+import type { NewRowFrom, ReplySource } from "./outgoing";
 import type { DraftContent, Editor, OutgoingId } from "./types";
-import { MAX_RECIPIENTS, UNDO_WINDOW_MS } from "./types";
+import { MAX_RECIPIENTS, startOf, UNDO_WINDOW_MS } from "./types";
 import { refusalToSend } from "./validate";
 
 const ALEX = "user-alex" as UserId;
@@ -391,6 +393,7 @@ test("a line break in an address is refused, by name, before anything is schedul
 test("recipient, attachment, and empty limits are refused in plain words", () => {
   const base = {
     plainText: "text",
+    addedNothing: false,
     bodyBytes: 10,
     quoteBytes: 0,
     attachmentSizes: [],
@@ -608,22 +611,16 @@ test("a quote that was left out doesn't count against a new file", async () => {
   const { parent } = await parentOf(kit);
   const FILE_BYTES = 18 * 1024 * 1024;
   const bigQuote = "<p>Quoted line</p>".repeat(30_000);
-  const start = async () => {
-    const id = newId();
-    const { draft } = await kit.mailbox.outgoing.start({
-      id,
+  const open = () =>
+    openReply(kit, {
       mode: "reply",
       parent,
       body: { text: null, html: bigQuote },
       inlineAttachments: [],
       ownAddresses: [OWN],
       ownDomain: DOMAIN,
-      editor: EDITOR,
     });
-    expect(draft.quote!.bytes).toBeGreaterThan(300 * 1024);
-    return { id, draft };
-  };
-  const upload = (id: OutgoingId) =>
+  const upload = (id: OutgoingId, from: NewRowFrom) =>
     kit.mailbox.outgoing.upload({
       id,
       fileName: "report.pdf",
@@ -634,23 +631,23 @@ test("a quote that was left out doesn't count against a new file", async () => {
       },
       fromAddress: OWN,
       editor: EDITOR,
+      from,
     });
 
-  const withQuote = await start();
-  expect(await upload(withQuote.id)).toMatchObject({
+  const withQuote = await open();
+  expect(withQuote.draft.quote!.bytes).toBeGreaterThan(300 * 1024);
+  expect(await upload(withQuote.id, withQuote.from)).toMatchObject({
     status: "refused",
     httpStatus: 413,
   });
+  expect(kit.stateOf(withQuote.id)).toBeUndefined();
 
-  const withoutQuote = await start();
-  await kit.mailbox.outgoing.save({
-    id: withoutQuote.id,
-    baseRevision: withoutQuote.draft.revision,
-    content: { ...withoutQuote.draft.content, includeQuote: false },
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  expect((await upload(withoutQuote.id)).status).toBe("added");
+  const withoutQuote = await open();
+  const start = { ...withoutQuote.from.start, includeQuote: false };
+  expect(
+    (await upload(withoutQuote.id, { ...withoutQuote.from, start })).status,
+  ).toBe("added");
+  expect(kit.stateOf(withoutQuote.id)).toBe("draft");
 });
 
 test("the 33rd attachment is refused", async () => {
@@ -693,29 +690,6 @@ test("discarding a draft removes its row and queues its files; a message on its 
   expect(stateOf(going)).toBe("scheduled");
 });
 
-test("an untouched reply gives way when a colleague has started on it", async () => {
-  const { mailbox, stateOf } = await setUp();
-  const id = newId();
-  const { revision } = (await mailbox.outgoing.save({
-    id,
-    baseRevision: 0,
-    content: content(),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  })) as { revision: number };
-  await mailbox.outgoing.save({
-    id,
-    baseRevision: revision,
-    content: content({ html: "<p>A colleague's words</p>" }),
-    editor: { id: SAM, name: "Sam" },
-    ownDomain: DOMAIN,
-  });
-  expect(await mailbox.outgoing.discard(id, revision)).toBe(false);
-  expect(stateOf(id)).toBe("draft");
-  expect(await mailbox.outgoing.discard(id, revision + 1)).toBe(true);
-  expect(stateOf(id)).toBeUndefined();
-});
-
 async function parentOf(kit: Awaited<ReturnType<typeof setUp>>) {
   const result = await kit.deliver(
     eml({
@@ -736,29 +710,53 @@ async function parentOf(kit: Awaited<ReturnType<typeof setUp>>) {
   };
 }
 
+// What the screen does: opens a reply from its prefill, with the id it will save under.
+async function openReply(
+  kit: Awaited<ReturnType<typeof setUp>>,
+  source: ReplySource,
+) {
+  const prefilled = await kit.mailbox.outgoing.prefill(source);
+  const from: NewRowFrom = { source, start: startOf(prefilled.draft)! };
+  return { ...prefilled, id: newId(), from };
+}
+
 const startFrom = (
   kit: Awaited<ReturnType<typeof setUp>>,
   parent: MessageDetail,
   mode: "reply" | "replyAll" | "forward",
-  id = newId(),
 ) =>
-  kit.mailbox.outgoing.start({
-    id,
+  openReply(kit, {
     mode,
     parent,
     body: { text: "Original text", html: null },
     inlineAttachments: [],
     ownAddresses: [OWN],
     ownDomain: DOMAIN,
-    editor: EDITOR,
   });
+
+// A reply whose first save has reached the server.
+async function savedReply(
+  kit: Awaited<ReturnType<typeof setUp>>,
+  parent: MessageDetail,
+  mode: "reply" | "replyAll" | "forward",
+) {
+  const opened = await startFrom(kit, parent, mode);
+  const first = await kit.mailbox.outgoing.save({
+    id: opened.id,
+    baseRevision: 0,
+    content: { ...opened.draft.content, html: "<p>First words</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    from: opened.from,
+  });
+  if (first.status !== "saved") throw new Error("expected a save");
+  return { ...opened, draft: { ...opened.draft, revision: first.revision } };
+}
 
 test("a save tells the device what the draft still holds", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);
-  const { draft } = await startFrom(kit, parent, "reply");
-  const id = newId();
-  await startFrom(kit, parent, "reply", id);
+  const { id, draft } = await savedReply(kit, parent, "reply");
   const result = await kit.mailbox.outgoing.save({
     id,
     baseRevision: draft.revision,
@@ -777,8 +775,7 @@ test("a save tells the device what the draft still holds", async () => {
 test("words saved after their draft was discarded keep what they can and say what they can't", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);
-  const id = newId();
-  const { draft } = await startFrom(kit, parent, "forward", id);
+  const { id, draft } = await savedReply(kit, parent, "forward");
   await kit.mailbox.outgoing.discard(id);
   const result = await kit.mailbox.outgoing.save({
     id,
@@ -822,21 +819,38 @@ test("a reply answers the sender, reply all the others, and neither includes us"
   expect(forward.draft.content.subject).toBe("Fwd: Plans");
 });
 
-test("starting the same draft twice keeps one row", async () => {
+test("a first save repeated with the same id keeps one row and one copy of each file", async () => {
   const kit = await setUp();
-  const { parent } = await parentOf(kit);
-  const id = newId();
-  await startFrom(kit, parent, "reply", id);
-  await startFrom(kit, parent, "reply", id);
+  const { parent, source } = await parentWithFile(kit);
+  const { id, draft, from } = await openReply(
+    kit,
+    await source(parent, "forward"),
+  );
+  const first = {
+    id,
+    baseRevision: 0,
+    content: { ...draft.content, html: "<p>FYI</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    from,
+  };
+  expect((await kit.mailbox.outgoing.save(first)).status).toBe("saved");
+  expect((await kit.mailbox.outgoing.save(first)).status).toBe("saved");
   expect(kit.rows("SELECT id FROM outgoing")).toHaveLength(1);
+  expect(kit.rows("SELECT id FROM outgoing_attachments")).toHaveLength(1);
+  const saved = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(saved?.parent?.messageId).toBe(parent.id);
+  expect(saved?.mode).toBe("forward");
+  expect(saved?.attachments[0]?.filename).toBe("contract.pdf");
 });
 
 test("a reply threads for the recipient and in our own copy, with the quote", async () => {
   const kit = await setUp();
   const { parent, threadId } = await parentOf(kit);
-  const { draft } = await startFrom(kit, parent, "reply");
+  const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
+    from,
     content: { ...draft.content, html: "<p>Agreed</p>" },
     editor: EDITOR,
     ownDomain: DOMAIN,
@@ -875,9 +889,10 @@ test("a sent reply joins its conversation's labels and rules leave it alone", as
     actions: { move: "trash", star: true, markRead: false, labelId: null },
   });
 
-  const { draft } = await startFrom(kit, parent, "reply");
+  const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
+    from,
     content: { ...draft.content, html: "<p>Agreed on the budget</p>" },
     editor: EDITOR,
     ownDomain: DOMAIN,
@@ -959,9 +974,14 @@ test("a long chain of references is cut to fit Cloudflare's header limit, keepin
   );
   if (result.status !== "stored") throw new Error("expected a stored message");
   const thread = await kit.mailbox.getThread(result.threadId);
-  const { draft } = await startFrom(kit, thread!.messages[0]!, "reply");
+  const { id, draft, from } = await startFrom(
+    kit,
+    thread!.messages[0]!,
+    "reply",
+  );
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
+    from,
     content: { ...draft.content, html: "<p>x</p>" },
     editor: EDITOR,
     ownDomain: DOMAIN,
@@ -1334,8 +1354,7 @@ test("the recipient limit counts people, not entries", async () => {
   });
 });
 
-test("forwarding carries the attachments along, and they survive the original being deleted", async () => {
-  const kit = await setUp();
+async function parentWithFile(kit: Awaited<ReturnType<typeof setUp>>) {
   const raw = new TextEncoder().encode(
     [
       "From: Pat <pat@example.org>",
@@ -1362,31 +1381,43 @@ test("forwarding carries the attachments along, and they survive the original be
     throw new Error("expected a stored message");
   const thread = await kit.mailbox.getThread(delivered.threadId);
   const parent = thread!.messages[0]!;
-  const { draft } = await kit.mailbox.outgoing.start({
-    id: newId(),
-    mode: "forward",
-    parent,
-    body: await kit.mailbox.getBody(parent.id).then((body) => body!),
-    inlineAttachments: parent.attachments.map((info) => ({
-      info,
-      read: async () => {
-        const download = await kit.mailbox.getAttachment(parent.id, info.id);
-        return download ? new Response(download.body).arrayBuffer() : null;
-      },
-    })),
-    ownAddresses: [OWN],
-    ownDomain: DOMAIN,
-    editor: EDITOR,
-  });
+  const source = async (
+    message: MessageDetail,
+    mode: ReplySource["mode"],
+  ): Promise<ReplySource> =>
+    (await readReplySource(
+      kit.mailbox,
+      { mode, parentMessageId: message.id },
+      { ownAddresses: [OWN], ownDomain: DOMAIN },
+    ))!;
+  return { parent, source };
+}
+
+test("forwarding carries the attachments along, and they survive the original being deleted once it's a draft", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const { id, draft, from } = await openReply(
+    kit,
+    await source(parent, "forward"),
+  );
   expect(draft.attachments.map(({ filename }) => filename)).toEqual([
     "contract.pdf",
   ]);
+  const saved = await kit.mailbox.outgoing.save({
+    id,
+    baseRevision: 0,
+    content: { ...draft.content, to: [person("jo@example.org")] },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    from,
+  });
+  if (saved.status !== "saved") throw new Error("expected a save");
   await kit.mailbox.moveToTrash({ messageIds: [parent.id] });
   await kit.mailbox.deleteForever({ messageIds: [parent.id] });
   await kit.instance.object.alarm();
 
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
     content: {
       ...draft.content,
       to: [person("jo@example.org")],
@@ -1403,11 +1434,269 @@ test("forwarding carries the attachments along, and they survive the original be
   expect(message?.text).toContain("See attached.");
 });
 
+test("a forward with only a person added goes straight out with its files, and one taken off stays behind", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const send = async (carried: "kept" | "taken off") => {
+    const { id, draft, from } = await openReply(
+      kit,
+      await source(parent, "forward"),
+    );
+    const result = await kit.mailbox.outgoing.send({
+      id,
+      content: { ...draft.content, to: [person("jo@example.org")] },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      fromName: "Alex",
+      from:
+        carried === "kept"
+          ? from
+          : { ...from, start: { ...from.start, carried: [] } },
+    });
+    expect(result.status).toBe("scheduled");
+    await kit.instance.fireAlarm();
+    return kit.email.sent.at(-1)!;
+  };
+  expect((await send("kept")).attachments?.[0]?.content).toBe(btoa("%PDF-1.4"));
+  expect((await send("taken off")).attachments ?? []).toEqual([]);
+});
+
+test("opening a reply or forward stores nothing until something is added", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const objects = kit.bucket.keys().length;
+  for (const mode of ["reply", "replyAll", "forward"] as const) {
+    const { id, draft, from } = await openReply(
+      kit,
+      await source(parent, mode),
+    );
+    for (const html of ["", "<p><br></p>", " &nbsp; <div>\u200b</div>"]) {
+      const result = await kit.mailbox.outgoing.save({
+        id,
+        baseRevision: 0,
+        content: { ...draft.content, html },
+        editor: EDITOR,
+        ownDomain: DOMAIN,
+        from,
+      });
+      expect(result.status).toBe("nothing");
+    }
+    // Taking the quote off and removing a file only takes things away.
+    const leftOut = await kit.mailbox.outgoing.save({
+      id,
+      baseRevision: 0,
+      content: { ...draft.content, includeQuote: false },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      from: { ...from, start: { ...from.start, carried: [] } },
+    });
+    expect(leftOut.status).toBe("nothing");
+  }
+  expect(kit.rows("SELECT id FROM outgoing")).toHaveLength(0);
+  expect(kit.bucket.keys()).toHaveLength(objects);
+  expect(await kit.mailbox.outgoing.list(ALEX)).toEqual([]);
+});
+
+test("a new message with nothing in it makes no row, however the screen asks", async () => {
+  const { mailbox, rows } = await setUp();
+  const result = await mailbox.outgoing.save({
+    id: newId(),
+    baseRevision: 0,
+    content: content({ to: [], subject: "  ", html: "<p><br></p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(result.status).toBe("nothing");
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(0);
+});
+
+test("send with nothing added is refused in plain words and makes no row", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const refusals = [];
+  for (const mode of ["reply", "forward"] as const) {
+    const { id, draft, from } = await openReply(
+      kit,
+      await source(parent, mode),
+    );
+    const result = await kit.mailbox.outgoing.send({
+      id,
+      content: draft.content,
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      fromName: "Alex",
+      from,
+    });
+    if (result.status !== "refused") throw new Error("expected a refusal");
+    refusals.push(result.refusal.message);
+    expect(kit.stateOf(id)).toBeUndefined();
+  }
+  expect(refusals[0]).toContain("This message is empty");
+  expect(refusals[1]).toContain("Add at least one person");
+});
+
+test("a saved draft someone empties keeps its last words until they leave, then goes with its files", async () => {
+  const kit = await setUp();
+  const id = newId();
+  const save = (html: string, baseRevision: number, leaving = false) =>
+    kit.mailbox.outgoing.save({
+      id,
+      baseRevision,
+      content: content({ to: [], subject: "", html }),
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      leaving,
+    });
+  const saved = await save("<p>Words</p>", 0);
+  if (saved.status !== "saved") throw new Error("expected a save");
+
+  expect((await save("<br>", saved.revision)).status).toBe("nothing");
+  const [row] = await kit.mailbox.outgoing.list(ALEX);
+  expect(row?.snippet).toBe("Words");
+
+  expect((await save("<br>", saved.revision, true)).status).toBe("removed");
+  expect(kit.stateOf(id)).toBeUndefined();
+  expect(
+    kit.rows<{ prefix: string }>("SELECT prefix FROM r2_deletions")[0]?.prefix,
+  ).toContain(`/outgoing/${id}/`);
+});
+
+test("leaving an emptied draft never removes what a colleague saved since", async () => {
+  const kit = await setUp();
+  const id = newId();
+  const write = (
+    html: string,
+    baseRevision: number,
+    editor: Editor,
+    leaving = false,
+  ) =>
+    kit.mailbox.outgoing.save({
+      id,
+      baseRevision,
+      content: content({ to: [], subject: "", html }),
+      editor,
+      ownDomain: DOMAIN,
+      leaving,
+    });
+  const mine = await write("<p>Mine</p>", 0, EDITOR);
+  if (mine.status !== "saved") throw new Error("expected a save");
+  const theirs = await write("<p>Theirs</p>", mine.revision, {
+    id: SAM,
+    name: "Sam",
+  });
+  if (theirs.status !== "saved") throw new Error("expected a save");
+
+  expect((await write("", mine.revision, EDITOR, true)).status).toBe("changed");
+  expect((await kit.mailbox.outgoing.detail(id, ALEX))?.content.html).toContain(
+    "Theirs",
+  );
+
+  expect((await write("", theirs.revision, EDITOR, true)).status).toBe(
+    "removed",
+  );
+  expect(kit.stateOf(id)).toBeUndefined();
+});
+
+test("a file someone uploaded counts as added, and one they then remove doesn't", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const { id, draft, from } = await openReply(
+    kit,
+    await source(parent, "forward"),
+  );
+  const uploaded = await kit.mailbox.outgoing.upload({
+    id,
+    fileName: "a.txt",
+    mimeType: "text/plain",
+    body: { declaredBytes: 1, read: async () => new ArrayBuffer(1) },
+    fromAddress: OWN,
+    editor: EDITOR,
+    from,
+  });
+  if (uploaded.status !== "added") throw new Error("expected a file");
+  expect(uploaded.carried.map(({ filename }) => filename)).toEqual([
+    "contract.pdf",
+  ]);
+  expect((await kit.mailbox.outgoing.list(ALEX)).map((job) => job.id)).toEqual([
+    id,
+  ]);
+  const leave = () =>
+    kit.mailbox.outgoing.save({
+      id,
+      baseRevision: uploaded.revision,
+      content: draft.content,
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      leaving: true,
+    });
+  expect((await leave()).status).toBe("saved");
+
+  await kit.mailbox.outgoing.removeAttachment(id, uploaded.attachment.id);
+  expect(await kit.mailbox.outgoing.list(ALEX)).toEqual([]);
+  const baseRevision = (await kit.mailbox.outgoing.detail(id, ALEX))!.revision;
+  const removed = await kit.mailbox.outgoing.save({
+    id,
+    baseRevision,
+    content: draft.content,
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    leaving: true,
+  });
+  expect(removed.status).toBe("removed");
+});
+
+test("undoing a send gives back a draft with what was written", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const { id, draft, from } = await startFrom(kit, parent, "reply");
+  await kit.mailbox.outgoing.send({
+    id,
+    from,
+    content: { ...draft.content, html: "<p>Second thoughts</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    fromName: "Alex",
+  });
+  expect(await kit.mailbox.outgoing.undo(id)).toBe(true);
+  const [back] = await kit.mailbox.outgoing.list(ALEX);
+  expect(back?.id).toBe(id);
+  expect(back?.snippet).toBe("Second thoughts");
+});
+
+test("a reply whose original went before the first word saves those words anyway", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const { id, draft } = await startFrom(kit, parent, "reply");
+  await kit.mailbox.moveToTrash({ messageIds: [parent.id] });
+  await kit.mailbox.deleteForever({ messageIds: [parent.id] });
+  expect(
+    await readReplySource(
+      kit.mailbox,
+      { mode: "reply", parentMessageId: parent.id },
+      { ownAddresses: [OWN], ownDomain: DOMAIN },
+    ),
+  ).toBeNull();
+  const result = await kit.mailbox.outgoing.save({
+    id,
+    baseRevision: 0,
+    content: {
+      ...draft.content,
+      html: "<p>Still here</p>",
+      includeQuote: false,
+    },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(result.status).toBe("saved");
+  expect((await kit.mailbox.outgoing.list(ALEX))[0]?.snippet).toBe(
+    "Still here",
+  );
+});
+
 test("a quoted hostile message goes out sanitized", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);
-  const { draft } = await kit.mailbox.outgoing.start({
-    id: newId(),
+  const { id, draft, from, quoteHtml } = await openReply(kit, {
     mode: "reply",
     parent,
     body: {
@@ -1417,14 +1706,13 @@ test("a quoted hostile message goes out sanitized", async () => {
     inlineAttachments: [],
     ownAddresses: [OWN],
     ownDomain: DOMAIN,
-    editor: EDITOR,
   });
-  const preview = await kit.mailbox.outgoing.quoteHtml(draft.id);
-  expect(preview).toContain("Hi");
-  expect(preview).not.toMatch(/onclick|<script|<iframe|onerror|alert/i);
+  expect(quoteHtml).toContain("Hi");
+  expect(quoteHtml).not.toMatch(/onclick|<script|<iframe|onerror|alert/i);
 
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
+    from,
     content: { ...draft.content, html: "<p>Reply</p>" },
     editor: EDITOR,
     ownDomain: DOMAIN,
@@ -1439,9 +1727,10 @@ test("a quoted hostile message goes out sanitized", async () => {
 test("leaving the quote out sends only what was written", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);
-  const { draft } = await startFrom(kit, parent, "reply");
+  const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
-    id: draft.id,
+    id,
+    from,
     content: {
       ...draft.content,
       html: "<p>Just this</p>",
@@ -1711,8 +2000,7 @@ test("kept words outlive a draft discarded elsewhere", async () => {
 test("a kept reply beside a draft that moved on is words only, and the draft keeps the rest", async () => {
   const kit = await setUp();
   const { parent } = await parentOf(kit);
-  const id = newId();
-  const { draft } = await startFrom(kit, parent, "reply", id);
+  const { id, draft } = await savedReply(kit, parent, "reply");
   await kit.mailbox.outgoing.save({
     id,
     baseRevision: draft.revision,
@@ -1738,4 +2026,169 @@ test("a kept reply beside a draft that moved on is words only, and the draft kee
   expect(copy?.content.html).toBe("<p>Alex's reply</p>");
   expect(copy?.content.includeQuote).toBe(false);
   expect(copy?.mode).toBe("new");
+});
+
+test("a reply kept before its first save comes back as one row with its quote and files", async () => {
+  const kit = await setUp();
+  const { parent, source: sourceOf } = await parentWithFile(kit);
+  const source = await sourceOf(parent, "forward");
+  const opened = await openReply(kit, source);
+  const start = startOf(opened.draft)!;
+  const keep = () =>
+    kit.mailbox.outgoing.saveKept({
+      id: opened.id,
+      copyId: newId(),
+      baseRevision: 0,
+      content: { ...opened.draft.content, html: "<p>Typed on a train</p>" },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      from: { source, start },
+    });
+  const first = await keep();
+  expect(first).toMatchObject({
+    status: "saved",
+    holds: { quote: true, threaded: true, carriedFrom: start.carried },
+  });
+  expect(await keep()).toMatchObject({ status: "saved" });
+  expect(kit.rows("SELECT id FROM outgoing")).toHaveLength(1);
+  const row = await kit.mailbox.outgoing.detail(opened.id, ALEX);
+  expect(row?.mode).toBe("forward");
+  expect(row?.parent?.messageId).toBe(parent.id);
+  expect(row?.content.includeQuote).toBe(true);
+  expect(row?.quote).not.toBeNull();
+  expect(row?.attachments.map((file) => file.carriedFrom)).toEqual(
+    start.carried,
+  );
+  expect(await kit.mailbox.outgoing.quoteHtml(opened.id)).toContain(
+    "See attached.",
+  );
+});
+
+test("kept text holding only what a reply opened with writes nothing", async () => {
+  const kit = await setUp();
+  const { parent, source: sourceOf } = await parentWithFile(kit);
+  const source = await sourceOf(parent, "forward");
+  const opened = await openReply(kit, source);
+  const objects = kit.bucket.keys().length;
+  expect(
+    await kit.mailbox.outgoing.saveKept({
+      id: opened.id,
+      copyId: newId(),
+      baseRevision: 0,
+      content: { ...opened.draft.content, html: "<br>" },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      from: { source, start: startOf(opened.draft)! },
+    }),
+  ).toEqual({ status: "nothing" });
+  expect(kit.rows("SELECT id FROM outgoing")).toHaveLength(0);
+  expect(kit.bucket.keys()).toHaveLength(objects);
+});
+
+test("a kept reply whose original has gone saves its words as a plain draft and says so", async () => {
+  const { mailbox, rows } = await setUp();
+  const id = newId();
+  expect(
+    await mailbox.outgoing.saveKept({
+      id,
+      copyId: newId(),
+      baseRevision: 0,
+      content: content({ html: "<p>Words</p>", includeQuote: true }),
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+    }),
+  ).toMatchObject({
+    status: "saved",
+    holds: {
+      attachmentIds: [],
+      carriedFrom: [],
+      quote: false,
+      threaded: false,
+    },
+  });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  const row = await mailbox.outgoing.detail(id, ALEX);
+  expect(row?.content.includeQuote).toBe(false);
+});
+
+test("kept text with nothing added makes no copy beside a draft that moved on", async () => {
+  const kit = await setUp();
+  const { parent } = await parentOf(kit);
+  const { id, draft } = await savedReply(kit, parent, "reply");
+  await kit.mailbox.outgoing.save({
+    id,
+    baseRevision: draft.revision,
+    content: { ...draft.content, html: "<p>Sam's reply</p>" },
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(
+    await kit.mailbox.outgoing.saveKept({
+      id,
+      copyId: newId(),
+      baseRevision: draft.revision,
+      content: { ...draft.content, html: "<p><br></p>" },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+    }),
+  ).toEqual({ status: "nothing" });
+  expect(kit.rows("SELECT id FROM outgoing")).toHaveLength(1);
+  const row = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(row?.content.html).toBe("<p>Sam's reply</p>");
+});
+
+test("kept text with nothing added makes no copy beside a message already sent", async () => {
+  const { mailbox, send, rows, stateOf } = await setUp();
+  const id = newId();
+  await send(id);
+  expect(
+    await mailbox.outgoing.saveKept({
+      id,
+      copyId: newId(),
+      baseRevision: 0,
+      content: {
+        ...content({ html: "" }),
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "",
+      },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+    }),
+  ).toEqual({ status: "nothing" });
+  expect(stateOf(id)).toBe("scheduled");
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+});
+
+test("kept text never removes a saved draft, even when it holds nothing", async () => {
+  const { mailbox, rows } = await setUp();
+  const id = newId();
+  const first = await mailbox.outgoing.save({
+    id,
+    baseRevision: 0,
+    content: content({ html: "<p>one</p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  if (first.status !== "saved") throw new Error("expected a save");
+  expect(
+    await mailbox.outgoing.saveKept({
+      id,
+      copyId: newId(),
+      baseRevision: first.revision,
+      content: {
+        ...content({ html: "" }),
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "",
+      },
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+    }),
+  ).toEqual({ status: "nothing" });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  const row = await mailbox.outgoing.detail(id, ALEX);
+  expect(row?.content.html).toBe("<p>one</p>");
 });

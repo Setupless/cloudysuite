@@ -7,7 +7,12 @@ import {
   listOutgoing,
   suggestAddresses,
 } from "../functions";
-import type { OutgoingAttachment, OutgoingId, OutgoingSummary } from "../types";
+import type {
+  DraftStart,
+  OutgoingAttachment,
+  OutgoingId,
+  OutgoingSummary,
+} from "../types";
 
 const ACTIVE_REFRESH_MS = 1_500;
 // Nothing here is new mail. Someone's own sends use the faster rate above.
@@ -54,15 +59,25 @@ const CANNOT_REACH =
 
 export class UploadRefused extends Error {}
 
+export type UploadedFile = {
+  attachment: OutgoingAttachment;
+  revision: number;
+  carried: OutgoingAttachment[];
+  originalGone: boolean;
+};
+
 export async function uploadAttachment(
   mailboxId: MailboxId,
   id: OutgoingId,
   file: File,
-): Promise<OutgoingAttachment> {
+  start: DraftStart | undefined,
+): Promise<UploadedFile> {
+  const params = new URLSearchParams({ name: file.name });
+  if (start) params.set("start", JSON.stringify(start));
   let response: Response;
   try {
     response = await fetch(
-      `/api/compose/${mailboxId}/${id}/attachments?name=${encodeURIComponent(file.name)}`,
+      `/api/compose/${mailboxId}/${id}/attachments?${params}`,
       {
         method: "PUT",
         headers: { "Content-Type": file.type || "application/octet-stream" },
@@ -73,7 +88,7 @@ export async function uploadAttachment(
     throw new UploadRefused(CANNOT_REACH);
   }
   const body = (await response.json().catch(() => null)) as
-    (OutgoingAttachment & { message?: string }) | null;
+    (UploadedFile & { message?: string }) | null;
   if (!response.ok || !body) {
     throw new UploadRefused(body?.message ?? CANNOT_REACH);
   }

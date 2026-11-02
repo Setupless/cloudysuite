@@ -18,18 +18,26 @@ import {
 } from "react";
 import { safeFileName } from "@cloudysuite/transfer";
 import type { SenderFacts } from "../addresses";
+import { copyHoldsSomething, holdsSomethingAdded } from "../added";
 import { useOffline } from "../../pwa/connectivity";
-import { forgetKeptDraft, keepDraft, keepNote } from "../../pwa/device-store";
+import {
+  forgetKeptDraft,
+  getReadyToKeepNow,
+  keepDraft,
+  keepDraftNow,
+  keepNote,
+} from "../../pwa/device-store";
 import {
   DRAFT_KEPT_AFTER_FAILURE,
   isOffline,
   OFFLINE_ACTION_REFUSED,
   OFFLINE_DRAFT_KEPT,
   OFFLINE_DRAFT_NOT_SAVED,
+  OFFLINE_DRAFT_NOT_REMOVED,
   OFFLINE_SEND_REFUSED,
 } from "../../pwa/saved-mail";
 import { call, callAction, MailFailure } from "../../queries";
-import type { Address, MailboxId } from "../../types";
+import type { Address } from "../../types";
 import { EmailFrame } from "../../ui/email-frame";
 import { formatSize } from "../../ui/format";
 import { FailureNotice } from "../../ui/states";
@@ -39,18 +47,20 @@ import {
   getDraft,
   removeOutgoingAttachment,
   saveDraft,
+  prefillDraft,
   sendDraft,
-  startDraft,
 } from "../functions";
-import { isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
+import { discardWhenSettled, nothingToDiscard } from "../discard";
+import { isHeld, isLeftOut, keptCopyId, leftOutOf, leftOutText } from "../kept";
 import {
   type DraftContent,
   type DraftForEditor,
   fitsSendLimit,
   MAX_ATTACHMENTS,
-  type OutgoingId,
+  NOTHING_PREFILLED,
   type OutgoingAttachment,
   type SaveResult,
+  startOf,
   TOO_LARGE_TEXT,
   TOO_MANY_ATTACHMENTS_TEXT,
 } from "../types";
@@ -75,6 +85,14 @@ const LOCKED_NOTICE =
   "This message has already gone, or someone else has sent it, so your changes can't join it. They're kept on this device.";
 const LOCKED_KEPT_TOAST =
   "This message has already gone, so your changes will go to Drafts as a new draft.";
+const SAVED_TO_DRAFTS = "Saved to Drafts.";
+const CHANGED_ELSEWHERE =
+  "This draft changed somewhere else while you were clearing it, so it's still in Drafts.";
+const DISCARD_UNFINISHED =
+  "We couldn't finish discarding this draft. If it's in Drafts, you can discard it there.";
+
+const outlivingThePage = (...[input, init]: Parameters<typeof fetch>) =>
+  fetch(input, { ...init, keepalive: true });
 
 type Loaded = {
   draft: DraftForEditor | null;
@@ -84,15 +102,12 @@ type Loaded = {
 
 const EMPTY: Loaded = { draft: null, quoteHtml: null, notice: null };
 
-// The revision makes this give way if a colleague has started on the draft from Drafts.
-const discardUntouched = (
-  mailboxId: MailboxId,
-  id: OutgoingId,
-  revision: number | undefined,
-) =>
-  call(() =>
-    discardOutgoing({ data: { mailboxId, id, onlyAtRevision: revision } }),
-  ).catch(() => {});
+const NOTHING_HELD = {
+  attachmentIds: [],
+  carriedFrom: [],
+  quote: false,
+  threaded: false,
+};
 
 function QuotedOriginal({
   html,
@@ -224,6 +239,7 @@ function EditorForm({
   const queryClient = useQueryClient();
   const toast = useToast();
   const content = loaded.draft?.content;
+  const prefill = loaded.draft?.prefill ?? NOTHING_PREFILLED;
 
   const [from, setFrom] = useState(content?.from ?? "");
   const [to, setTo] = useState<Address[]>(content?.to ?? []);
@@ -254,6 +270,7 @@ function EditorForm({
   // The last save runs as the form unmounts, when the editor element has already gone.
   const lastHtml = useRef(content?.html ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
+  // Zero means there is no row yet: a reply is still only what it opened with.
   const revision = useRef(loaded.draft?.revision ?? 0);
   // Words from this device have never reached the server, so they still need saving.
   const dirty = useRef(session.kind === "kept");
@@ -270,11 +287,19 @@ function EditorForm({
   const parentHeld = useRef(loaded.draft?.parent ?? null);
   const leftOutFound = useRef(0);
   const mounted = useRef(true);
-  const everSaved = useRef(
-    loaded.draft !== null &&
-      (session.kind === "open" || session.kind === "kept"),
-  );
+  // What to tell someone who cleared a saved draft and left, when it couldn't go.
+  const stillInDrafts = useRef<string | null>(null);
+  // Forwarded files taken off before the row exists, which a first save already on its
+  // way may still have copied.
+  const takenOff = useRef(new Set<number>());
+  const uploadingNow = useRef(0);
+  const uploads = useRef(new Set<Promise<unknown>>());
+  const discarding = useRef(false);
+  const sendingNow = useRef(false);
   const saving = useRef<Promise<void>>(Promise.resolve());
+  // A closing page cancels ordinary requests, so words on their way still count as unsaved.
+  const savesUnderWay = useRef(0);
+  const saveFailed = useRef(false);
   // Moving to another list or conversation takes the editor away without a word.
   const leftUnasked = useRef(true);
   const close = () => {
@@ -305,31 +330,54 @@ function EditorForm({
 
   const attachmentsNow = useRef(attachments);
   attachmentsNow.current = attachments;
+  const addsSomething = (written: DraftContent) =>
+    uploadingNow.current > 0 ||
+    holdsSomethingAdded(
+      {
+        content: written,
+        uploads: attachmentsNow.current.filter(
+          ({ carriedFrom }) => carriedFrom === null,
+        ).length,
+      },
+      prefill,
+    );
+  const startNow = (written: DraftContent) =>
+    loaded.draft
+      ? startOf({
+          ...loaded.draft,
+          revision: revision.current,
+          content: written,
+          attachments: attachmentsNow.current,
+        })
+      : undefined;
   const refreshKept = () =>
     void queryClient.invalidateQueries({
       queryKey: keptDraftsQuery(userId).queryKey,
     });
   const composeMode = () =>
     session.kind === "start" ? session.mode : (loaded.draft?.mode ?? "new");
+  const keptCopy = (content: DraftContent, keptAt: number) => ({
+    id: session.id,
+    mailboxId,
+    keptAt,
+    content,
+    revision: revision.current,
+    mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
+    prefill,
+    parent: parentHeld.current,
+    quote: quoteHeld.current,
+    quoteHtml: quoteHeld.current ? loaded.quoteHtml : null,
+    attachments: attachmentsNow.current,
+  });
+  const nextKeptAt = () => Math.max(Date.now(), keptVersion.current + 1);
   const keepHere = async (content: DraftContent) => {
     // A new version of the same words could outrun a move to Drafts already under way,
     // and come back as a second draft.
     const words = JSON.stringify(content);
     if (keptHere.current && words === keptWords.current) return;
-    const keptAt = Math.max(Date.now(), keptVersion.current + 1);
+    const keptAt = nextKeptAt();
     try {
-      keptHere.current = await keepDraft(userId, {
-        id: session.id,
-        mailboxId,
-        keptAt,
-        content,
-        revision: revision.current,
-        mode: parentHeld.current || !loaded.draft ? composeMode() : "new",
-        parent: parentHeld.current,
-        quote: quoteHeld.current,
-        quoteHtml: quoteHeld.current ? loaded.quoteHtml : null,
-        attachments: attachmentsNow.current,
-      });
+      keptHere.current = await keepDraft(userId, keptCopy(content, keptAt));
       if (keptHere.current) {
         keptVersion.current = keptAt;
         keptWords.current = words;
@@ -372,9 +420,15 @@ function EditorForm({
     if (!isLeftOut(leftOut)) return;
     leftOutFound.current += 1;
     if (mounted.current) {
-      const gone = had.filter((file) => !holds.attachmentIds.includes(file.id));
+      const gone = had.filter((file) => !isHeld(file, holds));
       setAttachments((current) =>
-        current.filter((file) => !gone.some((one) => one.id === file.id)),
+        current.filter(
+          (file) =>
+            !gone.some(
+              (one) =>
+                one.id === file.id && one.carriedFrom === file.carriedFrom,
+            ),
+        ),
       );
       if (leftOut.quote) setIncludeQuote(false);
       setLeftOutNotice(leftOutText(leftOut));
@@ -390,67 +444,172 @@ function EditorForm({
     refreshKept();
   };
 
-  const flush = useCallback((): Promise<void> => {
-    clearTimeout(timer.current);
-    if (!dirty.current) return saving.current;
-    dirty.current = false;
+  // The files the row now holds replace the original's, which the screen showed until now.
+  const adoptCarried = (carried: OutgoingAttachment[]) => {
+    const keep = (file: OutgoingAttachment) =>
+      !takenOff.current.has(file.carriedFrom ?? 0);
+    setAttachments((current) => [
+      ...carried.filter(keep),
+      ...current.filter(({ carriedFrom }) => carriedFrom === null),
+    ]);
+    for (const file of carried.filter((one) => !keep(one))) {
+      void callAction(() =>
+        removeOutgoingAttachment({
+          data: { mailboxId, id: session.id, attachmentId: file.id },
+        }),
+      ).catch(() => setAttachments((current) => [...current, file]));
+    }
+  };
+
+  // `leaving` asks for a draft that now holds nothing to go, not just to wait.
+  const flush = useCallback(
+    (leaving = false): Promise<void> => {
+      clearTimeout(timer.current);
+      const changed = dirty.current;
+      dirty.current = false;
+      const content = read.current();
+      if (changed) savesUnderWay.current += 1;
+      saving.current = saving.current
+        .then(async () => {
+          const adds = addsSomething(content);
+          const onServer = revision.current > 0;
+          if (!adds) {
+            setSaved(false);
+            await forgetHere();
+          }
+          if (adds ? !changed : !(leaving && onServer)) return;
+          // No later save can land. Words wait here for the person to choose.
+          if (lockedNow.current) {
+            if (adds) {
+              dirty.current = true;
+              await keepHere(content);
+            }
+            return;
+          }
+          // Files uploaded while this is on its way aren't in what the server answers with.
+          const had = attachmentsNow.current;
+          try {
+            const result = await callAction(() =>
+              saveDraft({
+                data: {
+                  mailboxId,
+                  id: session.id,
+                  baseRevision: revision.current,
+                  content,
+                  start: startNow(content),
+                  leaving: !adds,
+                },
+              }),
+            );
+            setSaveProblem(null);
+            noAccess.current = false;
+            switch (result.status) {
+              case "locked":
+                lockedNow.current = true;
+                if (adds) {
+                  dirty.current = true;
+                  setLocked(true);
+                  await keepHere(content);
+                }
+                return;
+              case "removed":
+                revision.current = 0;
+                return;
+              case "changed":
+                stillInDrafts.current = CHANGED_ELSEWHERE;
+                return;
+              case "nothing":
+                return;
+            }
+            await forgetHere();
+            revision.current = result.revision;
+            setSaved(true);
+            if (!onServer) adoptCarried(result.carried);
+            if (result.overwrote) {
+              setNotice(
+                `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
+              );
+            }
+            await noteLeftOut(had, content, result.holds);
+          } catch (error) {
+            const message = (error as Error).message;
+            const noAccessNow =
+              error instanceof MailFailure && error.status === 403;
+            // Text with nothing in it isn't worth keeping or offering back.
+            if (!adds) {
+              stillInDrafts.current = noAccessNow
+                ? message
+                : isOffline()
+                  ? OFFLINE_DRAFT_NOT_REMOVED
+                  : "We couldn't remove this draft, so it's still in Drafts. You can discard it there.";
+              return;
+            }
+            dirty.current = true;
+            saveFailed.current = true;
+            lastSaveError.current = message;
+            await keepHere(content);
+            if (noAccessNow) {
+              noAccess.current = true;
+              setSaveProblem(
+                `${message} What you wrote is kept on this device.`,
+              );
+            }
+          }
+        })
+        .finally(() => {
+          if (changed) savesUnderWay.current -= 1;
+        });
+      return saving.current;
+    },
+    [mailboxId, session.id],
+  );
+
+  // What might not outlive this page goes on the device before this returns.
+  const keepOnDeviceNow = (content: DraftContent) => {
+    if (discarding.current || sendingNow.current) return;
+    if (!dirty.current && savesUnderWay.current === 0) return;
+    if (!addsSomething(content)) return;
+    const words = JSON.stringify(content);
+    if (keptHere.current && words === keptWords.current) return;
+    const keptAt = nextKeptAt();
+    if (keepDraftNow(userId, keptCopy(content, keptAt))) {
+      keptHere.current = true;
+      keptVersion.current = keptAt;
+      keptWords.current = words;
+    }
+  };
+
+  // No later turn is coming, and a save ahead of this one would hold it back forever, so
+  // this neither waits nor reads an answer. Words go to the device and the server at once,
+  // and both landing is safe: the device's copy finds the server already holds them.
+  const keepAsPageCloses = (leaving: boolean) => {
+    if (discarding.current || sendingNow.current) return;
     const content = read.current();
-    saving.current = saving.current.then(async () => {
-      // No later save can land. The words wait here for the person to choose.
-      if (lockedNow.current) {
-        dirty.current = true;
-        await keepHere(content);
-        return;
-      }
-      // Files uploaded while this is on its way aren't in what the server answers with.
-      const had = attachmentsNow.current;
-      try {
-        const result = await callAction(() =>
-          saveDraft({
-            data: {
-              mailboxId,
-              id: session.id,
-              baseRevision: revision.current,
-              content,
-            },
-          }),
-        );
-        setSaveProblem(null);
-        noAccess.current = false;
-        if (result.status === "locked") {
-          lockedNow.current = true;
-          dirty.current = true;
-          setLocked(true);
-          await keepHere(content);
-          return;
-        }
-        await forgetHere();
-        revision.current = result.revision;
-        everSaved.current = true;
-        setSaved(true);
-        if (result.overwrote) {
-          setNotice(
-            `${result.overwrote} was also working on this draft. Your version is the one saved now.`,
-          );
-        }
-        await noteLeftOut(had, content, result.holds);
-      } catch (error) {
-        dirty.current = true;
-        lastSaveError.current = (error as Error).message;
-        await keepHere(content);
-        if (error instanceof MailFailure && error.status === 403) {
-          noAccess.current = true;
-          setSaveProblem(
-            `${lastSaveError.current} What you wrote is kept on this device.`,
-          );
-        }
-      }
-    });
-    return saving.current;
-  }, [mailboxId, session.id]);
+    const adds = addsSomething(content);
+    const unsaved = dirty.current || savesUnderWay.current > 0;
+    if (adds ? !unsaved : !(leaving && revision.current > 0)) return;
+    keepOnDeviceNow(content);
+    if (lockedNow.current || isOffline()) return;
+    void saveDraft({
+      data: {
+        mailboxId,
+        id: session.id,
+        baseRevision: revision.current,
+        content,
+        start: startNow(content),
+        leaving: !adds,
+      },
+      fetch: outlivingThePage,
+    }).catch(() => {});
+  };
+  const closingNow = useRef(keepAsPageCloses);
+  closingNow.current = keepAsPageCloses;
+  const hidingNow = useRef(() => keepOnDeviceNow(read.current()));
+  hidingNow.current = () => keepOnDeviceNow(read.current());
 
   const touched = useCallback(() => {
     if (body.current) lastHtml.current = body.current.innerHTML;
+    void getReadyToKeepNow(userId).catch(() => {});
     dirty.current = true;
     setSaved(false);
     clearTimeout(timer.current);
@@ -482,16 +641,6 @@ function EditorForm({
       queryKey: composeKeys.outgoing(mailboxId),
     });
 
-  const isUntouchedReply = () =>
-    session.kind === "start" &&
-    !everSaved.current &&
-    !dirty.current &&
-    uploading.length === 0 &&
-    attachments.length === (loaded.draft?.attachments.length ?? 0);
-  // The unmount below would otherwise see the first render's files.
-  const untouchedNow = useRef(isUntouchedReply);
-  untouchedNow.current = isUntouchedReply;
-
   const keptToast = () => {
     if (noAccess.current) {
       return {
@@ -510,33 +659,36 @@ function EditorForm({
 
   useEffect(() => {
     mounted.current = true;
+    // The first keystroke may be the last thing to happen before the page closes.
+    void getReadyToKeepNow(userId).catch(() => {});
     return () => {
       mounted.current = false;
     };
   }, []);
 
+  // What is left behind is the row, or the file on its way that will make one.
+  const leftInDrafts = () =>
+    stillInDrafts.current ??
+    (revision.current > 0 || uploadingNow.current > 0 ? SAVED_TO_DRAFTS : null);
+
   useEffect(() => {
     const onHide = () => {
-      if (document.visibilityState === "hidden") void flush();
+      if (document.visibilityState !== "hidden") return;
+      // A phone can end a hidden page with no further event.
+      hidingNow.current();
+      void flush();
     };
-    const onPageHide = () => void flush();
+    const onPageHide = (event: PageTransitionEvent) =>
+      closingNow.current(!event.persisted);
     document.addEventListener("visibilitychange", onHide);
     addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
       removeEventListener("pagehide", onPageHide);
       clearTimeout(timer.current);
-      if (leftUnasked.current && untouchedNow.current()) {
-        void discardUntouched(
-          mailboxId,
-          session.id,
-          loaded.draft?.revision,
-        ).then(refreshList);
-        return;
-      }
-      const hadSomething = dirty.current || everSaved.current;
-      void flush().then(() => {
-        if (!leftUnasked.current) return;
+      if (!leftUnasked.current) return;
+      void flush(true).then(() => {
+        refreshList();
         if (dirty.current) {
           toast(
             keptHere.current
@@ -547,9 +699,12 @@ function EditorForm({
                     "We couldn't save your latest changes, so they may be lost. Check your connection, then look in Drafts.",
                 },
           );
-        } else if (hadSomething && !lockedNow.current) {
+          return;
+        }
+        const left = lockedNow.current ? null : leftInDrafts();
+        if (left) {
           toast({
-            message: "Saved to Drafts.",
+            message: left,
             action: { label: "Open", run: () => void reopen(session.id) },
           });
         }
@@ -558,18 +713,11 @@ function EditorForm({
   }, [flush]);
 
   const closeEditor = async () => {
-    if (isUntouchedReply()) {
-      await discardUntouched(mailboxId, session.id, loaded.draft?.revision);
-      close();
-      return;
-    }
-    const hadSomething =
-      dirty.current || everSaved.current || attachments.length > 0;
     const lockedBefore = lockedNow.current;
     const leftOutBefore = leftOutFound.current;
-    await flush();
+    await flush(true);
     // Something the person needs to read has only just appeared.
-    if (lockedNow.current && !lockedBefore) return;
+    if (lockedNow.current && !lockedBefore && dirty.current) return;
     if (leftOutFound.current !== leftOutBefore) return;
     if (dirty.current && keptHere.current) {
       close();
@@ -585,22 +733,42 @@ function EditorForm({
       return;
     }
     close();
-    if (hadSomething && session.kind !== "open" && !lockedNow.current)
-      toast({ message: "Saved to Drafts." });
+    if (lockedNow.current) return;
+    const left = leftInDrafts();
+    if (left && (left !== SAVED_TO_DRAFTS || session.kind !== "open")) {
+      toast({ message: left });
+    }
   };
 
   const discard = async () => {
+    discarding.current = true;
     clearTimeout(timer.current);
     dirty.current = false;
-    await saving.current;
+    // A file can take minutes and the person has finished with this message, so only the
+    // words on the toast wait for it.
+    const outlasting = uploads.current.size > 0;
+    if (outlasting) close();
     try {
-      await callAction(() =>
-        discardOutgoing({ data: { mailboxId, id: session.id } }),
-      );
+      await discardWhenSettled({
+        uploads: uploads.current,
+        saving: saving.current,
+        hasRow: () => revision.current > 0,
+        discard: () =>
+          callAction(() =>
+            discardOutgoing({ data: { mailboxId, id: session.id } }),
+          ),
+      });
       await forgetHere();
-      close();
+      if (!outlasting) close();
+      refreshList();
       toast({ message: "Draft discarded." });
     } catch (error) {
+      discarding.current = false;
+      if (outlasting) {
+        refreshList();
+        toast({ tone: "danger", message: DISCARD_UNFINISHED });
+        return;
+      }
       dirty.current = true;
       setProblem((error as Error).message);
     }
@@ -609,6 +777,13 @@ function EditorForm({
   const saveAsNewDraft = async () => {
     await flush();
     const content = read.current();
+    if (!copyHoldsSomething(content, prefill)) {
+      await forgetHere();
+      dirty.current = false;
+      close();
+      toast({ message: "There was nothing new to save." });
+      return;
+    }
     try {
       const id = await keptCopyId(session.id, keptVersion.current);
       await callAction(() =>
@@ -624,7 +799,7 @@ function EditorForm({
           mode: composeMode(),
           includeQuote: content.includeQuote,
         },
-        { attachmentIds: [], quote: false, threaded: false },
+        NOTHING_HELD,
       );
       await forgetHere();
       dirty.current = false;
@@ -654,23 +829,31 @@ function EditorForm({
     }
     setProblem(null);
     setSending(true);
-    // Moving away mid-send must not count this as a reply nobody wrote.
-    everSaved.current = true;
     // What was on screen may have gone from the server's draft, and sending without it
     // would be silent. A message with only words has nothing to lose this way.
     const couldLoseSomething =
       attachments.length > 0 || parentHeld.current || quoteHeld.current;
     if (couldLoseSomething) {
       const leftOutBefore = leftOutFound.current;
+      saveFailed.current = false;
       dirty.current = true;
       await flush();
-      if (dirty.current || leftOutFound.current !== leftOutBefore) {
+      // Anything typed while that save ran isn't a reason to stop: Send reads the fields again.
+      if (saveFailed.current) {
+        setSending(false);
+        setProblem(
+          `We couldn't send this, because the latest version wouldn't save. ${lastSaveError.current}`,
+        );
+        return;
+      }
+      if (lockedNow.current || leftOutFound.current !== leftOutBefore) {
         setSending(false);
         return;
       }
     }
     clearTimeout(timer.current);
     dirty.current = false;
+    sendingNow.current = true;
     await saving.current;
     try {
       await call(() =>
@@ -680,6 +863,7 @@ function EditorForm({
             id: session.id,
             baseRevision: revision.current,
             content: read.current(),
+            start: startNow(read.current()),
           },
         }),
       );
@@ -687,14 +871,16 @@ function EditorForm({
       close();
       refreshList();
     } catch (error) {
+      sendingNow.current = false;
       dirty.current = true;
       setSending(false);
       setProblem((error as Error).message);
+      void flush();
     }
   };
 
   const addFiles = async (files: File[]) => {
-    if (files.length === 0) return;
+    if (files.length === 0 || discarding.current) return;
     if (isOffline()) {
       setProblem(OFFLINE_ACTION_REFUSED);
       return;
@@ -719,19 +905,35 @@ function EditorForm({
       setProblem(TOO_LARGE_TEXT);
       return;
     }
+    uploadingNow.current += files.length;
     setUploading((names) => [...names, ...files.map((file) => file.name)]);
     const queue = [...files];
     const worker = async () => {
-      for (let file = queue.shift(); file; file = queue.shift()) {
+      for (
+        let file = queue.shift();
+        file && !discarding.current;
+        file = queue.shift()
+      ) {
         const { name } = file;
         try {
-          const attachment = await uploadAttachment(
+          const uploaded = await uploadAttachment(
             mailboxId,
             session.id,
             file,
+            startNow(read.current()),
           );
-          everSaved.current = true;
-          setAttachments((current) => [...current, attachment]);
+          if (revision.current === 0) {
+            revision.current = uploaded.revision;
+            adoptCarried(uploaded.carried);
+            if (uploaded.originalGone && !discarding.current) {
+              await noteLeftOut(
+                attachmentsNow.current,
+                read.current(),
+                NOTHING_HELD,
+              );
+            }
+          }
+          setAttachments((current) => [...current, uploaded.attachment]);
         } catch (error) {
           setProblem(
             error instanceof UploadRefused
@@ -739,6 +941,7 @@ function EditorForm({
               : "We couldn't attach that file. Try again.",
           );
         } finally {
+          uploadingNow.current -= 1;
           setUploading((names) => {
             const index = names.indexOf(name);
             return names.filter((_, position) => position !== index);
@@ -746,13 +949,20 @@ function EditorForm({
         }
       }
     };
-    await Promise.all(Array.from({ length: PARALLEL_UPLOADS }, worker));
+    const running = Promise.all(
+      Array.from({ length: PARALLEL_UPLOADS }, worker),
+    );
+    uploads.current.add(running);
+    await running;
+    uploads.current.delete(running);
   };
 
   const removeAttachment = async (attachment: OutgoingAttachment) => {
-    setAttachments((current) =>
-      current.filter((one) => one.id !== attachment.id),
-    );
+    setAttachments((current) => current.filter((one) => one !== attachment));
+    if (revision.current === 0 && attachment.carriedFrom !== null) {
+      takenOff.current.add(attachment.carriedFrom);
+      return;
+    }
     try {
       await callAction(() =>
         removeOutgoingAttachment({
@@ -1017,7 +1227,21 @@ function EditorForm({
           type="button"
           title="Discard draft"
           aria-label="Discard draft"
-          onClick={() => setConfirmingDiscard(true)}
+          onClick={() => {
+            if (
+              nothingToDiscard({
+                hasRow: revision.current > 0,
+                savesUnderWay: savesUnderWay.current,
+                uploadsUnderWay: uploads.current.size,
+                keptOnDevice: keptHere.current,
+                addsSomething: addsSomething(read.current()),
+              })
+            ) {
+              close();
+            } else {
+              setConfirmingDiscard(true);
+            }
+          }}
           className="flex size-9 cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2"
         >
           <IconTrash size={18} stroke={1.75} aria-hidden />
@@ -1078,10 +1302,9 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     const load =
       session.kind === "start"
         ? call(() =>
-            startDraft({
+            prefillDraft({
               data: {
                 mailboxId,
-                id: session.id,
                 mode: session.mode,
                 parentMessageId: session.parentMessageId,
               },
@@ -1093,9 +1316,6 @@ export function ComposeEditor({ session }: { session: ComposeSession }) {
     load
       .then((result) => {
         if (!ignore) setLoaded(result);
-        // The person moved away before the reply even appeared.
-        else if (session.kind === "start")
-          void discardUntouched(mailboxId, session.id, result.draft.revision);
       })
       .catch((error: Error) => {
         if (!ignore) setFailed(error.message);

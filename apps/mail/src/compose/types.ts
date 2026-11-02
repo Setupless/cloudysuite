@@ -1,5 +1,6 @@
 import {
   type Address,
+  type AttachmentId,
   type MailboxId,
   MAX_MESSAGE_BYTES,
   type ThreadId,
@@ -9,6 +10,9 @@ import {
 export type OutgoingId = string & { readonly __brand: "OutgoingId" };
 
 // One row carries a message from first keystroke to delivery:
+//
+// A row exists only once someone has added something. Until then a reply is a prefill
+// held by the screen, which names the message it answers on the first save.
 //
 //   draft -> scheduled -> sending -> accepted -> sent
 //     ^         |            |
@@ -48,11 +52,29 @@ export type DraftContent = {
   includeQuote: boolean;
 };
 
+// What a reply or forward opens with, none of which anyone added.
+export type DraftPrefill = Pick<DraftContent, "to" | "cc" | "subject">;
+
+export const NOTHING_PREFILLED: DraftPrefill = { to: [], cc: [], subject: "" };
+
 export type OutgoingAttachment = {
+  // While a forward has no row, this is the original's attachment id, the same as
+  // `carriedFrom`. Once it has one, this is the draft's own id for the file.
   id: number;
   filename: string;
   mimeType: string;
   size: number;
+  // The original's attachment, for a file that came with a forward and wasn't uploaded.
+  carriedFrom: AttachmentId | null;
+};
+
+// What the first save of a reply says about the row it needs. The server reads the rest
+// from the original message, so the screen never gets to choose recipients or headers.
+export type DraftStart = {
+  mode: Exclude<ComposeMode, "new">;
+  parentMessageId: MessageId;
+  carried: AttachmentId[];
+  includeQuote: boolean;
 };
 
 export const SEND_FAILURES = {
@@ -125,17 +147,35 @@ export type OutgoingDetail = OutgoingSummary & {
   content: DraftContent;
   attachments: OutgoingAttachment[];
   quote: { bytes: number; designed: boolean } | null;
+  prefill: DraftPrefill;
 };
 
 // What the editor needs to pick up a message. The server's draft has it, and so does a
 // message kept on this device because it couldn't be saved.
 export type DraftForEditor = Pick<
   OutgoingDetail,
-  "content" | "revision" | "mode" | "parent" | "attachments" | "quote"
+  | "content"
+  | "revision"
+  | "mode"
+  | "parent"
+  | "attachments"
+  | "quote"
+  | "prefill"
 >;
 
+export const startOf = (draft: DraftForEditor): DraftStart | undefined =>
+  draft.revision > 0 || draft.mode === "new" || !draft.parent
+    ? undefined
+    : {
+        mode: draft.mode,
+        parentMessageId: draft.parent.messageId,
+        carried: draft.attachments.flatMap((file) => file.carriedFrom ?? []),
+        includeQuote: draft.content.includeQuote,
+      };
+
 // `revision` is the server's revision these words were written on. Going back, they
-// replace the server's draft only if it is still at that revision.
+// replace the server's draft only if it is still at that revision. Zero means no row yet,
+// so `prefill`, `parent`, `quote`, and `attachments` describe what the first save makes.
 export type KeptDraft = DraftForEditor & {
   id: OutgoingId;
   mailboxId: MailboxId;
@@ -147,6 +187,7 @@ export type KeptDraft = DraftForEditor & {
 // What the server's draft still has, so a device can tell what no longer came along.
 export type DraftHolds = {
   attachmentIds: number[];
+  carriedFrom: number[];
   quote: boolean;
   threaded: boolean;
 };
@@ -174,13 +215,23 @@ export type SaveResult =
       revision: number;
       overwrote: string | null;
       holds: DraftHolds;
+      // As the row holds them, so a screen that showed the original's can catch up.
+      carried: OutgoingAttachment[];
     }
+  // Holds nothing anyone added, so nothing was written.
+  | { status: "nothing" }
+  // Holds nothing anyone added, and the person left, so the row went.
+  | { status: "removed" }
+  // The same, but someone saved since this person last looked, so the row stayed.
+  | { status: "changed" }
   | { status: "locked"; state: OutgoingState };
 
 // `copied` means the words have a draft of their own, because the one they were written
 // on moved on or was sent. `copyIsDraft` is false once that new draft has itself gone.
 export type KeptSaveResult =
   | { status: "saved"; revision: number; holds: DraftHolds }
+  // Holds nothing anyone added, so nothing was written and nothing is left to keep.
+  | { status: "nothing" }
   | {
       status: "copied";
       copyId: OutgoingId;

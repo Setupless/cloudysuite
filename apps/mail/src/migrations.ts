@@ -321,4 +321,15 @@ export const MIGRATIONS: Migrations = [
     `CREATE INDEX messages_recent_attachments ON messages(received_at, id)
      WHERE has_attachments = 1 AND folder IN ('inbox', 'sent', 'archive')`,
   ],
+  // A reply already here never recorded what it opened with. Opening made it at revision 1
+  // and every save raises that, so only there do its fields still show what it opened with.
+  // Any other keeps the empty prefill, so what someone added can't pass for an opening.
+  [
+    `ALTER TABLE outgoing ADD COLUMN prefill_to TEXT NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE outgoing ADD COLUMN prefill_cc TEXT NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE outgoing ADD COLUMN prefill_subject TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE outgoing_attachments ADD COLUMN carried_from INTEGER`,
+    `UPDATE outgoing SET prefill_to = to_addresses, prefill_cc = cc_addresses, prefill_subject = subject WHERE mode <> 'new' AND revision = 1`,
+    `UPDATE outgoing_attachments SET carried_from = 0 WHERE r2_key LIKE '%/forwarded/%'`,
+  ],
 ];
