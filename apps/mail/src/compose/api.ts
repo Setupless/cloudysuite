@@ -9,7 +9,12 @@ import { badRequest } from "../wire";
 import { mailboxSenderFacts } from "./addresses";
 import { readReplySource } from "./reply-source";
 import type { DraftStart } from "./types";
-import { parseDraftStart, parseOutgoingId } from "./wire";
+import {
+  parseDraftStart,
+  parseOutgoingId,
+  parseRevision,
+  parseSession,
+} from "./wire";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -31,7 +36,8 @@ function readStart(raw: string | null): DraftStart | undefined {
 }
 
 // Only uploads need a route of their own, because a file's bytes can't pass through a
-// server function. PUT /api/compose/<mailbox>/<outgoing>/attachments?name=<file name>
+// server function.
+// PUT /api/compose/<mailbox>/<outgoing>/attachments?name=<file name>&base=<revision>&session=<id>
 // A file is the first thing added to a reply often enough, so this can make its row too,
 // with `start` holding what a first save would say.
 async function respond(request: Request, path: string): Promise<Response> {
@@ -59,6 +65,8 @@ async function respond(request: Request, path: string): Promise<Response> {
 
   const { searchParams } = new URL(request.url);
   const start = readStart(searchParams.get("start"));
+  const baseRevision = parseRevision(Number(searchParams.get("base") ?? "x"));
+  const session = parseSession(searchParams.get("session"));
   const { addresses } = await mailboxSenderFacts(env.DB, mailboxId);
   const ownAddresses = addresses.map(({ address }) => address);
   const source =
@@ -69,6 +77,8 @@ async function respond(request: Request, path: string): Promise<Response> {
     }));
   const result = await mailbox.outgoing.upload({
     id,
+    baseRevision,
+    session,
     fileName: searchParams.get("name") ?? "",
     mimeType: request.headers.get("Content-Type") ?? "",
     body: {
@@ -79,6 +89,7 @@ async function respond(request: Request, path: string): Promise<Response> {
     editor: { id: user.id, name: user.name },
     from: start && source ? { source, start } : undefined,
   });
+  if (result.status === "behind") return json(result, 409);
   return result.status === "added"
     ? json({ ...result, originalGone: start !== undefined && !source })
     : refusal(result.httpStatus, result.message);

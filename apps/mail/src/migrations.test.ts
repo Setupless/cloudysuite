@@ -4,6 +4,7 @@ import {
   type SqlDriver,
 } from "@cloudysuite/object-sql";
 import { expect, test } from "bun:test";
+import type { MailboxId } from "@cloudysuite/access";
 import { OutgoingStore } from "./compose/store";
 import type { OutgoingId } from "./compose/types";
 import { MIGRATIONS } from "./migrations";
@@ -22,6 +23,7 @@ test("released migrations do not change", async () => {
     "9b435c5b91ff3ed4f306f730e201edfd27cd63ccc943919ecdcaa444d09007fd",
     "6d1b882e15568f6f2408f1a7a1e2cb60f183f2dc7a13d720be4133218ae92f33",
     "c8dff5b5303899fbc630409d5a9d1dc740100c3d4c15c5e526ad2ab02b2da114",
+    "0d7c2e566063933260d6a1a900bdc8360a342a849a442c3baf8585adb1e7c1c6",
   ]);
 });
 
@@ -37,9 +39,12 @@ type Earlier = {
 const PAT = JSON.stringify([{ name: "Pat", address: "pat@x.org" }]);
 const SAM = JSON.stringify([{ name: "Sam", address: "sam@x.org" }]);
 
+// Before the migration that recorded what a reply opened with.
+const BEFORE_PREFILL = 9;
+
 function atEarlierVersion(rows: Record<string, Earlier>) {
   const { db } = createSqlDriver();
-  applyMigrations(db, MIGRATIONS.slice(0, -1));
+  applyMigrations(db, MIGRATIONS.slice(0, BEFORE_PREFILL));
   for (const [id, row] of Object.entries(rows)) {
     db.exec(
       `INSERT INTO outgoing (id, state, revision, mode, parent_refs, from_address, from_name,
@@ -149,7 +154,14 @@ test("a saved reply or forward with no words keeps what someone added to it", ()
     const detail = store.detail(id, "u")!;
     const left = store.save({
       id,
+      copyId: "00000000-0000-4000-8000-000000000000" as OutgoingId,
+      mailboxId: "00000000-0000-4000-8000-00000000000a" as MailboxId,
       baseRevision: detail.revision,
+      session: "s",
+      written: false,
+      fileComing: false,
+      showing: [],
+      whenLocked: "report",
       content: detail.content,
       plainText: "",
       editor: { id: "u", name: "U" },

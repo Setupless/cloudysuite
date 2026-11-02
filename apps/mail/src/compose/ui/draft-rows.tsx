@@ -137,6 +137,7 @@ export function DraftRows() {
               </span>
               <span className="text-xs text-secondary">
                 Last changed by {job.updatedByName}
+                {job.isCopy && ". Saved beside the draft it was written on."}
               </span>
             </button>
           </li>

@@ -468,7 +468,7 @@ function MailView({
             className={`min-w-0 flex-1 overflow-y-auto bg-panel ${openThreadId === null && !panelSession ? "max-lg:hidden" : ""}`}
           >
             {panelSession ? (
-              <ComposeEditor key={panelSession.id} session={panelSession} />
+              <ComposeEditor key={panelSession.editor} session={panelSession} />
             ) : (
               children
             )}

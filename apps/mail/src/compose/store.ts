@@ -9,25 +9,32 @@ import type {
   NewMessage,
   ThreadId,
 } from "../types";
-import { copyHoldsSomething, holdsSomethingAdded } from "./added";
+import { outgoingPrefix } from "../r2-keys";
+import { holdsSomethingAdded } from "./added";
+import { nextCopyId } from "./copy-id";
 import type {
   ComposeMode,
+  DiscardResult,
+  DraftBase,
+  DraftChange,
   DraftContent,
   DraftHolds,
   DraftPrefill,
   Editor,
-  KeptSaveResult,
   OutgoingAttachment,
   OutgoingDetail,
   OutgoingId,
   OutgoingState,
   OutgoingSummary,
   ParentFacts,
+  RemoveAttachmentResult,
+  SaveIntent,
   SaveResult,
   SendFailure,
 } from "./types";
 import {
   fitsSendLimit,
+  isHeld,
   writtenBytes,
   MAX_ATTACHMENTS,
   NOTHING_PREFILLED,
@@ -80,6 +87,8 @@ type OutgoingFields = {
   prefill_to: string;
   prefill_cc: string;
   prefill_subject: string;
+  last_session: string | null;
+  copied_from: string | null;
 };
 
 type OutgoingRow = SqlRow & OutgoingFields;
@@ -91,6 +100,7 @@ type AttachmentRow = SqlRow & {
   size: number;
   r2_key: string;
   carried_from: number | null;
+  copied_from_file: number | null;
 };
 
 const SELECT_ROW = `
@@ -115,14 +125,24 @@ const withQuoteOnlyIfHeld = (
     ? { ...content, includeQuote: false }
     : content;
 
-const holdsContent = (row: OutgoingRow, content: DraftContent): boolean =>
+const holdsWords = (row: OutgoingRow, content: DraftContent): boolean =>
   row.from_address === content.from &&
   row.to_addresses === JSON.stringify(content.to) &&
   row.cc_addresses === JSON.stringify(content.cc) &&
   row.bcc_addresses === JSON.stringify(content.bcc) &&
   row.subject === content.subject &&
-  row.html === content.html &&
+  row.html === content.html;
+
+const holdsContent = (row: OutgoingRow, content: DraftContent): boolean =>
+  holdsWords(row, content) &&
   (row.include_quote === 1) === content.includeQuote;
+
+const isBehind = (row: OutgoingRow, base: DraftBase): boolean =>
+  row.revision !== base.baseRevision && row.last_session !== base.session;
+
+const changeBy = (row: OutgoingRow, editor: Editor): DraftChange => ({
+  by: row.updated_by === editor.id ? null : row.updated_by_name,
+});
 
 const toAttachment = (row: AttachmentRow): OutgoingAttachment => ({
   id: row.id,
@@ -176,6 +196,7 @@ function toSummary(
         : null,
     retrying: row.state === "scheduled" && row.attempts > 0,
     sentByViewer: row.sent_by === viewerId,
+    isCopy: row.copied_from !== null,
   };
 }
 
@@ -200,7 +221,9 @@ export type NewOutgoing = {
 export type DueJob = OutgoingFields & { files: AttachmentRow[] };
 
 export type ScheduleResult =
-  { status: "scheduled" } | { status: "locked"; state: OutgoingState };
+  | { status: "scheduled" }
+  | { status: "behind" }
+  | { status: "locked"; state: OutgoingState };
 
 export type AddAttachmentResult =
   | {
@@ -209,7 +232,30 @@ export type AddAttachmentResult =
       revision: number;
       carried: OutgoingAttachment[];
     }
+  | { status: "behind" }
   | { status: "refused"; httpStatus: number; message: string };
+
+export type NewFile = {
+  filename: string;
+  mime_type: string;
+  size: number;
+  r2_key: string;
+  carried_from: number | null;
+  source: number;
+};
+
+// What a new draft beside another still needs copied, which only the Worker can do,
+// because file bytes never pass through the Durable Object. The words are already safe.
+export type CopyCarry = {
+  fromPrefix: string;
+  toPrefix: string;
+  quote: { bytes: number; designed: boolean } | null;
+  files: NewFile[];
+};
+
+export type StoredSave =
+  | Exclude<SaveResult, { status: "copied" }>
+  | (Extract<SaveResult, { status: "copied" }> & { carry: CopyCarry | null });
 
 const plainRow = (
   id: OutgoingId,
@@ -248,7 +294,7 @@ export class OutgoingStore {
   #attachments(id: OutgoingId): AttachmentRow[] {
     return this.#db
       .exec<AttachmentRow>(
-        "SELECT id, filename, mime_type, size, r2_key, carried_from FROM outgoing_attachments WHERE outgoing_id = ? ORDER BY id",
+        "SELECT id, filename, mime_type, size, r2_key, carried_from, copied_from_file FROM outgoing_attachments WHERE outgoing_id = ? ORDER BY id",
         id,
       )
       .toArray();
@@ -371,6 +417,7 @@ export class OutgoingStore {
     content: DraftContent,
     plainText: string,
     editor: Editor,
+    session: string,
     now: number,
   ): number {
     const [row] = this.#db
@@ -378,7 +425,7 @@ export class OutgoingStore {
         `UPDATE outgoing SET
            revision = revision + 1, from_address = ?, to_addresses = ?, cc_addresses = ?,
            bcc_addresses = ?, subject = ?, html = ?, body_text = ?, include_quote = ?,
-           updated_by = ?, updated_by_name = ?, updated_at = ?
+           updated_by = ?, updated_by_name = ?, updated_at = ?, last_session = ?
          WHERE id = ? RETURNING revision`,
         content.from,
         JSON.stringify(content.to),
@@ -391,44 +438,57 @@ export class OutgoingStore {
         editor.id,
         editor.name,
         now,
+        session,
         id,
       )
       .toArray();
     return row!.revision;
   }
 
-  #writeNew(
-    id: OutgoingId,
-    content: DraftContent,
-    plainText: string,
-    editor: Editor,
-    r2Prefix: string,
-    now: number,
-  ): number {
-    this.#create(plainRow(id, content, r2Prefix, editor), now);
-    return this.#writeContent(id, content, plainText, editor, now);
+  // A file changing is a change to the draft, so a save based on what came before it
+  // can't land over a set of files its writer never saw, or send one of them.
+  #bump(id: OutgoingId, editor: Editor, session: string, now: number): number {
+    const [row] = this.#db
+      .exec<{ revision: number }>(
+        `UPDATE outgoing SET
+           revision = revision + 1, updated_by = ?, updated_by_name = ?, updated_at = ?, last_session = ?
+         WHERE id = ? RETURNING revision`,
+        editor.id,
+        editor.name,
+        now,
+        session,
+        id,
+      )
+      .toArray();
+    return row!.revision;
   }
 
   #holds(id: OutgoingId): DraftHolds {
     const row = this.#row(id)!;
     const files = this.#attachments(id);
     return {
-      attachmentIds: files.map((file) => file.id),
+      attachmentIds: files.flatMap((file) =>
+        file.copied_from_file === null
+          ? [file.id]
+          : [file.id, file.copied_from_file],
+      ),
       carriedFrom: files.flatMap((file) => file.carried_from ?? []),
       quote: row.quote_bytes !== null,
       threaded: row.parent_message_id !== null,
     };
   }
 
-  // Each save is an update to one row, so autosave cannot pile up messages. Two people
-  // on one draft: the last save wins, and the later one is told whose work it replaced.
+  // Each save is an update to one row, so autosave cannot pile up messages. A save based
+  // on an older version never touches the draft: its words become a new draft beside it,
+  // and the check and the write share this transaction, so no save can land between them.
   // Holding nothing anyone added writes nothing, so a row always keeps the last words it
   // had. It goes only when the person leaves, and not if someone has saved since they
   // last looked, because those are words this person hasn't seen.
   save(
-    input: {
+    input: SaveIntent & {
       id: OutgoingId;
-      baseRevision: number;
+      copyId: OutgoingId;
+      mailboxId: MailboxId;
       content: DraftContent;
       plainText: string;
       editor: Editor;
@@ -437,121 +497,245 @@ export class OutgoingStore {
       leaving?: boolean;
     },
     now = Date.now(),
-  ): SaveResult {
+  ): StoredSave {
     return this.#db.transaction(() => {
-      const { id, baseRevision, plainText, editor, r2Prefix, create } = input;
+      const { id, session, plainText, editor, r2Prefix, create } = input;
       const row = this.#row(id);
       const content = withQuoteOnlyIfHeld(input.content, row, create);
-      if (row && row.state !== "draft") {
+      const onItsWay = row !== null && row.state !== "draft";
+      if (onItsWay && input.whenLocked === "report") {
         return { status: "locked", state: row.state };
       }
-      const holds = holdsSomethingAdded(
-        { content, uploads: row?.upload_count ?? 0 },
-        row ? prefillOf(row) : (create?.prefill ?? NOTHING_PREFILLED),
-      );
+      const behind = row !== null && (onItsWay || isBehind(row, input));
+      const holds =
+        (behind && input.fileComing) ||
+        holdsSomethingAdded(
+          { content, uploads: row?.upload_count ?? 0 },
+          row ? prefillOf(row) : (create?.prefill ?? NOTHING_PREFILLED),
+        );
       if (!holds) {
         if (!row || !input.leaving) return { status: "nothing" };
-        if (row.revision !== baseRevision) return { status: "changed" };
+        if (behind) return { status: "changed" };
         this.#remove(row);
         return { status: "removed" };
       }
       if (!row) {
         this.#create(create ?? plainRow(id, content, r2Prefix, editor), now);
       }
-      const overwrote =
-        row && row.revision !== baseRevision && row.updated_by !== editor.id
-          ? row.updated_by_name
-          : null;
+      if (!behind) {
+        return {
+          status: "saved",
+          revision: this.#writeContent(
+            id,
+            content,
+            plainText,
+            editor,
+            session,
+            now,
+          ),
+          holds: this.#holds(id),
+          carried: this.#carried(id),
+        };
+      }
+      const held = this.#holds(id);
+      const sameFiles =
+        input.showing.every((file) => isHeld(file, held)) &&
+        input.showing.length === this.#attachments(id).length;
+      if (!onItsWay && sameFiles && holdsContent(row, content)) {
+        return {
+          status: "saved",
+          revision: row.revision,
+          holds: held,
+          carried: this.#carried(id),
+        };
+      }
+      return this.#saveBeside(row, content, input, now);
+    });
+  }
+
+  #saveBeside(
+    row: OutgoingRow,
+    content: DraftContent,
+    input: SaveIntent & {
+      copyId: OutgoingId;
+      mailboxId: MailboxId;
+      plainText: string;
+      editor: Editor;
+    },
+    now: number,
+  ): StoredSave {
+    const { session, plainText, editor } = input;
+    const changed = row.state === "draft" ? changeBy(row, editor) : null;
+    const answer = (
+      copy: OutgoingRow,
+      revision: number,
+      carry: CopyCarry | null,
+    ) => ({
+      status: "copied" as const,
+      id: copy.id as OutgoingId,
+      state: copy.state,
+      revision,
+      holds: this.#holds(copy.id as OutgoingId),
+      files: this.#attachments(copy.id as OutgoingId).map(toAttachment),
+      changed,
+      carry,
+    });
+
+    let copyId = input.copyId;
+    let mine = this.#row(copyId);
+    while (mine && mine.last_session !== session) {
+      copyId = nextCopyId(copyId);
+      mine = this.#row(copyId);
+    }
+    if (mine) {
+      const revision =
+        mine.state === "draft"
+          ? this.#writeContent(
+              copyId,
+              withQuoteOnlyIfHeld(content, mine),
+              plainText,
+              editor,
+              session,
+              now,
+            )
+          : mine.revision;
+      return answer(this.#row(copyId)!, revision, null);
+    }
+
+    if (!input.written) {
+      return { status: "behind", changed };
+    }
+    const files = this.#attachments(row.id as OutgoingId).filter((file) =>
+      input.showing.some((shown) =>
+        isHeld(shown, {
+          attachmentIds: [file.id],
+          carriedFrom: file.carried_from ? [file.carried_from] : [],
+          quote: false,
+          threaded: false,
+        }),
+      ),
+    );
+    const prefill = prefillOf(row);
+    if (
+      !input.fileComing &&
+      !holdsSomethingAdded(
+        {
+          content,
+          uploads: files.filter((file) => file.carried_from === null).length,
+        },
+        prefill,
+      )
+    ) {
+      return { status: "nothing" };
+    }
+    // Two tabs bringing back the same words get one new draft between them.
+    const same = this.#db
+      .exec<OutgoingRow>(
+        `${SELECT_ROW} WHERE o.copied_from = ? AND o.state = 'draft'`,
+        row.id,
+      )
+      .toArray()
+      .find((copy) => holdsWords(copy, content));
+    if (same) return answer(same, same.revision, null);
+
+    const toPrefix = outgoingPrefix(input.mailboxId, copyId);
+    const withoutQuote = { ...content, includeQuote: false };
+    this.#create(
+      {
+        id: copyId,
+        mode: row.mode,
+        parent:
+          row.parent_message_id === null
+            ? null
+            : {
+                messageId: row.parent_message_id as MessageId,
+                rfcMessageId: row.parent_rfc_id,
+                references: JSON.parse(row.parent_refs) as string[],
+              },
+        prefill,
+        content: withoutQuote,
+        r2Prefix: toPrefix,
+        quote: null,
+        attachments: [],
+        editor,
+      },
+      now,
+    );
+    this.#db.exec(
+      "UPDATE outgoing SET copied_from = ? WHERE id = ?",
+      row.id,
+      copyId,
+    );
+    const revision = this.#writeContent(
+      copyId,
+      withoutQuote,
+      plainText,
+      editor,
+      session,
+      now,
+    );
+    const quote =
+      content.includeQuote && row.quote_bytes !== null
+        ? { bytes: row.quote_bytes, designed: row.quote_designed === 1 }
+        : null;
+    const carry =
+      quote || files.length > 0
+        ? {
+            fromPrefix: row.r2_prefix,
+            toPrefix,
+            quote,
+            files: files.map((file) => ({
+              filename: file.filename,
+              mime_type: file.mime_type,
+              size: file.size,
+              r2_key: file.r2_key,
+              carried_from: file.carried_from,
+              source: file.id,
+            })),
+          }
+        : null;
+    return answer(this.#row(copyId)!, revision, carry);
+  }
+
+  // What the Worker managed to copy. Anything it couldn't stays out, and the person is told.
+  carryIntoCopy(
+    id: OutgoingId,
+    carried: Pick<CopyCarry, "quote" | "files">,
+  ): { holds: DraftHolds; files: OutgoingAttachment[] } | null {
+    return this.#db.transaction(() => {
+      if (!this.#row(id)) return null;
+      if (carried.quote) {
+        this.#db.exec(
+          "UPDATE outgoing SET quote_bytes = ?, quote_designed = ?, include_quote = 1 WHERE id = ?",
+          carried.quote.bytes,
+          carried.quote.designed ? 1 : 0,
+          id,
+        );
+      }
+      for (const file of carried.files) {
+        this.#db.exec(
+          "INSERT INTO outgoing_attachments (outgoing_id, filename, mime_type, size, r2_key, carried_from, copied_from_file) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          id,
+          file.filename,
+          file.mime_type,
+          file.size,
+          file.r2_key,
+          file.carried_from,
+          file.source,
+        );
+      }
       return {
-        status: "saved",
-        revision: this.#writeContent(id, content, plainText, editor, now),
-        overwrote,
         holds: this.#holds(id),
-        carried: this.#carried(id),
+        files: this.#attachments(id).map(toAttachment),
       };
     });
   }
 
-  // Words coming back from a device can be hours behind, and nobody may be watching. They
-  // replace the draft only if it is still what they were written on. Otherwise both sets
-  // of words stay. The check and the write share this transaction, so no save can land
-  // between them. Safe to repeat: `copyId` comes from the kept version, so a retry finds
-  // the copy, and words already saved count as unchanged.
-  saveKept(
-    input: {
-      id: OutgoingId;
-      copyId: OutgoingId;
-      baseRevision: number;
-      content: DraftContent;
-      plainText: string;
-      editor: Editor;
-      r2Prefix: string;
-      copyR2Prefix: string;
-      create?: NewOutgoing;
-    },
-    now = Date.now(),
-  ): KeptSaveResult {
-    return this.#db.transaction(() => {
-      const { id, copyId, baseRevision, plainText, editor, create } = input;
-      const row = this.#row(id);
-      const content = withQuoteOnlyIfHeld(input.content, row, create);
-      const changed =
-        row?.state === "draft" && row.revision !== baseRevision
-          ? { by: row.updated_by === editor.id ? null : row.updated_by_name }
-          : null;
-      const copy = this.#row(copyId);
-      if (copy) {
-        return {
-          status: "copied",
-          copyId,
-          copyIsDraft: copy.state === "draft",
-          changed,
-        };
-      }
-      const prefill = row
-        ? prefillOf(row)
-        : (create?.prefill ?? NOTHING_PREFILLED);
-      const uploads = row?.upload_count ?? 0;
-      if (!holdsSomethingAdded({ content, uploads }, prefill)) {
-        return { status: "nothing" };
-      }
-      if (!row) {
-        this.#create(
-          create ?? plainRow(id, content, input.r2Prefix, editor),
-          now,
-        );
-        return {
-          status: "saved",
-          revision: this.#writeContent(id, content, plainText, editor, now),
-          holds: this.#holds(id),
-        };
-      }
-      if (row.state === "draft" && (!changed || holdsContent(row, content))) {
-        return {
-          status: "saved",
-          revision: changed
-            ? row.revision
-            : this.#writeContent(id, content, plainText, editor, now),
-          holds: this.#holds(id),
-        };
-      }
-      if (!copyHoldsSomething(content, prefill)) return { status: "nothing" };
-      this.#writeNew(
-        copyId,
-        withQuoteOnlyIfHeld(input.content, null),
-        plainText,
-        editor,
-        input.copyR2Prefix,
-        now,
-      );
-      return { status: "copied", copyId, copyIsDraft: true, changed };
-    });
-  }
-
   // Pressing Send twice, or a retried request, finds it already scheduled and leaves
-  // the undo window where it was.
+  // the undo window where it was. Anyone else's send means these words can't join it, and
+  // a draft that has moved on goes back to the screen, which sends from its own new draft.
   schedule(
-    input: {
+    input: DraftBase & {
       id: OutgoingId;
       content: DraftContent;
       plainText: string;
@@ -564,20 +748,24 @@ export class OutgoingStore {
     now = Date.now(),
   ): ScheduleResult {
     return this.#db.transaction(() => {
-      const { id, plainText, editor, r2Prefix, fromName, mailboxId } = input;
+      const { id, plainText, editor, r2Prefix, fromName, mailboxId, session } =
+        input;
       const row = this.#row(id);
       const content = withQuoteOnlyIfHeld(input.content, row, input.create);
-      if (row?.state === "scheduled") return { status: "scheduled" };
+      if (row?.state === "scheduled" && row.last_session === session) {
+        return { status: "scheduled" };
+      }
       if (row && row.state !== "draft") {
         return { status: "locked", state: row.state };
       }
+      if (row && isBehind(row, input)) return { status: "behind" };
       if (!row) {
         this.#create(
           input.create ?? plainRow(id, content, r2Prefix, editor),
           now,
         );
       }
-      this.#writeContent(id, content, plainText, editor, now);
+      this.#writeContent(id, content, plainText, editor, session, now);
       this.#db.exec(
         `UPDATE outgoing SET
            state = 'scheduled', due_at = ?, attempts = 0, failure = NULL,
@@ -626,15 +814,21 @@ export class OutgoingStore {
   }
 
   // Drafts never become rows in `messages`, so a discarded one has no Trash or restore
-  // path to get wrong: its row goes now, and its files follow through the queue.
-  discard(id: OutgoingId): boolean {
+  // path to get wrong: its row goes now, and its files follow through the queue. Words
+  // saved since this person last looked aren't theirs to throw away.
+  discard(
+    input: DraftBase & { id: OutgoingId; editor: Editor },
+  ): DiscardResult {
     return this.#db.transaction(() => {
-      const row = this.#row(id);
+      const row = this.#row(input.id);
       if (!row || !["draft", "failed", "unknown"].includes(row.state)) {
-        return false;
+        return { status: "gone" };
+      }
+      if (isBehind(row, input)) {
+        return { status: "behind", changed: changeBy(row, input.editor) };
       }
       this.#remove(row);
-      return true;
+      return { status: "discarded" };
     });
   }
 
@@ -644,9 +838,10 @@ export class OutgoingStore {
   }
 
   // Checks the limits again in the transaction, because two uploads can pass the
-  // earlier check at once. The caller removes the file if this refuses it.
+  // earlier check at once. The caller removes the file if this refuses it. A draft that
+  // has moved on gets no file from someone looking at an older version of it.
   addAttachment(
-    input: {
+    input: DraftBase & {
       id: OutgoingId;
       filename: string;
       mimeType: string;
@@ -670,6 +865,7 @@ export class OutgoingStore {
             "This message is already on its way, so it can't take more files.",
         };
       }
+      if (row && isBehind(row, input)) return { status: "behind" };
       const existing = row
         ? this.#attachments(id)
         : (create?.attachments ?? []);
@@ -714,7 +910,7 @@ export class OutgoingStore {
         .exec<AttachmentRow>(
           `INSERT INTO outgoing_attachments (outgoing_id, filename, mime_type, size, r2_key)
            VALUES (?, ?, ?, ?, ?)
-           RETURNING id, filename, mime_type, size, r2_key, carried_from`,
+           RETURNING id, filename, mime_type, size, r2_key, carried_from, copied_from_file`,
           id,
           filename,
           mimeType,
@@ -722,23 +918,30 @@ export class OutgoingStore {
           r2Key,
         )
         .toArray();
-      this.#db.exec("UPDATE outgoing SET updated_at = ? WHERE id = ?", now, id);
       return {
         status: "added",
         attachment: toAttachment(added!),
-        revision: this.#row(id)!.revision,
+        revision: this.#bump(id, editor, input.session, now),
         carried: this.#carried(id),
       };
     });
   }
 
-  // True when the file is gone or was never here. False while the message is on its
-  // way, because the send still needs it.
-  removeAttachment(id: OutgoingId, attachmentId: number): boolean {
+  // Locked while the message is on its way, because the send still needs the file.
+  removeAttachment(
+    input: DraftBase & {
+      id: OutgoingId;
+      attachmentId: number;
+      editor: Editor;
+    },
+    now = Date.now(),
+  ): RemoveAttachmentResult {
     return this.#db.transaction(() => {
+      const { id, attachmentId, editor, session } = input;
       const row = this.#row(id);
-      if (!row) return true;
-      if (row.state !== "draft") return false;
+      if (!row) return { status: "removed", revision: null };
+      if (row.state !== "draft") return { status: "locked" };
+      if (isBehind(row, input)) return { status: "behind" };
       const [removed] = this.#db
         .exec<{ r2_key: string }>(
           "DELETE FROM outgoing_attachments WHERE id = ? AND outgoing_id = ? RETURNING r2_key",
@@ -746,8 +949,12 @@ export class OutgoingStore {
           id,
         )
         .toArray();
-      if (removed) this.#mail.queueDeletion(removed.r2_key);
-      return true;
+      if (!removed) return { status: "removed", revision: row.revision };
+      this.#mail.queueDeletion(removed.r2_key);
+      return {
+        status: "removed",
+        revision: this.#bump(id, editor, session, now),
+      };
     });
   }
 

@@ -139,6 +139,8 @@ export type OutgoingSummary = {
   retrying: boolean;
   // True for the person who pressed Send, who is the one to tell how it went.
   sentByViewer: boolean;
+  // Made because the draft these words were written on had moved on. That one is beside it.
+  isCopy: boolean;
 };
 
 export type OutgoingDetail = OutgoingSummary & {
@@ -173,18 +175,21 @@ export const startOf = (draft: DraftForEditor): DraftStart | undefined =>
         includeQuote: draft.content.includeQuote,
       };
 
-// `revision` is the server's revision these words were written on. Going back, they
-// replace the server's draft only if it is still at that revision. Zero means no row yet,
-// so `prefill`, `parent`, `quote`, and `attachments` describe what the first save makes.
+// `revision` is the server's revision these words were written on, and they go back like
+// any other save. Zero means no row yet, so `prefill`, `parent`, `quote`, and `attachments`
+// describe what the first save makes.
 export type KeptDraft = DraftForEditor & {
   id: OutgoingId;
   mailboxId: MailboxId;
   keptAt: number;
+  session: string;
+  written: boolean;
   // The server's copy can be gone by the time this is reopened, or out of reach.
   quoteHtml: string | null;
 };
 
-// What the server's draft still has, so a device can tell what no longer came along.
+// What the server's draft still has, so a device can tell what no longer came along. A
+// file in a copy also counts under the id it had on the draft it was copied from.
 export type DraftHolds = {
   attachmentIds: number[];
   carriedFrom: number[];
@@ -194,8 +199,8 @@ export type DraftHolds = {
 
 export type LeftOut = { files: string[]; quote: boolean; reply: boolean };
 
-// Who changed a draft while someone's words were stuck on a device. `by` is the
-// colleague's name, or null when it was the same person somewhere else.
+// Who moved a draft on while someone was writing. `by` is the colleague's name, or null
+// when it was the same person somewhere else.
 export type DraftChange = { by: string | null };
 
 // Stays on the device until the person has seen it. A toast could go unread.
@@ -209,15 +214,56 @@ export type KeptNote = {
 
 export type Editor = { id: string; name: string };
 
+// A file as the editor knows it, so the server can tell which ones the person is looking at.
+export type FileShown = Pick<OutgoingAttachment, "id" | "carriedFrom">;
+
+export const isHeld = (file: FileShown, holds: DraftHolds): boolean =>
+  file.carriedFrom
+    ? holds.carriedFrom.includes(file.carriedFrom)
+    : holds.attachmentIds.includes(file.id);
+
+// Which version of the draft an action was based on, and who is acting. A draft is behind
+// when its revision has moved and the last write wasn't this same `session`, because an
+// editor whose answer got lost mustn't count as someone else.
+export type DraftBase = {
+  baseRevision: number;
+  session: string;
+};
+
+// The one way words reach a draft. On a draft that has moved on they become a new draft
+// beside it, under an id made from the draft's id and `session`, so a retry finds it.
+// `written` says the words differ from what this editor started from, and only the screen
+// can tell, because the server no longer has that version. `whenLocked` is "copy" where
+// nobody is there to be asked, or someone has just asked for a new draft.
+export type SaveIntent = DraftBase & {
+  written: boolean;
+  // A file is on its way, so this can be worth keeping with nothing else in it.
+  fileComing: boolean;
+  showing: FileShown[];
+  whenLocked: "report" | "copy";
+};
+
 export type SaveResult =
   | {
       status: "saved";
       revision: number;
-      overwrote: string | null;
       holds: DraftHolds;
       // As the row holds them, so a screen that showed the original's can catch up.
       carried: OutgoingAttachment[];
     }
+  // The words have a draft of their own, which every later save from this screen updates.
+  // A `state` other than draft means that one has already gone, and the words went with it.
+  | {
+      status: "copied";
+      id: OutgoingId;
+      state: OutgoingState;
+      revision: number;
+      holds: DraftHolds;
+      files: OutgoingAttachment[];
+      changed: DraftChange | null;
+    }
+  // The draft moved on and these words hold nothing new, so nothing was written.
+  | { status: "behind"; changed: DraftChange | null }
   // Holds nothing anyone added, so nothing was written.
   | { status: "nothing" }
   // Holds nothing anyone added, and the person left, so the row went.
@@ -226,18 +272,16 @@ export type SaveResult =
   | { status: "changed" }
   | { status: "locked"; state: OutgoingState };
 
-// `copied` means the words have a draft of their own, because the one they were written
-// on moved on or was sent. `copyIsDraft` is false once that new draft has itself gone.
-export type KeptSaveResult =
-  | { status: "saved"; revision: number; holds: DraftHolds }
-  // Holds nothing anyone added, so nothing was written and nothing is left to keep.
-  | { status: "nothing" }
-  | {
-      status: "copied";
-      copyId: OutgoingId;
-      copyIsDraft: boolean;
-      changed: DraftChange | null;
-    };
+export type DiscardResult =
+  | { status: "discarded" }
+  | { status: "gone" }
+  | { status: "behind"; changed: DraftChange };
+
+export type RemoveAttachmentResult =
+  // `revision` is null when there is no row, so nothing changed.
+  | { status: "removed"; revision: number | null }
+  | { status: "behind" }
+  | { status: "locked" };
 
 export const UNDO_WINDOW_MS = 10_000;
 

@@ -3,12 +3,15 @@ import type { Address, AttachmentId } from "../types";
 import {
   COMPOSE_MODES,
   type ComposeMode,
+  type DraftBase,
   type DraftContent,
   type DraftStart,
+  type FileShown,
   MAX_ATTACHMENTS,
   MAX_BODY_BYTES,
   MAX_SUBJECT_LENGTH,
   type OutgoingId,
+  type SaveIntent,
 } from "./types";
 import { singleLineText } from "./validate";
 
@@ -79,10 +82,46 @@ function requireContent(raw: unknown): DraftContent {
   };
 }
 
-const requireRevision = (raw: unknown): number => {
+export const parseRevision = (raw: unknown): number => {
   if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
     throw badRequest();
   }
+  return raw;
+};
+
+// A browser's own random id, or `kept-<time>` for a device's copy from an earlier build.
+export const isSession = (raw: unknown): raw is string =>
+  typeof raw === "string" && /^[\w-]{1,64}$/.test(raw);
+
+export function parseSession(raw: unknown): string {
+  if (!isSession(raw)) throw badRequest();
+  return raw;
+}
+
+const requireBase = (input: Record<string, unknown>): DraftBase => ({
+  baseRevision: parseRevision(input.baseRevision),
+  session: parseSession(input.session),
+});
+
+function requireShowing(raw: unknown): FileShown[] {
+  if (!Array.isArray(raw) || raw.length > MAX_ATTACHMENTS) throw badRequest();
+  return raw.map((entry) => {
+    const { id, carriedFrom } = record(entry);
+    if (
+      !Number.isSafeInteger(id) ||
+      (carriedFrom !== null && !Number.isSafeInteger(carriedFrom))
+    ) {
+      throw badRequest();
+    }
+    return {
+      id: id as number,
+      carriedFrom: carriedFrom as FileShown["carriedFrom"],
+    };
+  });
+}
+
+const requireBoolean = (raw: unknown): boolean => {
+  if (typeof raw !== "boolean") throw badRequest();
   return raw;
 };
 
@@ -126,23 +165,36 @@ export function parseDraftStart(raw: unknown): DraftStart {
   };
 }
 
-export const parseSaveInput = (raw: unknown) => {
+const parseWritingInput = (raw: unknown) => {
   const input = record(raw);
   return {
     ...parseOutgoingInput(raw),
-    baseRevision: requireRevision(input.baseRevision),
+    ...requireBase(input),
     content: requireContent(input.content),
     start: input.start === undefined ? undefined : parseDraftStart(input.start),
+  };
+};
+
+export const parseSendInput = parseWritingInput;
+
+export const parseSaveInput = (raw: unknown) => {
+  const input = record(raw);
+  const { whenLocked } = input;
+  if (whenLocked !== "report" && whenLocked !== "copy") throw badRequest();
+  return {
+    ...parseWritingInput(raw),
+    written: requireBoolean(input.written),
+    fileComing: requireBoolean(input.fileComing),
+    showing: requireShowing(input.showing),
+    whenLocked: whenLocked as SaveIntent["whenLocked"],
     leaving: input.leaving === true,
   };
 };
 
-export const parseSaveKeptInput = (raw: unknown) => {
-  const save = parseSaveInput(raw);
-  const copyId = requireOutgoingId(record(raw).copyId);
-  if (copyId === save.id) throw badRequest();
-  return { ...save, copyId };
-};
+export const parseDiscardInput = (raw: unknown) => ({
+  ...parseOutgoingInput(raw),
+  ...requireBase(record(raw)),
+});
 
 export const parseRemoveAttachmentInput = (raw: unknown) => {
   const input = record(raw);
@@ -154,7 +206,7 @@ export const parseRemoveAttachmentInput = (raw: unknown) => {
   ) {
     throw badRequest();
   }
-  return { ...parseOutgoingInput(raw), attachmentId };
+  return { ...parseDiscardInput(raw), attachmentId };
 };
 
 export const parseSuggestInput = (raw: unknown) => {

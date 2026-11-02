@@ -10,7 +10,7 @@ import { readReplySource } from "./reply-source";
 import { createTestEnv, eml, MAILBOX_A, MAILBOX_B } from "../test-support";
 import type { Address, MailboxId, MessageDetail } from "../types";
 import type { NewRowFrom, ReplySource } from "./outgoing";
-import type { DraftContent, Editor, OutgoingId } from "./types";
+import type { DraftContent, Editor, OutgoingId, SaveIntent } from "./types";
 import { MAX_RECIPIENTS, startOf, UNDO_WINDOW_MS } from "./types";
 import { refusalToSend } from "./validate";
 
@@ -22,6 +22,16 @@ const DOMAIN = "example.com";
 
 const person = (address: string, name = ""): Address => ({ name, address });
 const newId = () => crypto.randomUUID() as OutgoingId;
+
+const SESSION = "session-alex";
+const WRITING: Omit<SaveIntent, "baseRevision"> = {
+  session: SESSION,
+  written: true,
+  fileComing: false,
+  showing: [],
+  whenLocked: "report",
+};
+const ACTING = { baseRevision: 0, session: SESSION };
 
 function content(overrides: Partial<DraftContent> = {}): DraftContent {
   return {
@@ -70,6 +80,7 @@ async function setUp(mailboxId: MailboxId = MAILBOX_A) {
     instance.sqlite.prepare(query).all(...(values as never[])) as Row[];
   const send = async (id: OutgoingId, overrides?: Partial<DraftContent>) => {
     const result = await mailbox.outgoing.send({
+      ...ACTING,
       id,
       content: content(overrides),
       editor: EDITOR,
@@ -347,6 +358,7 @@ test("line breaks in a subject and a name cannot add a header", async () => {
   const { bucket, email, instance, mailbox, sent } = await setUp();
   const id = newId();
   await mailbox.outgoing.send({
+    ...ACTING,
     id,
     content: content({
       subject: "Hi\r\nBcc: evil@example.net",
@@ -373,6 +385,7 @@ test("a line break in an address is refused, by name, before anything is schedul
   const { mailbox, stateOf } = await setUp();
   const id = newId();
   const result = await mailbox.outgoing.send({
+    ...ACTING,
     id,
     content: content({ to: [person("a@x.org\r\nBcc: evil@example.net")] }),
     editor: EDITOR,
@@ -449,6 +462,7 @@ test("autosave keeps one draft row, with no rows in messages", async () => {
   let revision = 0;
   for (const subject of ["a", "ab", "abc"]) {
     const result = await mailbox.outgoing.save({
+      ...WRITING,
       id,
       baseRevision: revision,
       content: content({ subject }),
@@ -457,7 +471,6 @@ test("autosave keeps one draft row, with no rows in messages", async () => {
     });
     if (result.status !== "saved") throw new Error("expected a save");
     revision = result.revision;
-    expect(result.overwrote).toBeNull();
   }
   expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
   expect(rows("SELECT id FROM messages")).toHaveLength(0);
@@ -468,43 +481,13 @@ test("autosave keeps one draft row, with no rows in messages", async () => {
   expect(listed?.subject).toBe("abc");
 });
 
-test("two people on one draft: the last save wins, and that person is told", async () => {
-  const { mailbox } = await setUp();
-  const id = newId();
-  const first = await mailbox.outgoing.save({
-    id,
-    baseRevision: 0,
-    content: content({ subject: "Alex's" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  if (first.status !== "saved") throw new Error("expected a save");
-  const sam = await mailbox.outgoing.save({
-    id,
-    baseRevision: first.revision,
-    content: content({ subject: "Sam's" }),
-    editor: { id: SAM, name: "Sam" },
-    ownDomain: DOMAIN,
-  });
-  expect(sam).toMatchObject({ status: "saved", overwrote: null });
-  const late = await mailbox.outgoing.save({
-    id,
-    baseRevision: first.revision,
-    content: content({ subject: "Alex's again" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  expect(late).toMatchObject({ status: "saved", overwrote: "Sam" });
-  expect((await mailbox.outgoing.detail(id, SAM))?.content.subject).toBe(
-    "Alex's again",
-  );
-});
-
 test("a save cannot change a message already on its way", async () => {
   const { mailbox, send } = await setUp();
   const id = newId();
   await send(id);
   const result = await mailbox.outgoing.save({
+    ...WRITING,
+    session: "session-sam",
     id,
     baseRevision: 2,
     content: content({ subject: "Too late" }),
@@ -518,6 +501,7 @@ test("a draft's hostile HTML is reduced to what the toolbar can make", async () 
   const { mailbox } = await setUp();
   const id = newId();
   await mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 0,
     content: content({
@@ -538,6 +522,7 @@ test("a draft keeps its attachments across saves, and they go when it is sent", 
   const { bucket, email, instance, mailbox, send, rows, sent } = await setUp();
   const id = newId();
   const upload = await mailbox.outgoing.upload({
+    ...ACTING,
     id,
     fileName: 'report\r\nX-Evil: 1".pdf',
     mimeType: "application/pdf",
@@ -550,6 +535,7 @@ test("a draft keeps its attachments across saves, and they go when it is sent", 
   });
   expect(upload.status).toBe("added");
   await mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 1,
     content: content(),
@@ -584,6 +570,7 @@ test("uploads over the limits are refused, and a refused file leaves nothing beh
   });
   const upload = (bytes: number) =>
     mailbox.outgoing.upload({
+      ...ACTING,
       id,
       fileName: "a.bin",
       mimeType: "",
@@ -622,6 +609,7 @@ test("a quote that was left out doesn't count against a new file", async () => {
     });
   const upload = (id: OutgoingId, from: NewRowFrom) =>
     kit.mailbox.outgoing.upload({
+      ...ACTING,
       id,
       fileName: "report.pdf",
       mimeType: "application/pdf",
@@ -655,6 +643,7 @@ test("the 33rd attachment is refused", async () => {
   const id = newId();
   const upload = () =>
     mailbox.outgoing.upload({
+      ...ACTING,
       id,
       fileName: "a.txt",
       mimeType: "text/plain",
@@ -672,13 +661,16 @@ test("discarding a draft removes its row and queues its files; a message on its 
   const { mailbox, rows, send, stateOf } = await setUp();
   const id = newId();
   await mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 0,
     content: content(),
     editor: EDITOR,
     ownDomain: DOMAIN,
   });
-  expect(await mailbox.outgoing.discard(id)).toBe(true);
+  expect(
+    await mailbox.outgoing.discard({ ...ACTING, id, editor: EDITOR }),
+  ).toEqual({ status: "discarded" });
   expect(stateOf(id)).toBeUndefined();
   expect(
     rows<{ prefix: string }>("SELECT prefix FROM r2_deletions")[0]?.prefix,
@@ -686,7 +678,9 @@ test("discarding a draft removes its row and queues its files; a message on its 
 
   const going = newId();
   await send(going);
-  expect(await mailbox.outgoing.discard(going)).toBe(false);
+  expect(
+    await mailbox.outgoing.discard({ ...ACTING, id: going, editor: EDITOR }),
+  ).toEqual({ status: "gone" });
   expect(stateOf(going)).toBe("scheduled");
 });
 
@@ -742,6 +736,7 @@ async function savedReply(
 ) {
   const opened = await startFrom(kit, parent, mode);
   const first = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id: opened.id,
     baseRevision: 0,
     content: { ...opened.draft.content, html: "<p>First words</p>" },
@@ -758,6 +753,7 @@ test("a save tells the device what the draft still holds", async () => {
   const { parent } = await parentOf(kit);
   const { id, draft } = await savedReply(kit, parent, "reply");
   const result = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: draft.revision,
     content: { ...draft.content, html: "<p>Still here</p>" },
@@ -776,8 +772,9 @@ test("words saved after their draft was discarded keep what they can and say wha
   const kit = await setUp();
   const { parent } = await parentOf(kit);
   const { id, draft } = await savedReply(kit, parent, "forward");
-  await kit.mailbox.outgoing.discard(id);
+  await kit.mailbox.outgoing.discard({ ...ACTING, id, editor: EDITOR });
   const result = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: draft.revision,
     content: { ...draft.content, html: "<p>Words from a train</p>" },
@@ -827,6 +824,7 @@ test("a first save repeated with the same id keeps one row and one copy of each 
     await source(parent, "forward"),
   );
   const first = {
+    ...WRITING,
     id,
     baseRevision: 0,
     content: { ...draft.content, html: "<p>FYI</p>" },
@@ -849,6 +847,7 @@ test("a reply threads for the recipient and in our own copy, with the quote", as
   const { parent, threadId } = await parentOf(kit);
   const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: { ...draft.content, html: "<p>Agreed</p>" },
@@ -891,6 +890,7 @@ test("a sent reply joins its conversation's labels and rules leave it alone", as
 
   const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: { ...draft.content, html: "<p>Agreed on the budget</p>" },
@@ -980,6 +980,7 @@ test("a long chain of references is cut to fit Cloudflare's header limit, keepin
     "reply",
   );
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: { ...draft.content, html: "<p>x</p>" },
@@ -1194,6 +1195,7 @@ test("the check follows whoever pressed Send, not whoever wrote the draft", asyn
   const kit = await setUp();
   const id = newId();
   await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 0,
     content: content(),
@@ -1339,6 +1341,7 @@ test("the recipient limit counts people, not entries", async () => {
   expect(kit.email.sent[0]?.bcc).toBeUndefined();
 
   const refused = await kit.mailbox.outgoing.send({
+    ...ACTING,
     id: newId(),
     content: content({
       to: fifty,
@@ -1404,6 +1407,7 @@ test("forwarding carries the attachments along, and they survive the original be
     "contract.pdf",
   ]);
   const saved = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 0,
     content: { ...draft.content, to: [person("jo@example.org")] },
@@ -1417,6 +1421,7 @@ test("forwarding carries the attachments along, and they survive the original be
   await kit.instance.object.alarm();
 
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     content: {
       ...draft.content,
@@ -1443,6 +1448,7 @@ test("a forward with only a person added goes straight out with its files, and o
       await source(parent, "forward"),
     );
     const result = await kit.mailbox.outgoing.send({
+      ...ACTING,
       id,
       content: { ...draft.content, to: [person("jo@example.org")] },
       editor: EDITOR,
@@ -1472,6 +1478,7 @@ test("opening a reply or forward stores nothing until something is added", async
     );
     for (const html of ["", "<p><br></p>", " &nbsp; <div>\u200b</div>"]) {
       const result = await kit.mailbox.outgoing.save({
+        ...WRITING,
         id,
         baseRevision: 0,
         content: { ...draft.content, html },
@@ -1483,6 +1490,7 @@ test("opening a reply or forward stores nothing until something is added", async
     }
     // Taking the quote off and removing a file only takes things away.
     const leftOut = await kit.mailbox.outgoing.save({
+      ...WRITING,
       id,
       baseRevision: 0,
       content: { ...draft.content, includeQuote: false },
@@ -1500,6 +1508,7 @@ test("opening a reply or forward stores nothing until something is added", async
 test("a new message with nothing in it makes no row, however the screen asks", async () => {
   const { mailbox, rows } = await setUp();
   const result = await mailbox.outgoing.save({
+    ...WRITING,
     id: newId(),
     baseRevision: 0,
     content: content({ to: [], subject: "  ", html: "<p><br></p>" }),
@@ -1520,6 +1529,7 @@ test("send with nothing added is refused in plain words and makes no row", async
       await source(parent, mode),
     );
     const result = await kit.mailbox.outgoing.send({
+      ...ACTING,
       id,
       content: draft.content,
       editor: EDITOR,
@@ -1540,6 +1550,7 @@ test("a saved draft someone empties keeps its last words until they leave, then 
   const id = newId();
   const save = (html: string, baseRevision: number, leaving = false) =>
     kit.mailbox.outgoing.save({
+      ...WRITING,
       id,
       baseRevision,
       content: content({ to: [], subject: "", html }),
@@ -1571,6 +1582,8 @@ test("leaving an emptied draft never removes what a colleague saved since", asyn
     leaving = false,
   ) =>
     kit.mailbox.outgoing.save({
+      ...WRITING,
+      session: editor === EDITOR ? SESSION : "session-sam",
       id,
       baseRevision,
       content: content({ to: [], subject: "", html }),
@@ -1605,6 +1618,7 @@ test("a file someone uploaded counts as added, and one they then remove doesn't"
     await source(parent, "forward"),
   );
   const uploaded = await kit.mailbox.outgoing.upload({
+    ...ACTING,
     id,
     fileName: "a.txt",
     mimeType: "text/plain",
@@ -1622,6 +1636,7 @@ test("a file someone uploaded counts as added, and one they then remove doesn't"
   ]);
   const leave = () =>
     kit.mailbox.outgoing.save({
+      ...WRITING,
       id,
       baseRevision: uploaded.revision,
       content: draft.content,
@@ -1631,10 +1646,16 @@ test("a file someone uploaded counts as added, and one they then remove doesn't"
     });
   expect((await leave()).status).toBe("saved");
 
-  await kit.mailbox.outgoing.removeAttachment(id, uploaded.attachment.id);
+  await kit.mailbox.outgoing.removeAttachment({
+    ...ACTING,
+    id,
+    attachmentId: uploaded.attachment.id,
+    editor: EDITOR,
+  });
   expect(await kit.mailbox.outgoing.list(ALEX)).toEqual([]);
   const baseRevision = (await kit.mailbox.outgoing.detail(id, ALEX))!.revision;
   const removed = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision,
     content: draft.content,
@@ -1650,6 +1671,7 @@ test("undoing a send gives back a draft with what was written", async () => {
   const { parent } = await parentOf(kit);
   const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: { ...draft.content, html: "<p>Second thoughts</p>" },
@@ -1677,6 +1699,7 @@ test("a reply whose original went before the first word saves those words anyway
     ),
   ).toBeNull();
   const result = await kit.mailbox.outgoing.save({
+    ...WRITING,
     id,
     baseRevision: 0,
     content: {
@@ -1711,6 +1734,7 @@ test("a quoted hostile message goes out sanitized", async () => {
   expect(quoteHtml).not.toMatch(/onclick|<script|<iframe|onerror|alert/i);
 
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: { ...draft.content, html: "<p>Reply</p>" },
@@ -1729,6 +1753,7 @@ test("leaving the quote out sends only what was written", async () => {
   const { parent } = await parentOf(kit);
   const { id, draft, from } = await startFrom(kit, parent, "reply");
   await kit.mailbox.outgoing.send({
+    ...ACTING,
     id,
     from,
     content: {
@@ -1816,216 +1841,585 @@ test("queueing other work keeps the send's earlier wake-up", async () => {
 });
 
 const SAM_EDITOR: Editor = { id: SAM, name: "Sam" };
+const SAM_SESSION = "session-sam";
+const ANOTHER_TAB = "session-alex-other-tab";
 
-// Alex's kept words were written on the first save. Someone has saved again since.
-async function draftThatMovedOn(by: Editor = SAM_EDITOR) {
+// Alex's words were written on the first save. Someone has saved again since.
+async function draftThatMovedOn(
+  by: Editor = SAM_EDITOR,
+  bySession = SAM_SESSION,
+) {
   const kit = await setUp();
   const id = newId();
-  const save = (html: string, baseRevision: number, editor: Editor) =>
+  const save = (
+    html: string,
+    baseRevision: number,
+    editor: Editor,
+    session: string,
+  ) =>
     kit.mailbox.outgoing.save({
+      ...WRITING,
+      session,
       id,
       baseRevision,
       content: content({ html }),
       editor,
       ownDomain: DOMAIN,
     });
-  const first = await save("<p>ALEX-FIRST</p>", 0, EDITOR);
+  const first = await save("<p>ALEX-FIRST</p>", 0, EDITOR, SESSION);
   if (first.status !== "saved") throw new Error("expected a save");
-  await save("<p>NEWER</p>", first.revision, by);
-  const keptSave = (copyId: OutgoingId) =>
-    kit.mailbox.outgoing.saveKept({
+  await save("<p>NEWER</p>", first.revision, by, bySession);
+  const late = (html = "<p>ALEX-STALE</p>", intent: Partial<SaveIntent> = {}) =>
+    kit.mailbox.outgoing.save({
+      ...WRITING,
       id,
-      copyId,
       baseRevision: first.revision,
-      content: content({ html: "<p>ALEX-FIRST LAPTOP-STALE</p>" }),
+      content: content({ html }),
       editor: EDITOR,
       ownDomain: DOMAIN,
+      ...intent,
     });
   const htmlOf = async (draftId: OutgoingId) =>
     (await kit.mailbox.outgoing.detail(draftId, ALEX))?.content.html;
-  return { ...kit, id, keptSave, htmlOf };
+  const copyOf = async () => {
+    const result = await late();
+    if (result.status !== "copied") throw new Error("expected a copy");
+    return result;
+  };
+  return { ...kit, id, baseRevision: first.revision, late, htmlOf, copyOf };
 }
 
-test("kept words never replace a colleague's newer draft: both survive", async () => {
-  const { id, keptSave, htmlOf, rows } = await draftThatMovedOn();
-  const copyId = newId();
-  expect(await keptSave(copyId)).toEqual({
+test("a save on an older version becomes a new draft beside it, and says who changed it", async () => {
+  const { id, late, htmlOf, rows } = await draftThatMovedOn();
+  const result = await late();
+  expect(result).toMatchObject({
     status: "copied",
-    copyId,
-    copyIsDraft: true,
+    state: "draft",
     changed: { by: "Sam" },
   });
+  if (result.status !== "copied") throw new Error("expected a copy");
+  expect(result.id).not.toBe(id);
   expect(await htmlOf(id)).toBe("<p>NEWER</p>");
-  expect(await htmlOf(copyId)).toBe("<p>ALEX-FIRST LAPTOP-STALE</p>");
+  expect(await htmlOf(result.id)).toBe("<p>ALEX-STALE</p>");
   expect(rows("SELECT id FROM outgoing")).toHaveLength(2);
 });
 
-test("kept words stay beside the draft when it moved on by the same person", async () => {
-  const { id, keptSave, htmlOf } = await draftThatMovedOn(EDITOR);
-  const copyId = newId();
-  expect(await keptSave(copyId)).toMatchObject({
+test("the same person elsewhere gets the same new draft, with no name", async () => {
+  const { id, late, htmlOf } = await draftThatMovedOn(EDITOR, ANOTHER_TAB);
+  expect(await late()).toMatchObject({
     status: "copied",
     changed: { by: null },
   });
   expect(await htmlOf(id)).toBe("<p>NEWER</p>");
-  expect(await htmlOf(copyId)).toBe("<p>ALEX-FIRST LAPTOP-STALE</p>");
 });
 
-test("retrying kept words makes one new draft and leaves later edits to it alone", async () => {
-  const { mailbox, keptSave, htmlOf, rows } = await draftThatMovedOn();
-  const copyId = newId();
-  await keptSave(copyId);
-  const edited = await mailbox.outgoing.save({
-    id: copyId,
-    baseRevision: 2,
-    content: content({ html: "<p>EDITED AFTER</p>" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  expect(edited.status).toBe("saved");
-  expect(await keptSave(copyId)).toMatchObject({
-    status: "copied",
-    copyId,
-    copyIsDraft: true,
-  });
+test("the Drafts list can tell the two apart", async () => {
+  const { mailbox, id, copyOf } = await draftThatMovedOn();
+  const copy = await copyOf();
+  const listed = await mailbox.outgoing.list(ALEX);
+  const row = (wanted: OutgoingId) => listed.find((job) => job.id === wanted);
+  expect(row(id)).toMatchObject({ isCopy: false, updatedByName: "Sam" });
+  expect(row(copy.id)).toMatchObject({ isCopy: true, updatedByName: "Alex" });
+  expect((await mailbox.outgoing.detail(copy.id, ALEX))?.isCopy).toBe(true);
+});
+
+test("a retry reaches the same new draft and brings its newer words", async () => {
+  const { late, htmlOf, rows } = await draftThatMovedOn();
+  const first = await late("<p>one</p>");
+  const again = await late("<p>one</p>");
+  const more = await late("<p>one two</p>");
+  if (first.status !== "copied" || more.status !== "copied") {
+    throw new Error("expected copies");
+  }
+  expect(again).toMatchObject({ status: "copied", id: first.id });
+  expect(more.id).toBe(first.id);
+  expect(await htmlOf(first.id)).toBe("<p>one two</p>");
   expect(rows("SELECT id FROM outgoing")).toHaveLength(2);
-  expect(await htmlOf(copyId)).toBe("<p>EDITED AFTER</p>");
 });
 
-test("kept words save over a draft nobody has changed", async () => {
-  const { mailbox, rows } = await setUp();
-  const id = newId();
-  const first = await mailbox.outgoing.save({
-    id,
-    baseRevision: 0,
-    content: content({ html: "<p>one</p>" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  if (first.status !== "saved") throw new Error("expected a save");
-  const kept = await mailbox.outgoing.saveKept({
-    id,
-    copyId: newId(),
-    baseRevision: first.revision,
-    content: content({ html: "<p>two</p>" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  expect(kept).toMatchObject({
-    status: "saved",
-    revision: first.revision + 1,
-  });
-  expect((await mailbox.outgoing.detail(id, ALEX))?.content.html).toBe(
-    "<p>two</p>",
-  );
-  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
-});
-
-test("a retry after a save whose answer was lost isn't taken for someone else's change", async () => {
-  const { mailbox, rows } = await setUp();
-  const id = newId();
-  const first = await mailbox.outgoing.save({
-    id,
-    baseRevision: 0,
-    content: content({ html: "<p>one</p>" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  if (first.status !== "saved") throw new Error("expected a save");
-  const retry = () =>
-    mailbox.outgoing.saveKept({
-      id,
-      copyId: newId(),
-      baseRevision: first.revision,
-      content: content({ html: "<p>two</p>" }),
+test("twenty saves after moving onto the new draft stay in it", async () => {
+  const { mailbox, id, copyOf, htmlOf, rows } = await draftThatMovedOn();
+  const copy = await copyOf();
+  let revision = copy.revision;
+  for (let word = 1; word <= 20; word += 1) {
+    const saved = await mailbox.outgoing.save({
+      ...WRITING,
+      id: copy.id,
+      baseRevision: revision,
+      content: content({ html: `<p>word ${word}</p>` }),
       editor: EDITOR,
       ownDomain: DOMAIN,
     });
-  const answered = await retry();
-  expect(await retry()).toEqual(answered);
+    if (saved.status !== "saved") throw new Error("expected a save");
+    revision = saved.revision;
+  }
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(2);
+  expect(await htmlOf(copy.id)).toBe("<p>word 20</p>");
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("a retry of a first save whose answer was lost isn't taken for someone else", async () => {
+  const { mailbox, rows } = await setUp();
+  const id = newId();
+  const save = (html: string) =>
+    mailbox.outgoing.save({
+      ...WRITING,
+      id,
+      baseRevision: 0,
+      content: content({ html }),
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+    });
+  await save("<p>one</p>");
+  expect(await save("<p>one and more</p>")).toMatchObject({ status: "saved" });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  expect((await mailbox.outgoing.detail(id, ALEX))?.content.html).toBe(
+    "<p>one and more</p>",
+  );
+});
+
+test("a save holding nothing new against what its editor started from makes no copy", async () => {
+  const { id, late, htmlOf, rows } = await draftThatMovedOn();
+  expect(await late("<p>ALEX-FIRST</p>", { written: false })).toEqual({
+    status: "behind",
+    changed: { by: "Sam" },
+  });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("words the draft already holds just catch the editor up", async () => {
+  const { baseRevision, late, rows } = await draftThatMovedOn();
+  expect(await late("<p>NEWER</p>")).toMatchObject({
+    status: "saved",
+    revision: baseRevision + 1,
+  });
   expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
 });
 
-test("kept words for a brand-new draft just save", async () => {
-  const { mailbox, rows } = await setUp();
-  const id = newId();
+test("two tabs bringing back the same words make one new draft", async () => {
+  const { late, rows } = await draftThatMovedOn();
+  const one = await late("<p>same</p>", { session: "tab-one" });
+  const two = await late("<p>same</p>", { session: "tab-two" });
+  if (one.status !== "copied") throw new Error("expected a copy");
+  expect(two).toMatchObject({ status: "copied", id: one.id });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(2);
+});
+
+test("two tabs with different words each keep them", async () => {
+  const { late, htmlOf, rows } = await draftThatMovedOn();
+  const one = await late("<p>tab one</p>", { session: "tab-one" });
+  const two = await late("<p>tab two</p>", { session: "tab-two" });
+  if (one.status !== "copied" || two.status !== "copied") {
+    throw new Error("expected copies");
+  }
+  expect(await htmlOf(one.id)).toBe("<p>tab one</p>");
+  expect(await htmlOf(two.id)).toBe("<p>tab two</p>");
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(3);
+});
+
+test("a new draft someone else has since changed is left alone, and the words stay safe", async () => {
+  const { mailbox, copyOf, late, htmlOf } = await draftThatMovedOn();
+  const copy = await copyOf();
+  await mailbox.outgoing.save({
+    ...WRITING,
+    session: SAM_SESSION,
+    id: copy.id,
+    baseRevision: copy.revision,
+    content: content({ html: "<p>SAM TOOK IT OVER</p>" }),
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+  });
+  const retried = await late("<p>ALEX-RETRY</p>");
+  if (retried.status !== "copied") throw new Error("expected a copy");
+  expect(retried.id).not.toBe(copy.id);
+  expect(await htmlOf(copy.id)).toBe("<p>SAM TOOK IT OVER</p>");
+  expect(await htmlOf(retried.id)).toBe("<p>ALEX-RETRY</p>");
+  expect(await late("<p>ALEX-RETRY again</p>")).toMatchObject({
+    status: "copied",
+    id: retried.id,
+  });
+});
+
+test("a reply's new draft stays a threaded reply with its quote and files, and sends them", async () => {
+  const kit = await setUp();
+  const { parent, source } = await parentWithFile(kit);
+  const { id, draft, from } = await openReply(
+    kit,
+    await source(parent, "forward"),
+  );
+  const first = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    id,
+    baseRevision: 0,
+    content: { ...draft.content, html: "<p>Alex's</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    from,
+  });
+  if (first.status !== "saved") throw new Error("expected a save");
+  const uploaded = await kit.mailbox.outgoing.upload({
+    ...ACTING,
+    baseRevision: first.revision,
+    id,
+    fileName: "mine.txt",
+    mimeType: "text/plain",
+    body: {
+      declaredBytes: 4,
+      read: async () => new TextEncoder().encode("mine").buffer as ArrayBuffer,
+    },
+    fromAddress: OWN,
+    editor: EDITOR,
+  });
+  if (uploaded.status !== "added") throw new Error("expected a file");
+  const showing = [...first.carried, uploaded.attachment];
+  await kit.mailbox.outgoing.save({
+    ...WRITING,
+    session: SAM_SESSION,
+    id,
+    baseRevision: uploaded.revision,
+    content: { ...draft.content, html: "<p>Sam's</p>" },
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+  });
+  const copied = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    showing,
+    id,
+    baseRevision: uploaded.revision,
+    content: { ...draft.content, html: "<p>Alex's newer</p>" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  if (copied.status !== "copied") throw new Error("expected a copy");
+  expect(copied.holds).toMatchObject({ quote: true, threaded: true });
+  expect(copied.holds.attachmentIds).toContain(uploaded.attachment.id);
+  expect(copied.holds.carriedFrom).toEqual(draft.attachments.map((f) => f.id));
+  expect(copied.files.map((file) => file.filename).sort()).toEqual([
+    "contract.pdf",
+    "mine.txt",
+  ]);
+
+  const copy = await kit.mailbox.outgoing.detail(copied.id, ALEX);
+  expect(copy?.mode).toBe("forward");
+  expect(copy?.parent?.messageId).toBe(parent.id);
+  expect(copy?.content.includeQuote).toBe(true);
+  expect(await kit.mailbox.outgoing.quoteHtml(copied.id)).toContain(
+    "See attached.",
+  );
+  const original = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(original?.content.html).toBe("<p>Sam's</p>");
+  expect(original?.attachments).toHaveLength(2);
+
+  await kit.mailbox.outgoing.send({
+    ...ACTING,
+    baseRevision: copied.revision,
+    id: copied.id,
+    content: { ...draft.content, to: [person("pat@example.org")] },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    fromName: "Alex",
+  });
+  await kit.instance.fireAlarm();
+  const [message] = kit.email.sent;
+  expect(message?.attachments?.map((file) => file.filename).sort()).toEqual([
+    "contract.pdf",
+    "mine.txt",
+  ]);
+  expect((await kit.mailbox.outgoing.detail(id, ALEX))?.state).toBe("draft");
   expect(
-    await mailbox.outgoing.saveKept({
+    (await kit.mailbox.outgoing.detail(id, ALEX))?.attachments,
+  ).toHaveLength(2);
+});
+
+test("a new draft leaves out a file that can't be read, and says so", async () => {
+  const kit = await setUp();
+  const id = newId();
+  const uploaded = await kit.mailbox.outgoing.upload({
+    ...ACTING,
+    id,
+    fileName: "gone.txt",
+    mimeType: "text/plain",
+    body: { declaredBytes: 1, read: async () => new ArrayBuffer(1) },
+    fromAddress: OWN,
+    editor: EDITOR,
+  });
+  if (uploaded.status !== "added") throw new Error("expected a file");
+  await kit.mailbox.outgoing.save({
+    ...WRITING,
+    session: SAM_SESSION,
+    id,
+    baseRevision: uploaded.revision,
+    content: content({ html: "<p>Sam's</p>" }),
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+  });
+  await kit.bucket.delete(kit.bucket.keys());
+  const copied = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    showing: [uploaded.attachment],
+    id,
+    baseRevision: uploaded.revision,
+    content: content({ html: "<p>Alex's</p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  if (copied.status !== "copied") throw new Error("expected a copy");
+  expect(copied.files).toEqual([]);
+  expect(copied.holds.attachmentIds).toEqual([]);
+});
+
+test("a file changing moves the draft on, so an older save can't land over it", async () => {
+  const kit = await setUp();
+  const id = newId();
+  const first = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    id,
+    baseRevision: 0,
+    content: content({ html: "<p>start</p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  if (first.status !== "saved") throw new Error("expected a save");
+  const sams = await kit.mailbox.outgoing.upload({
+    ...ACTING,
+    session: SAM_SESSION,
+    baseRevision: first.revision,
+    id,
+    fileName: "sam.txt",
+    mimeType: "text/plain",
+    body: { declaredBytes: 1, read: async () => new ArrayBuffer(1) },
+    fromAddress: OWN,
+    editor: SAM_EDITOR,
+  });
+  if (sams.status !== "added") throw new Error("expected a file");
+  expect(sams.revision).toBe(first.revision + 1);
+
+  const objects = kit.bucket.keys().length;
+  expect(
+    await kit.mailbox.outgoing.upload({
+      ...ACTING,
+      baseRevision: first.revision,
       id,
-      copyId: newId(),
-      baseRevision: 0,
-      content: content({ html: "<p>first words</p>" }),
+      fileName: "alex.txt",
+      mimeType: "text/plain",
+      body: { declaredBytes: 1, read: async () => new ArrayBuffer(1) },
+      fromAddress: OWN,
+      editor: EDITOR,
+    }),
+  ).toEqual({ status: "behind" });
+  expect(kit.bucket.keys()).toHaveLength(objects);
+  expect(
+    await kit.mailbox.outgoing.removeAttachment({
+      ...ACTING,
+      baseRevision: first.revision,
+      id,
+      attachmentId: sams.attachment.id,
+      editor: EDITOR,
+    }),
+  ).toEqual({ status: "behind" });
+
+  const copied = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    id,
+    baseRevision: first.revision,
+    content: content({ html: "<p>Alex typing</p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(copied).toMatchObject({
+    status: "copied",
+    files: [],
+    changed: { by: "Sam" },
+  });
+  const original = await kit.mailbox.outgoing.detail(id, ALEX);
+  expect(original?.content.html).toBe("<p>start</p>");
+  expect(original?.attachments.map((file) => file.filename)).toEqual([
+    "sam.txt",
+  ]);
+});
+
+test("a file on its way can make a new draft that holds nothing else yet", async () => {
+  const kit = await setUp();
+  const id = newId();
+  const empty = { ...content({ html: "" }), to: [], subject: "" };
+  const first = await kit.mailbox.outgoing.save({
+    ...WRITING,
+    id,
+    baseRevision: 0,
+    content: content({ html: "<p>start</p>" }),
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+  });
+  if (first.status !== "saved") throw new Error("expected a save");
+  await kit.mailbox.outgoing.save({
+    ...WRITING,
+    session: SAM_SESSION,
+    id,
+    baseRevision: first.revision,
+    content: content({ html: "<p>Sam's</p>" }),
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+  });
+  expect(
+    await kit.mailbox.outgoing.save({
+      ...WRITING,
+      fileComing: true,
+      id,
+      baseRevision: first.revision,
+      content: empty,
       editor: EDITOR,
       ownDomain: DOMAIN,
     }),
-  ).toMatchObject({ status: "saved" });
-  expect((await mailbox.outgoing.detail(id, ALEX))?.content.html).toBe(
-    "<p>first words</p>",
-  );
-  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  ).toMatchObject({ status: "copied" });
 });
 
-test("kept words for a message already on its way become a new draft", async () => {
+test("Send on an older version sends nothing and leaves the draft for the screen to deal with", async () => {
+  const { mailbox, id, baseRevision, htmlOf, stateOf } =
+    await draftThatMovedOn();
+  expect(
+    await mailbox.outgoing.send({
+      id,
+      baseRevision,
+      session: SESSION,
+      content: content({ html: "<p>Alex's screen</p>" }),
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      fromName: "Alex",
+    }),
+  ).toEqual({ status: "behind" });
+  expect(stateOf(id)).toBe("draft");
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("Send from the new draft sends the words on that person's screen and leaves the other draft", async () => {
+  const { mailbox, id, copyOf, htmlOf, stateOf, instance, email } =
+    await draftThatMovedOn();
+  const copy = await copyOf();
+  expect(
+    await mailbox.outgoing.send({
+      id: copy.id,
+      baseRevision: copy.revision,
+      session: SESSION,
+      content: content({ html: "<p>Alex's screen</p>" }),
+      editor: EDITOR,
+      ownDomain: DOMAIN,
+      fromName: "Alex",
+    }),
+  ).toEqual({ status: "scheduled" });
+  expect(stateOf(id)).toBe("draft");
+  await instance.fireAlarm();
+  expect(email.sent).toHaveLength(1);
+  expect(email.sent[0]?.html).toContain("Alex's screen");
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("Send can't join a send someone else started, and pressing it twice is one send", async () => {
+  const { mailbox, send, stateOf } = await setUp();
+  const id = newId();
+  await send(id);
+  const again = {
+    id,
+    baseRevision: 0,
+    content: content({ html: "<p>Sam's words</p>" }),
+    editor: SAM_EDITOR,
+    ownDomain: DOMAIN,
+    fromName: "Sam",
+  };
+  expect(
+    await mailbox.outgoing.send({ ...again, session: SAM_SESSION }),
+  ).toEqual({ status: "locked", state: "scheduled" });
+  expect(await mailbox.outgoing.send({ ...again, session: SESSION })).toEqual({
+    status: "scheduled",
+  });
+  expect(stateOf(id)).toBe("scheduled");
+});
+
+test("Discard removes only this person's new draft", async () => {
+  const { mailbox, id, copyOf, htmlOf, stateOf } = await draftThatMovedOn();
+  const copy = await copyOf();
+  expect(
+    await mailbox.outgoing.discard({
+      id: copy.id,
+      baseRevision: copy.revision,
+      session: SESSION,
+      editor: EDITOR,
+    }),
+  ).toEqual({ status: "discarded" });
+  expect(stateOf(copy.id)).toBeUndefined();
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("Discard on an older version leaves the words saved since", async () => {
+  const { mailbox, id, baseRevision, htmlOf } = await draftThatMovedOn();
+  expect(
+    await mailbox.outgoing.discard({
+      id,
+      baseRevision,
+      session: SESSION,
+      editor: EDITOR,
+    }),
+  ).toEqual({ status: "behind", changed: { by: "Sam" } });
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("an emptied draft leaves a colleague's newer words alone", async () => {
+  const { mailbox, id, baseRevision, htmlOf } = await draftThatMovedOn();
+  const emptied = await mailbox.outgoing.save({
+    ...WRITING,
+    id,
+    baseRevision,
+    content: { ...content({ html: "" }), to: [], subject: "" },
+    editor: EDITOR,
+    ownDomain: DOMAIN,
+    leaving: true,
+  });
+  expect(emptied).toEqual({ status: "changed" });
+  expect(await htmlOf(id)).toBe("<p>NEWER</p>");
+});
+
+test("a save cannot change a message already on its way, unless a new draft was asked for", async () => {
   const { mailbox, send, stateOf, rows } = await setUp();
   const id = newId();
   await send(id);
-  const copyId = newId();
-  expect(
-    await mailbox.outgoing.saveKept({
+  const save = (whenLocked: SaveIntent["whenLocked"]) =>
+    mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked,
+      session: ANOTHER_TAB,
       id,
-      copyId,
       baseRevision: 0,
       content: content({ html: "<p>too late</p>" }),
       editor: EDITOR,
       ownDomain: DOMAIN,
-    }),
-  ).toEqual({ status: "copied", copyId, copyIsDraft: true, changed: null });
+    });
+  expect(await save("report")).toEqual({
+    status: "locked",
+    state: "scheduled",
+  });
+  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
+  const copied = await save("copy");
+  if (copied.status !== "copied") throw new Error("expected a copy");
+  expect(copied.changed).toBeNull();
   expect(stateOf(id)).toBe("scheduled");
-  expect((await mailbox.outgoing.detail(copyId, ALEX))?.content.html).toBe(
+  expect((await mailbox.outgoing.detail(copied.id, ALEX))?.content.html).toBe(
     "<p>too late</p>",
   );
-  expect(rows("SELECT id FROM outgoing")).toHaveLength(2);
 });
 
-test("kept words outlive a draft discarded elsewhere", async () => {
-  const { id, mailbox, keptSave, htmlOf } = await draftThatMovedOn();
-  expect(await mailbox.outgoing.discard(id)).toBe(true);
-  expect(await keptSave(newId())).toMatchObject({
+test("words outlive a draft discarded elsewhere", async () => {
+  const { id, mailbox, late, htmlOf } = await draftThatMovedOn();
+  await mailbox.outgoing.discard({
+    id,
+    baseRevision: 0,
+    session: SAM_SESSION,
+    editor: SAM_EDITOR,
+  });
+  expect(await late()).toMatchObject({
     status: "saved",
     holds: { attachmentIds: [], quote: false, threaded: false },
   });
-  expect(await htmlOf(id)).toBe("<p>ALEX-FIRST LAPTOP-STALE</p>");
-});
-
-test("a kept reply beside a draft that moved on is words only, and the draft keeps the rest", async () => {
-  const kit = await setUp();
-  const { parent } = await parentOf(kit);
-  const { id, draft } = await savedReply(kit, parent, "reply");
-  await kit.mailbox.outgoing.save({
-    id,
-    baseRevision: draft.revision,
-    content: { ...draft.content, html: "<p>Sam's reply</p>" },
-    editor: SAM_EDITOR,
-    ownDomain: DOMAIN,
-  });
-  const copyId = newId();
-  const kept = await kit.mailbox.outgoing.saveKept({
-    id,
-    copyId,
-    baseRevision: draft.revision,
-    content: { ...draft.content, html: "<p>Alex's reply</p>" },
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  expect(kept).toMatchObject({ status: "copied", changed: { by: "Sam" } });
-  const original = await kit.mailbox.outgoing.detail(id, ALEX);
-  expect(original?.content.html).toBe("<p>Sam's reply</p>");
-  expect(original?.quote).not.toBeNull();
-  expect(original?.parent).not.toBeNull();
-  const copy = await kit.mailbox.outgoing.detail(copyId, ALEX);
-  expect(copy?.content.html).toBe("<p>Alex's reply</p>");
-  expect(copy?.content.includeQuote).toBe(false);
-  expect(copy?.mode).toBe("new");
+  expect(await htmlOf(id)).toBe("<p>ALEX-STALE</p>");
 });
 
 test("a reply kept before its first save comes back as one row with its quote and files", async () => {
@@ -2035,9 +2429,10 @@ test("a reply kept before its first save comes back as one row with its quote an
   const opened = await openReply(kit, source);
   const start = startOf(opened.draft)!;
   const keep = () =>
-    kit.mailbox.outgoing.saveKept({
+    kit.mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked: "copy",
       id: opened.id,
-      copyId: newId(),
       baseRevision: 0,
       content: { ...opened.draft.content, html: "<p>Typed on a train</p>" },
       editor: EDITOR,
@@ -2071,9 +2466,10 @@ test("kept text holding only what a reply opened with writes nothing", async () 
   const opened = await openReply(kit, source);
   const objects = kit.bucket.keys().length;
   expect(
-    await kit.mailbox.outgoing.saveKept({
+    await kit.mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked: "copy",
       id: opened.id,
-      copyId: newId(),
       baseRevision: 0,
       content: { ...opened.draft.content, html: "<br>" },
       editor: EDITOR,
@@ -2089,9 +2485,10 @@ test("a kept reply whose original has gone saves its words as a plain draft and 
   const { mailbox, rows } = await setUp();
   const id = newId();
   expect(
-    await mailbox.outgoing.saveKept({
+    await mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked: "copy",
       id,
-      copyId: newId(),
       baseRevision: 0,
       content: content({ html: "<p>Words</p>", includeQuote: true }),
       editor: EDITOR,
@@ -2116,6 +2513,8 @@ test("kept text with nothing added makes no copy beside a draft that moved on", 
   const { parent } = await parentOf(kit);
   const { id, draft } = await savedReply(kit, parent, "reply");
   await kit.mailbox.outgoing.save({
+    ...WRITING,
+    session: SAM_SESSION,
     id,
     baseRevision: draft.revision,
     content: { ...draft.content, html: "<p>Sam's reply</p>" },
@@ -2123,9 +2522,10 @@ test("kept text with nothing added makes no copy beside a draft that moved on", 
     ownDomain: DOMAIN,
   });
   expect(
-    await kit.mailbox.outgoing.saveKept({
+    await kit.mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked: "copy",
       id,
-      copyId: newId(),
       baseRevision: draft.revision,
       content: { ...draft.content, html: "<p><br></p>" },
       editor: EDITOR,
@@ -2142,9 +2542,10 @@ test("kept text with nothing added makes no copy beside a message already sent",
   const id = newId();
   await send(id);
   expect(
-    await mailbox.outgoing.saveKept({
+    await mailbox.outgoing.save({
+      ...WRITING,
+      whenLocked: "copy",
       id,
-      copyId: newId(),
       baseRevision: 0,
       content: {
         ...content({ html: "" }),
@@ -2159,36 +2560,4 @@ test("kept text with nothing added makes no copy beside a message already sent",
   ).toEqual({ status: "nothing" });
   expect(stateOf(id)).toBe("scheduled");
   expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
-});
-
-test("kept text never removes a saved draft, even when it holds nothing", async () => {
-  const { mailbox, rows } = await setUp();
-  const id = newId();
-  const first = await mailbox.outgoing.save({
-    id,
-    baseRevision: 0,
-    content: content({ html: "<p>one</p>" }),
-    editor: EDITOR,
-    ownDomain: DOMAIN,
-  });
-  if (first.status !== "saved") throw new Error("expected a save");
-  expect(
-    await mailbox.outgoing.saveKept({
-      id,
-      copyId: newId(),
-      baseRevision: first.revision,
-      content: {
-        ...content({ html: "" }),
-        to: [],
-        cc: [],
-        bcc: [],
-        subject: "",
-      },
-      editor: EDITOR,
-      ownDomain: DOMAIN,
-    }),
-  ).toEqual({ status: "nothing" });
-  expect(rows("SELECT id FROM outgoing")).toHaveLength(1);
-  const row = await mailbox.outgoing.detail(id, ALEX);
-  expect(row?.content.html).toBe("<p>one</p>");
 });

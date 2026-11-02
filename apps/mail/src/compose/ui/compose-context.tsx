@@ -32,8 +32,10 @@ import type { ComposeMode, KeptDraft, KeptNote, OutgoingId } from "../types";
 const RETRY_KEPT_MS = 60_000;
 
 // What the editor should show, and where. A reply sits on its conversation's screen.
-// Anything else is a panel beside the list, which on a phone fills the screen.
-export type ComposeSession =
+// Anything else is a panel beside the list, which on a phone fills the screen. `id` is the
+// draft on screen, which changes when words move to a new draft beside it. `editor` stays
+// the same through that, so the person keeps typing in the same form.
+export type ComposeSession = { editor: string } & (
   | { kind: "new"; id: OutgoingId; host: "panel" }
   | {
       kind: "start";
@@ -50,7 +52,8 @@ export type ComposeSession =
       threadId: ThreadId | null;
       warning: string | null;
     }
-  | { kind: "kept"; id: OutgoingId; host: "panel"; kept: KeptDraft };
+  | { kind: "kept"; id: OutgoingId; host: "panel"; kept: KeptDraft }
+);
 
 export type ComposeControls = {
   mailboxId: MailboxId;
@@ -70,6 +73,8 @@ export type ComposeControls = {
   ) => void;
   // For a notice, which can outlast the screen the editor was on.
   reopen: (id: OutgoingId, warning?: string) => Promise<void>;
+  // The open editor's words now live in `id`.
+  moveSession: (editor: string, id: OutgoingId) => void;
   close: () => void;
 };
 
@@ -191,15 +196,18 @@ export function ComposeProvider({
   const navigate = useNavigate();
 
   const startNew = useCallback(() => {
-    if (!refuseIfOffline())
-      setSession({ kind: "new", id: newId(), host: "panel" });
+    if (refuseIfOffline()) return;
+    const id = newId();
+    setSession({ kind: "new", id, editor: id, host: "panel" });
   }, [refuseIfOffline]);
   const startFrom = useCallback<ComposeControls["startFrom"]>(
     (mode, parentMessageId, threadId) => {
       if (refuseIfOffline()) return;
+      const id = newId();
       setSession({
         kind: "start",
-        id: newId(),
+        id,
+        editor: id,
         host: "inline",
         threadId,
         mode,
@@ -212,13 +220,14 @@ export function ComposeProvider({
     (id, options) => {
       const held = keptNow.current.find((draft) => draft.id === id);
       if (held) {
-        setSession({ kind: "kept", id, host: "panel", kept: held });
+        setSession({ kind: "kept", id, editor: id, host: "panel", kept: held });
         return;
       }
       if (refuseIfOffline()) return;
       setSession({
         kind: "open",
         id,
+        editor: id,
         host: options?.threadId ? "inline" : "panel",
         threadId: options?.threadId ?? null,
         warning: options?.warning ?? null,
@@ -244,6 +253,12 @@ export function ComposeProvider({
       openDraft(id, warning ? { warning } : undefined);
     },
     [navigate, mailboxId, userId, openDraft],
+  );
+
+  const moveSession = useCallback<ComposeControls["moveSession"]>(
+    (editor, id) =>
+      setSession((now) => (now?.editor === editor ? { ...now, id } : now)),
+    [],
   );
 
   const saving = useRef(false);
@@ -280,7 +295,7 @@ export function ComposeProvider({
                 : "What you were writing is now in Drafts."
             : `${moved.length} messages you were writing are now in Drafts.${
                 moved.some(({ note }) => note?.changed)
-                  ? " Someone changed at least one of them while you were offline, so those words are in a new draft beside it."
+                  ? " Someone changed at least one of them while you were writing, so those words are in a new draft beside it."
                   : ""
               }`,
         action:
@@ -339,6 +354,7 @@ export function ComposeProvider({
       startFrom,
       openDraft,
       reopen,
+      moveSession,
       close,
     }),
     [
@@ -350,6 +366,7 @@ export function ComposeProvider({
       startFrom,
       openDraft,
       reopen,
+      moveSession,
       close,
     ],
   );
