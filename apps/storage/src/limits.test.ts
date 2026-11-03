@@ -174,6 +174,18 @@ test("when a file is over both limits, the refusal names the one with less left"
   );
 });
 
+test("a file bigger than My files' whole limit isn't told to try again, even when the organisation has less left", () => {
+  const room = {
+    driveUsedBytes: 100,
+    driveLimitBytes: 500,
+    orgUsedBytes: 900,
+    orgLimitBytes: 1000,
+  };
+  expect(limitRefusal(room, 600)).toBe(
+    "This file is 600 bytes, and only 100 bytes is left in your organisation's 1 KB limit. Ask your admin for more space.",
+  );
+});
+
 test("lowering a limit below what's stored deletes nothing and stops new uploads", async () => {
   const file = await store(kit.drive, 1000);
   const myFiles = await open(MY_FILES);
