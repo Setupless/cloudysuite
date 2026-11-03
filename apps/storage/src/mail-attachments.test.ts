@@ -10,9 +10,8 @@ import { testWorkerEnv } from "../../../src/db/test-database";
 import { ALICE, BOB, createStorageTest } from "./test-support";
 
 const { ingest } = await import("../../mail/src/ingest");
-const { listMailAttachments, saveMailAttachment } =
+const { listMailAttachments, MAIL_OFF, saveMailAttachment } =
   await import("./mail-attachments");
-const { MAIL_OFF_MESSAGE } = await import("./app-on");
 
 type Fixture = Awaited<ReturnType<typeof createFixture>>;
 let fixture: Fixture;
@@ -356,7 +355,7 @@ test("with Mail off nothing is listed and a save is refused in plain words", asy
   );
   expect(await listMailAttachments(ALICE)).toEqual([]);
   const refused = await failureOf(saveMailAttachment(ALICE, row));
-  expect(refused).toEqual({ status: 403, message: MAIL_OFF_MESSAGE });
+  expect(refused).toEqual({ status: 403, message: MAIL_OFF });
   expect(await myFiles()).toEqual([]);
 });
 
