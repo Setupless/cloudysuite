@@ -311,7 +311,6 @@ export function DetailsPanel({
             )}
             <a
               href={`/download/${subject.driveId}/${subject.file.id}`}
-              download
               className={buttonClass("toolbar")}
             >
               <IconDownload size={16} stroke={1.75} aria-hidden />
