@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { gate, type HostRoute, resolveHost, type Settings } from "./routing";
 
 const allOn: Settings = { primaryDomain: "example.com", disabled: new Set() };
@@ -155,4 +157,18 @@ test("a request that doesn't say how it was made is refused, not sent to a page"
     method: "POST",
   });
   expect(gate(off, bare)).toEqual({ action: "refuse", app: "mail" });
+});
+
+// A link marked `download` saves whatever comes back, so a turned-off app's off page
+// would arrive as the file. Without it, the server's answer decides.
+test("no link forces a download, so a download while the app is off shows the off page", () => {
+  const apps = join(import.meta.dir, "../apps");
+  const forced = readdirSync(apps, { recursive: true, encoding: "utf8" })
+    .filter((file) => file.endsWith(".tsx") && !file.includes("node_modules"))
+    .filter((file) =>
+      /(^\s*|["}]\s)download(\s|=|>|$)/m.test(
+        readFileSync(join(apps, file), "utf8"),
+      ),
+    );
+  expect(forced).toEqual([]);
 });
