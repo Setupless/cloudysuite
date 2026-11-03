@@ -489,6 +489,73 @@ test("a drive that never answers leaves the other stars and says so", async () =
   expect(answer.rows.map((row) => row.item.name)).toEqual([brief.name]);
 });
 
+const moreDrives = (count: number) =>
+  Array.from({ length: count }, () => {
+    const id = crypto.randomUUID() as DriveId;
+    kit.directory.run(
+      "INSERT INTO drives (id, kind, name, colour) VALUES (?, 'team', 'More', 1)",
+      [id],
+    );
+    addToDrive("viewer", ALICE, id);
+    return id;
+  });
+
+const after = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("an answer that arrives after 5 seconds changes nothing", async () => {
+  await upload("late report.png", null, kit.driveB);
+  const slow = new Set(moreDrives(6));
+  jest.useFakeTimers();
+  const { answer, afterMs } = await waited(
+    searchDrives(
+      kit.d1,
+      ALICE,
+      async (driveId) => {
+        const client = await opener(ALICE)(driveId);
+        if (driveId === DRIVE_B) {
+          return {
+            ...client,
+            search: async (text: string, limit: number) => {
+              await after(6_000);
+              return { ...(await client.search(text, limit)), more: true };
+            },
+          };
+        }
+        if (!slow.has(driveId)) return client;
+        return {
+          ...client,
+          search: async (text: string, limit: number) => {
+            await after(4_000);
+            return client.search(text, limit);
+          },
+        };
+      },
+      "report",
+    ),
+  );
+  expect(afterMs).toBe(DEADLINE_MS);
+  expect(answer).toMatchObject({ more: false, incomplete: true });
+  expect(answer.rows.map((row) => row.item.name).sort()).toEqual([
+    "brief report.png",
+    "hero report.png",
+    "salaries report.png",
+  ]);
+});
+
+test("however many drives are stuck, the answer comes after 5 seconds", async () => {
+  const stuck = new Set(moreDrives(6));
+  jest.useFakeTimers();
+  const { answer, afterMs } = await waited(
+    starredAcrossDrives(kit.d1, ALICE, async (driveId) => {
+      const client = await opener(ALICE)(driveId);
+      if (!stuck.has(driveId)) return client;
+      return { ...client, starred: () => new Promise<never>(() => {}) };
+    }),
+  );
+  expect(afterMs).toBe(DEADLINE_MS);
+  expect(answer.incomplete).toBe(true);
+});
+
 test("a refusal part way through isn't a failure", async () => {
   const answer = await searchDrives(
     kit.d1,
