@@ -113,10 +113,20 @@ test("the organisation limit refuses at the start, says how much is left, and la
     ok: false,
     status: 413,
     message:
-      "This file is 1 KB, and only 500 bytes is left in your organisation's 2 KB limit. Ask your admin for more space.",
+      "This file is 1 KB, and only 500 bytes is left in your organisation's 2 KB limit. Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.",
   });
   await store(kit.drive, 400);
   expect(usedIn(DRIVE_A)).toBe(1900);
+});
+
+test("a file bigger than a whole limit isn't told to try again", async () => {
+  setOrgLimit(2000);
+  expect(await start(kit.drive, 3000)).toEqual({
+    ok: false,
+    status: 413,
+    message:
+      "This file is 3 KB, and only 2 KB is left in your organisation's 2 KB limit. Ask your admin for more space.",
+  });
 });
 
 test("the organisation limit counts every drive, including a removed person's", async () => {
@@ -141,7 +151,7 @@ test("a person's limit refuses in My files only, and doesn't reach team folders"
   expect(refused).toMatchObject({
     ok: false,
     message:
-      "This file is 500 bytes, and only 200 bytes is left in your 1 KB limit for My files. Ask your admin for more space.",
+      "This file is 500 bytes, and only 200 bytes is left in your 1 KB limit for My files. Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.",
   });
 
   await store(kit.drive, 5000);
@@ -200,7 +210,7 @@ test("uploads started together in one drive can't all pass: exactly those that f
   expect(refused).toMatchObject({
     status: 413,
     message:
-      "This file is 400 bytes, and only 200 bytes is left in your organisation's 1 KB limit. Ask your admin for more space.",
+      "This file is 400 bytes, and only 200 bytes is left in your organisation's 1 KB limit. Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.",
   });
 });
 

@@ -38,12 +38,14 @@ export const hasLimit = (room: StorageRoom) =>
   room.driveLimitBytes !== null || room.orgLimitBytes !== null;
 
 // Null when the file fits. When it fits neither limit, this names the one with less left.
+// D1 can't tell bytes that a move counts twice from a limit that is really full, so only
+// a file bigger than a whole limit is told that trying again won't help.
 export function limitRefusal(
   room: StorageRoom,
   sizeBytes: number,
   throughShare = false,
 ): string | null {
-  const [tightest] = [
+  const refusals = [
     {
       used: room.driveUsedBytes,
       limit: room.driveLimitBytes,
@@ -57,12 +59,22 @@ export function limitRefusal(
   ]
     .flatMap(({ used, limit, name }) =>
       limit !== null && used + sizeBytes > limit
-        ? [{ left: Math.max(0, limit - used), name: name(formatBytes(limit)) }]
+        ? [
+            {
+              left: Math.max(0, limit - used),
+              name: name(formatBytes(limit)),
+              tooBig: sizeBytes > limit,
+            },
+          ]
         : [],
     )
     .sort((a, b) => a.left - b.left);
+  const [tightest] = refusals;
   if (!tightest) return null;
-  return `This file is ${formatBytes(sizeBytes)}, and ${spaceLeft(tightest.left)} in ${tightest.name}. Ask your admin for more space.`;
+  const next = refusals.some((refusal) => refusal.tooBig)
+    ? "Ask your admin for more space."
+    : "Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.";
+  return `This file is ${formatBytes(sizeBytes)}, and ${spaceLeft(tightest.left)} in ${tightest.name}. ${next}`;
 }
 
 // Someone reaching another person's My files through a share didn't set this limit up
@@ -91,4 +103,4 @@ export function moveRefusal(
 
 // Another upload took the last of the space, then something was removed before this
 // sentence was written, so there are no figures that would explain it.
-export const NO_ROOM_NOW = `There wasn't enough space for this file when it finished. Choose it again to try once more. If it's refused again, ask your admin for more space.`;
+export const NO_ROOM_NOW = `There wasn't enough space for this file when it finished. Wait a minute, then choose it again. If it's still refused, ask your admin for more space.`;
