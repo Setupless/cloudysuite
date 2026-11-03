@@ -1,5 +1,6 @@
 import { IconAlertCircle, IconCloudOff } from "@tabler/icons-react";
-import { Button, Page } from "@cloudysuite/ui";
+import { Button, GoToOffPage, Page } from "@cloudysuite/ui";
+import { isAppOffRefusal } from "../../../../src/routing";
 import { NotSavedOnDevice } from "../failure";
 import { useOffline } from "./connectivity";
 
@@ -32,6 +33,7 @@ function TryAgain({ children }: { children: string }) {
 
 export function MailRouteError({ error }: { error: unknown }) {
   const offline = useOffline();
+  if (isAppOffRefusal(error, "mail")) return <GoToOffPage />;
   if (error instanceof NoSavedIdentity) {
     return (
       <Page icon={IconCloudOff} title="You're offline">
