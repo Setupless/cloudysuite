@@ -165,7 +165,7 @@ export async function moveNoticesAcrossDrives(
     .selectDistinct({ driveId: driveMoveNotices.driveId })
     .from(driveMoveNotices)
     .where(eq(driveMoveNotices.userId, me));
-  const { lines } = await askEach(
+  const { answers } = await askEach(
     indexed.map(({ driveId }) => ({ driveId, name: null })),
     open,
     async (drive, { driveId }) =>
@@ -174,7 +174,7 @@ export async function moveNoticesAcrossDrives(
         driveId,
       })),
   );
-  return lines.sort((a, b) => b.notedAt - a.notedAt);
+  return answers.flat().sort((a, b) => b.notedAt - a.notedAt);
 }
 
 export type StarredRow = StarredLine & { driveId: DriveId };
