@@ -1228,8 +1228,7 @@ export class DriveStore {
     this.#db.exec("UPDATE items SET move_id = NULL WHERE move_id = ?", moveId);
   }
 
-  // Only while the move is sending, so the notice is written once, with the name the
-  // locked top row still has.
+  // Only while the move is sending, so it's written once.
   #noteSetback(moveId: string, setback: MoveSetback, now: number): void {
     this.#db.exec(
       `INSERT INTO move_notices (move_id, user_id, name, setback, bytes, noted_at)
@@ -1243,11 +1242,10 @@ export class DriveStore {
     );
   }
 
-  // The other drive refused, so it holds nothing. Untold is the refusal when nobody is
-  // waiting on the answer, so the person who moved it hears from a notice instead.
-  cancelMoveOut(moveId: string, untold: MoveSetback | null, now: number): void {
+  // The other drive refused, so it holds nothing.
+  cancelMoveOut(moveId: string, notice: MoveSetback | null, now: number): void {
     this.#db.transaction(() => {
-      if (untold) this.#noteSetback(moveId, untold, now);
+      if (notice) this.#noteSetback(moveId, notice, now);
       this.#unlock(moveId);
       this.endMoveOut(moveId);
     });
