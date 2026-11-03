@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  jest,
+  setSystemTime,
+  test,
+} from "bun:test";
 import { applyMigrations } from "@cloudysuite/object-sql";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
 import type { DriveId, UserId } from "@cloudysuite/access";
@@ -99,7 +106,10 @@ beforeEach(async () => {
   carol = kit.open(await kit.grantFor(CAROL, DRIVE_A));
 });
 
-afterEach(() => setSystemTime());
+afterEach(() => {
+  setSystemTime();
+  jest.useRealTimers();
+});
 
 test("someone on the drive finds anything in it, with its whole location", async () => {
   const { lines } = await kit.drive.search("report", 50);
@@ -424,6 +434,59 @@ test("one drive failing leaves the others' results and says so", async () => {
     "hero report.png",
     "salaries report.png",
   ]);
+});
+
+const DEADLINE_MS = 5_000;
+
+const stuckOn = (stuck: DriveId) => async (driveId: DriveId) => {
+  const client = await opener(ALICE)(driveId);
+  if (driveId !== stuck) return client;
+  const never = () => new Promise<never>(() => {});
+  return { ...client, search: never, starred: never };
+};
+
+// The drives that answer do so in microtasks, so the clock moves only once they have.
+async function waited<Answer>(
+  asking: Promise<Answer>,
+): Promise<{ answer: Answer; afterMs: number }> {
+  let answer: { value: Answer } | null = null;
+  void asking.then((value) => {
+    answer = { value };
+  });
+  let afterMs = 0;
+  for (;;) {
+    for (let turn = 0; turn < 100; turn += 1) await Promise.resolve();
+    if (answer) return { answer: (answer as { value: Answer }).value, afterMs };
+    if (afterMs > 60_000) throw new Error("It never answered.");
+    jest.advanceTimersByTime(1_000);
+    afterMs += 1_000;
+  }
+}
+
+test("a drive that never answers leaves the others' results and says so", async () => {
+  await upload("finance report.png", null, kit.driveB);
+  jest.useFakeTimers();
+  const { answer, afterMs } = await waited(
+    searchDrives(kit.d1, ALICE, stuckOn(DRIVE_B), "report"),
+  );
+  expect(afterMs).toBe(DEADLINE_MS);
+  expect(answer.incomplete).toBe(true);
+  expect(answer.rows.map((row) => row.item.name).sort()).toEqual([
+    "brief report.png",
+    "hero report.png",
+    "salaries report.png",
+  ]);
+});
+
+test("a drive that never answers leaves the other stars and says so", async () => {
+  await kit.drive.setStar(brief.id, true);
+  jest.useFakeTimers();
+  const { answer, afterMs } = await waited(
+    starredAcrossDrives(kit.d1, ALICE, stuckOn(DRIVE_B)),
+  );
+  expect(afterMs).toBe(DEADLINE_MS);
+  expect(answer.incomplete).toBe(true);
+  expect(answer.rows.map((row) => row.item.name)).toEqual([brief.name]);
 });
 
 test("a refusal part way through isn't a failure", async () => {

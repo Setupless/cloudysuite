@@ -11,6 +11,9 @@ const SEARCH_LINES_PER_DRIVE = 50;
 const SEARCH_LINES_SHOWN = 100;
 const STARRED_PER_DRIVE = 200;
 const STARRED_SHOWN = 200;
+// Long enough for a Drive object that has to wake first, short enough that one stuck drive
+// can't leave the page waiting with no results.
+const DRIVE_DEADLINE_MS = 5_000;
 
 // Null name for a drive this person isn't on, whose name they must not learn.
 type DriveToAsk = { driveId: DriveId; name: string | null };
@@ -44,8 +47,8 @@ async function drivesToAsk(
   ];
 }
 
-// One drive failing doesn't fail the rest. Being refused isn't a failure: it means this
-// person has no access any more, so there is nothing of theirs to show.
+// One drive failing or answering too late doesn't fail the rest. Being refused isn't a
+// failure: it means this person has no access any more, so there is nothing of theirs to show.
 async function askEach<Line>(
   list: readonly DriveToAsk[],
   open: OpenDrive,
@@ -57,7 +60,11 @@ async function askEach<Line>(
   const worker = async () => {
     for (let entry = list[next++]; entry; entry = list[next++]) {
       try {
-        lines.push(...(await ask(await open(entry.driveId), entry)));
+        lines.push(
+          ...(await withinDeadline(
+            open(entry.driveId).then((drive) => ask(drive, entry)),
+          )),
+        );
       } catch (thrown) {
         if (thrown instanceof Response && thrown.status === 403) continue;
         console.error("Could not read one drive.", thrown);
@@ -67,6 +74,21 @@ async function askEach<Line>(
   };
   await Promise.all(Array.from({ length: DRIVES_AT_ONCE }, worker));
   return { lines, incomplete };
+}
+
+async function withinDeadline<Value>(work: Promise<Value>): Promise<Value> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("The drive didn't answer in time.")),
+      DRIVE_DEADLINE_MS,
+    );
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export type SearchRow = SearchLine & {
