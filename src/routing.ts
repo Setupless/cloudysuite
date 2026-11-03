@@ -24,6 +24,7 @@ export type HostRoute =
 export type Gate =
   | { action: "pass" }
   | { action: "redirect"; to: string }
+  | { action: "refuse"; app: ToggleableApp }
   | { action: "notFound" };
 
 export function isAppId(label: string): label is AppId {
@@ -69,19 +70,34 @@ export const OFFLINE_SHELL_PATH = "/offline-shell";
 // that page carries the signed-in person's details.
 export const DEVICE_SESSION_PATH = "/pwa/session";
 
-export function gate(route: HostRoute, pathname: string, method: string): Gate {
+// Names the app on a refusal because that app is off. It is a 403 like losing access,
+// and a device must not forget its saved mail for it.
+export const APP_OFF_HEADER = "CloudySuite-App-Off";
+
+export const isAppOffRefusal = (thrown: unknown, app: ToggleableApp) =>
+  thrown instanceof Response && thrown.headers.get(APP_OFF_HEADER) === app;
+
+export function gate(route: HostRoute, request: Request): Gate {
+  const { pathname } = new URL(request.url);
   switch (route.kind) {
     case "setup":
       return isSetupPath(pathname)
         ? { action: "pass" }
         : { action: "redirect", to: "/setup" };
     case "off":
-      return pathname === "/off" ||
+      if (
+        pathname === "/off" ||
         (route.app === "mail" &&
           pathname === DEVICE_SESSION_PATH &&
-          method === "GET")
-        ? { action: "pass" }
-        : { action: "redirect", to: "/off" };
+          request.method === "GET")
+      ) {
+        return { action: "pass" };
+      }
+      // A page that was open when the app went off keeps calling it, and a redirect
+      // would reach that page as an answer it can't read.
+      return request.headers.get("Sec-Fetch-Mode") === "navigate"
+        ? { action: "redirect", to: "/off" }
+        : { action: "refuse", app: route.app };
     case "app":
       if (pathname === OFFLINE_SHELL_PATH && route.app !== "mail") {
         return { action: "notFound" };

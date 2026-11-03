@@ -5,6 +5,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
+import { assertAppOn } from "../../../src/app-on";
 import {
   openMailbox,
   openMailboxRuleEditor,
@@ -14,14 +15,19 @@ import {
 export const NO_ACCESS_MESSAGE =
   "You don't have access to this mailbox. Ask your admin if you need it.";
 
-// Every request a person makes to a mailbox starts here: the sign-in rule, then
-// the access check, in the call that uses the grant.
+export async function requireMailUser(request: Request) {
+  await assertAppOn(env.DB, "mail");
+  return requireReadyUser(request);
+}
+
+// Every request a person makes to a mailbox starts here: Mail being on, the sign-in
+// rule, then the access check, in the call that uses the grant.
 export async function openMailboxFor(request: Request, mailboxId: MailboxId) {
-  const user = await requireReadyUser(request);
+  const user = await requireMailUser(request);
   return openMailboxAs(user.id, mailboxId);
 }
 
-// For one request that opens several mailboxes after `requireReadyUser`.
+// For one request that opens several mailboxes after `requireMailUser`.
 export async function openMailboxAs(userId: UserId, mailboxId: MailboxId) {
   const access = await checkMailboxAccess(env.DB, userId, mailboxId);
   if (!access.allowed) {
@@ -40,7 +46,7 @@ export async function openRuleEditorFor(
   request: Request,
   mailboxId: MailboxId,
 ) {
-  const user = await requireReadyUser(request);
+  const user = await requireMailUser(request);
   const access = await checkMailboxAccess(env.DB, user.id, mailboxId);
   const editor = access.allowed
     ? openMailboxRuleEditor(env, access.grant)
@@ -62,7 +68,7 @@ export async function openSenderListEditorFor(
   request: Request,
   mailboxId: MailboxId,
 ) {
-  const user = await requireReadyUser(request);
+  const user = await requireMailUser(request);
   const access = await checkMailboxAccess(env.DB, user.id, mailboxId);
   const editor = access.allowed
     ? openMailboxSenderListEditor(env, access.grant)

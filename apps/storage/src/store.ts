@@ -1510,12 +1510,20 @@ export class DriveStore {
   }
 
   // Sharing is for what the person can edit, so a Can view person gets no further than
-  // this. Saying it twice changes the level and nothing else.
-  #withEditableItem(actor: Actor, id: ItemId, change: () => void): ShareResult {
+  // this. Saying it twice changes the level and nothing else. A share never travels with a
+  // move, so taking one away lets nothing out of it and needn't wait for a lock.
+  #withEditableItem(
+    actor: Actor,
+    id: ItemId,
+    access: "grants" | "removes",
+    change: () => void,
+  ): ShareResult {
     return this.#db.transaction((): ShareResult => {
       if (!this.#canEdit(actor, id)) return NO_ACCESS;
       if (!this.item(id)) return { status: "gone" };
-      if (this.#treeIsLocked(id)) return { status: "busy" };
+      if (access === "grants" && this.#treeIsLocked(id)) {
+        return { status: "busy" };
+      }
       change();
       return { status: "done" };
     });
@@ -1529,7 +1537,7 @@ export class DriveStore {
     now: number;
   }): ShareResult {
     const { actor, id, people, level, now } = input;
-    return this.#withEditableItem(actor, id, () => {
+    return this.#withEditableItem(actor, id, "grants", () => {
       for (const userId of people) {
         this.#db.exec(
           `INSERT INTO shares (item_id, kind, user_id, level, shared_by, shared_at)
@@ -1553,7 +1561,7 @@ export class DriveStore {
     now: number;
   }): ShareResult {
     const { actor, id, userId, now } = input;
-    return this.#withEditableItem(actor, id, () => {
+    return this.#withEditableItem(actor, id, "removes", () => {
       this.#db.exec(
         "DELETE FROM shares WHERE item_id = ? AND user_id = ?",
         id,
@@ -1570,7 +1578,7 @@ export class DriveStore {
     now: number;
   }): ShareResult {
     const { actor, id, on, now } = input;
-    return this.#withEditableItem(actor, id, () => {
+    return this.#withEditableItem(actor, id, on ? "grants" : "removes", () => {
       if (on) {
         this.#db.exec(
           `INSERT INTO shares (item_id, kind, user_id, level, shared_by, shared_at)

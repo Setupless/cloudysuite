@@ -1,10 +1,9 @@
 import { env } from "cloudflare:workers";
 import { parseMailboxId } from "@cloudysuite/access";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { isFromApp } from "@cloudysuite/auth/origins";
 import { declaredBytes, drain, readUpTo } from "@cloudysuite/transfer";
 import { readSettings } from "../../../../src/settings";
-import { NO_ACCESS_MESSAGE, openMailboxAs } from "../access";
+import { NO_ACCESS_MESSAGE, openMailboxAs, requireMailUser } from "../access";
 import { badRequest } from "../wire";
 import { mailboxSenderFacts } from "./addresses";
 import { readReplySource } from "./reply-source";
@@ -41,7 +40,7 @@ function readStart(raw: string | null): DraftStart | undefined {
 // A file is the first thing added to a reply often enough, so this can make its row too,
 // with `start` holding what a first save would say.
 async function respond(request: Request, path: string): Promise<Response> {
-  const user = await requireReadyUser(request);
+  const user = await requireMailUser(request);
   // The hostname router sends every request to /setup until a domain is stored.
   const { primaryDomain } = await readSettings(env.DB);
   if (primaryDomain === null || !isFromApp(request, primaryDomain, "mail")) {

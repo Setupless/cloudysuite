@@ -132,7 +132,6 @@ function Attachments({
         <li key={attachment.id} className="max-w-full">
           <a
             href={attachmentUrl(mailboxId, message.id, attachment.id)}
-            download
             className="flex items-center gap-2 rounded border border-line px-3 py-2 text-sm outline-accent hover:bg-field focus-visible:outline-2"
           >
             <IconPaperclip
@@ -169,7 +168,7 @@ function MessageBody({
 }) {
   const query = useQuery(bodyQuery(mailboxId, message.id));
   const download = (
-    <a href={originalUrl(mailboxId, message.id)} download className="underline">
+    <a href={originalUrl(mailboxId, message.id)} className="underline">
       Download the original
     </a>
   );
@@ -287,7 +286,6 @@ function MessageDetails({
       </dl>
       <a
         href={originalUrl(mailboxId, message.id)}
-        download
         className="self-start text-accent underline outline-accent focus-visible:outline-2"
       >
         Download the original

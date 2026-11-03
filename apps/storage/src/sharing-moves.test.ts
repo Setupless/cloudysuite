@@ -5,6 +5,7 @@ import { parseItemName } from "./names";
 import {
   ALICE,
   BOB,
+  CAROL,
   createStorageTest,
   DRIVE_A,
   DRIVE_B,
@@ -150,6 +151,61 @@ test("rows arriving in a shared folder can't be changed through the share until 
   await kit.fireAlarm();
   expect((await bob.rename(file.id, named("New.png"))).status).toBe("renamed");
   expect((await bob.uploads.complete(late)).ok).toBe(true);
+});
+
+test("access to a folder can be taken away at once while something arrives in it", async () => {
+  const there = await folder(kit.driveB, "There");
+  await kit.driveB.sharePeople(there.id, [BOB], "edit");
+  await kit.driveB.setEveryone(there.id, true);
+  const bob = await open(DRIVE_B);
+  const moving = await folder(kit.drive, "Moving");
+  const mend = confirmNeverArrives();
+  expect((await kit.drive.move(moving.id, kit.driveB, there.id)).status).toBe(
+    "moved",
+  );
+
+  expect((await kit.driveB.sharePeople(there.id, [CAROL], "view")).status).toBe(
+    "busy",
+  );
+  expect((await kit.driveB.unshare(there.id, BOB)).status).toBe("done");
+  expect((await kit.driveB.setEveryone(there.id, false)).status).toBe("done");
+  expect(await kit.driveB.sharesOn(there.id)).toMatchObject({ here: [] });
+  expect(await bob.item(there.id)).toBeNull();
+  await kit.fireAlarm();
+  expect(indexRows()).toEqual([]);
+  expect((await kit.driveB.setEveryone(there.id, true)).status).toBe("busy");
+  mend();
+});
+
+test("a share on something being moved can be taken away at once, and stays gone if the move is given up", async () => {
+  const docs = await folder(kit.drive, "Docs");
+  const file = await upload(kit.drive, "Report.png", docs.id);
+  await kit.drive.sharePeople(docs.id, [BOB], "edit");
+  await kit.drive.setEveryone(docs.id, true);
+  const object = kit.instance(DRIVE_B).object;
+  const real = object.receiveMove.bind(object);
+  object.receiveMove = async () => {
+    throw new Error("connection lost");
+  };
+  const bob = await open(DRIVE_A);
+  await kit.drive.move(docs.id, kit.driveB, null);
+
+  expect((await kit.drive.sharePeople(docs.id, [BOB], "edit")).status).toBe(
+    "busy",
+  );
+  expect((await kit.drive.unshare(docs.id, BOB)).status).toBe("done");
+  expect((await kit.drive.setEveryone(docs.id, false)).status).toBe("done");
+  expect(await bob.file(file.id)).toBeNull();
+
+  setSystemTime(new Date(Date.now() + HOUR + 1000));
+  await kit.instance(DRIVE_A).object.alarm();
+  object.receiveMove = real;
+  await kit.instance(DRIVE_A).object.alarm();
+
+  expect(await kit.drive.file(file.id)).not.toBeNull();
+  expect(shareRows(DRIVE_A)).toEqual([]);
+  expect(indexRows()).toEqual([]);
+  expect(await bob.file(file.id)).toBeNull();
 });
 
 test("shares end when the rows leave, even if the other drive hasn't unlocked yet", async () => {

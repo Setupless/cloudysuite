@@ -43,6 +43,21 @@ test("only the access check's own module opens a mailbox for a person", () => {
   expect(users).toEqual(["apps/mail/src/access.ts", "apps/mail/src/client.ts"]);
 });
 
+test("Mail's code reaches the sign-in rule only through the Mail-on check", () => {
+  const users = productionFiles()
+    .filter((file) =>
+      /\brequire(Ready|SignedIn|Admin)User\(/.test(readFileSync(file, "utf8")),
+    )
+    .map((file) => relative(ROOT, file))
+    .filter((file) => file.startsWith("apps/mail/"))
+    .sort();
+  // The device session answers while Mail is off, and returns no mail.
+  expect(users).toEqual([
+    "apps/mail/src/access.ts",
+    "apps/mail/src/pwa/session-route.ts",
+  ]);
+});
+
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
