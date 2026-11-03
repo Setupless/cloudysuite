@@ -45,8 +45,6 @@ export type FolderListing = {
   canEdit: boolean;
   // Only when the folder can't be edited: what in it can be, through its own share.
   editableIds: ItemId[];
-  // The asking person's own, from anywhere in the drive, newest first.
-  moveNotices: MoveNotice[];
 };
 
 // Why a move to another drive ended with the item where it was.
@@ -57,8 +55,14 @@ export type MoveSetback =
   | { status: "overLimit"; bytes: number }
   | { status: "noAnswer" };
 
-// Kept for a person who was told their move was on its way, until they dismiss it.
-export type MoveNotice = { moveId: string; name: string; setback: MoveSetback };
+// Kept for a person who was told their move was on its way, until they dismiss it. The
+// name is null once they can no longer open the item, so the note doesn't reveal it.
+export type MoveNotice = {
+  moveId: string;
+  name: string | null;
+  setback: MoveSetback;
+  notedAt: number;
+};
 
 // One item as a particular person can see it. A share's own item shows no parent.
 export type OpenedItem = { item: DriveItem; canEdit: boolean; shared: boolean };

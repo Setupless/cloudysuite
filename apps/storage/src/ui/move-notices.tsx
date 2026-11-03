@@ -1,10 +1,10 @@
-import type { DriveId } from "@cloudysuite/access";
 import { Button, useToast } from "@cloudysuite/ui";
 import { IconAlertCircle } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MoveNoticeRow } from "../across-drives";
 import { dismissMoveNotice } from "../functions";
-import { call, storageKeys } from "../queries";
-import type { MoveNotice, MoveSetback } from "../types";
+import { call, moveNoticesQuery, storageKeys } from "../queries";
+import type { MoveSetback } from "../types";
 import { formatBytes } from "./format";
 
 function whatToDo(setback: MoveSetback): string {
@@ -22,20 +22,33 @@ function whatToDo(setback: MoveSetback): string {
   }
 }
 
-export function MoveNotices({
-  driveId,
-  notices,
-}: {
-  driveId: DriveId;
-  notices: MoveNotice[];
-}) {
+function Words({ notice }: { notice: MoveNoticeRow }) {
+  if (notice.name === null) {
+    return (
+      <strong className="font-semibold">
+        Something you moved didn't move, and you can no longer open it.
+      </strong>
+    );
+  }
+  return (
+    <>
+      <strong className="font-semibold">
+        "{notice.name}" didn't move, and it's still where it was.
+      </strong>{" "}
+      <span className="text-secondary">{whatToDo(notice.setback)}</span>
+    </>
+  );
+}
+
+export function MoveNotices() {
   const client = useQueryClient();
   const toast = useToast();
+  const { data: notices = [] } = useQuery(moveNoticesQuery());
 
-  async function dismiss(moveId: string) {
+  async function dismiss({ driveId, moveId }: MoveNoticeRow) {
     try {
       await call(() => dismissMoveNotice({ data: { driveId, moveId } }));
-      await client.invalidateQueries({ queryKey: storageKeys.all });
+      await client.invalidateQueries({ queryKey: storageKeys.moveNotices });
     } catch (failure) {
       toast({ tone: "danger", message: (failure as Error).message });
     }
@@ -52,15 +65,16 @@ export function MoveNotices({
             <IconAlertCircle size={18} stroke={1.75} aria-hidden />
           </span>
           <p className="min-w-0 flex-1 break-words">
-            <strong className="font-semibold">
-              "{notice.name}" didn't move, and it's still where it was.
-            </strong>{" "}
-            <span className="text-secondary">{whatToDo(notice.setback)}</span>
+            <Words notice={notice} />
           </p>
           <Button
             variant="quiet"
-            aria-label={`OK, hide the note about "${notice.name}"`}
-            onClick={() => void dismiss(notice.moveId)}
+            aria-label={
+              notice.name === null
+                ? "OK, hide this note"
+                : `OK, hide the note about "${notice.name}"`
+            }
+            onClick={() => void dismiss(notice)}
           >
             OK
           </Button>

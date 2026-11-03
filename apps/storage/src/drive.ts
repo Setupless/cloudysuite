@@ -16,6 +16,7 @@ import {
   type FoundUpload,
   type NewUpload,
   type NewUploadResult,
+  NOTICE_INDEX_RETRY_MS,
   type PartPlan,
   SHARE_INDEX_RETRY_MS,
   USAGE_RETRY_MS,
@@ -26,6 +27,7 @@ import type {
   FolderListing,
   ItemId,
   ItemShares,
+  MoveNotice,
   MoveResult,
   NewFolderResult,
   NoAccess,
@@ -45,6 +47,7 @@ import {
   claimDriveSpace,
   claimMoveSpace,
   writeDriveUsage,
+  writeNoticeIndex,
   writeShareIndex,
 } from "./usage";
 
@@ -59,6 +62,7 @@ const MOVE_RETRY_MS = 60_000;
 const MOVE_GIVE_UP_MS = 60 * 60 * 1000;
 const MOVES_PER_WAKE_UP = 5;
 const SHARE_INDEX_BATCH = 30;
+const NOTICE_INDEX_BATCH = 30;
 
 export class Drive extends DurableObject<Env> {
   readonly #store: DriveStore;
@@ -342,8 +346,15 @@ export class Drive extends DurableObject<Env> {
     await this.#afterChange();
   }
 
-  dismissMoveNotice(actor: Actor, moveId: string): void {
-    this.#store.dismissMoveNotice(actor, moveId);
+  moveNotices(actor: Actor): MoveNotice[] {
+    return this.#store.moveNotices(actor);
+  }
+
+  async dismissMoveNotice(actor: Actor, moveId: string): Promise<void> {
+    this.#store.dismissMoveNotice(actor, moveId, Date.now());
+    await this.#scheduleNextWakeUp();
+    await this.#writeNoticeIndex();
+    await this.#scheduleNextWakeUp();
   }
 
   async trash(input: {
@@ -460,6 +471,7 @@ export class Drive extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
     await this.#writeUsage();
     await this.#writeShareIndex();
+    await this.#writeNoticeIndex();
     await this.#scheduleNextWakeUp();
   }
 
@@ -494,6 +506,29 @@ export class Drive extends DurableObject<Env> {
     });
   }
 
+  #writeNoticeIndex(): Promise<void> {
+    return this.#oneAtATime(async () => {
+      const driveId = this.#store.usage()?.driveId;
+      if (!driveId) return;
+      try {
+        for (;;) {
+          const writes = this.#store.noticeIndexWrites(NOTICE_INDEX_BATCH);
+          if (writes.length === 0) return;
+          await writeNoticeIndex(this.env.DB, driveId, writes);
+          this.#store.finishNoticeIndexWrites(writes);
+        }
+      } catch (error) {
+        console.error(
+          "Could not save a note about a move. Trying again.",
+          error,
+        );
+        this.#store.postponeNoticeIndexWrites(
+          Date.now() + NOTICE_INDEX_RETRY_MS,
+        );
+      }
+    });
+  }
+
   #writeUsage(): Promise<void> {
     return this.#oneAtATime(async () => {
       const usage = this.#store.usage();
@@ -518,6 +553,7 @@ export class Drive extends DurableObject<Env> {
       this.#store.nextR2DeletionAt(),
       this.#store.nextMoveAt(),
       this.#store.nextShareIndexWriteAt(),
+      this.#store.nextNoticeIndexWriteAt(),
     ].filter((time) => time !== null);
     return due.length > 0
       ? // The runtime refuses a time of 0, which "due now" in the queues is stored as.
@@ -534,6 +570,7 @@ export class Drive extends DurableObject<Env> {
       await this.#writeUsage();
     }
     await this.#writeShareIndex();
+    await this.#writeNoticeIndex();
     await this.#sweepUploads();
     await this.#scheduleNextWakeUp();
   }

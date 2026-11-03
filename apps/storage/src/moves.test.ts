@@ -658,20 +658,20 @@ test("once the person can't open what they moved, the notice leaves out its name
   expect(await noticesFor(BOB)).toEqual([]);
 });
 
+// Which drives a page had to wake to show this person their notices.
+async function drivesAsked(userId: UserId = ALICE) {
+  const asked: DriveId[] = [];
+  await moveNoticesAcrossDrives(kit.d1, userId, async (driveId) => {
+    asked.push(driveId);
+    return opener(userId)(driveId);
+  });
+  return asked;
+}
+
 test("with nothing to tell, no drive is woken to find out", async () => {
   await upload("Report.pdf");
   await upload("Budget.pdf", null, 5, kit.driveB);
-  const asked: DriveId[] = [];
-  const answer = await moveNoticesAcrossDrives(
-    kit.d1,
-    ALICE,
-    async (driveId) => {
-      asked.push(driveId);
-      return opener(ALICE)(driveId);
-    },
-  );
-  expect(answer).toEqual([]);
-  expect(asked).toEqual([]);
+  expect(await drivesAsked()).toEqual([]);
 });
 
 test("a notice D1 couldn't be told about arrives once the alarm tries again, and so does its dismissal", async () => {
@@ -691,18 +691,15 @@ test("a notice D1 couldn't be told about arrives once the alarm tries again, and
     name: "Docs",
     setback: { status: "nameTaken" },
   });
+  expect(await drivesAsked()).toEqual([DRIVE_A]);
 
   kit.d1Failures.moveNotices = true;
   await kit.drive.dismissMoveNotice(notice?.moveId as string);
-  expect(await noticesFor()).toEqual([]);
   kit.d1Failures.moveNotices = false;
+  expect(await noticesFor()).toEqual([]);
+  expect(await drivesAsked()).toEqual([DRIVE_A]);
   await kit.fireAlarm();
-  const asked: DriveId[] = [];
-  await moveNoticesAcrossDrives(kit.d1, ALICE, async (driveId) => {
-    asked.push(driveId);
-    return opener(ALICE)(driveId);
-  });
-  expect(asked).toEqual([]);
+  expect(await drivesAsked()).toEqual([]);
   expect(kit.instance(DRIVE_A).alarm).toBeNull();
 });
 

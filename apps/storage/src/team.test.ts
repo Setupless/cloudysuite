@@ -92,10 +92,10 @@ test("My files takes no members and can't be renamed or deleted as a team folder
 test("the migration keeps every row, and member becomes Can edit", () => {
   const dir = join(import.meta.dir, "../../../migrations");
   const all = readdirSync(dir).sort();
-  const last = all.at(-1) as string;
+  const last = "20261101204047_sleepy_gabe_jones";
   const sqlite = new Database(":memory:");
   sqlite.run("PRAGMA foreign_keys = ON");
-  for (const name of all.slice(0, -1)) {
+  for (const name of all.slice(0, all.indexOf(last))) {
     sqlite.run(readFileSync(join(dir, name, "migration.sql"), "utf8"));
   }
   sqlite.run(

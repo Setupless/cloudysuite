@@ -36,7 +36,6 @@ import {
   Problem,
   SkipToDetails,
 } from "./page-parts";
-import { MoveNotices } from "./move-notices";
 import { personOf } from "./people";
 import type { Destination } from "./upload-queue";
 
@@ -193,7 +192,6 @@ function Folder({
             <PageActions destination={destination} onNewFolder={createFolder} />
           )}
         </PageTop>
-        <MoveNotices driveId={driveId} notices={first.moveNotices} />
         {first.folder && first.canEdit && <SkipToDetails />}
         {items.length === 0 ? (
           <EmptyFolder canEdit={first.canEdit} />

@@ -11,6 +11,7 @@ import { and, asc, count, eq, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, orgSettings, user } from "../../../src/db/schema";
 import { noAccess, openDriveAs, requireStorageUser } from "./access";
+import { type MoveNoticeRow, moveNoticesAcrossDrives } from "./across-drives";
 import type { DriveClient } from "./client";
 import { moveRefusal, readStorageRoom } from "./limits";
 import { ensureMyDrive } from "./my-drive";
@@ -389,6 +390,15 @@ export const moveItem = createServerFn({ method: "POST" })
         throw refusal(409, TOO_MANY_TO_MOVE);
     }
   });
+
+export const getMoveNotices = createServerFn({ method: "GET" }).handler(
+  async (): Promise<MoveNoticeRow[]> => {
+    const me = await requireStorageUser(getRequest());
+    return moveNoticesAcrossDrives(env.DB, me.id, (driveId) =>
+      openDriveAs(me.id, driveId),
+    );
+  },
+);
 
 export const dismissMoveNotice = createServerFn({ method: "POST" })
   .validator(parseMoveNoticeInput)
