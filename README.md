@@ -30,7 +30,8 @@ Later ideas include a password manager, docs, and sheets.
 Every deployment contains every released app. An admin can turn each app off for the whole organisation, for example when the organisation keeps another mail provider.
 
 - A person who opens a turned-off app sees a page that says an admin turned it off, with a link to Account. The app also leaves the app switcher.
-- The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
+- The hostname router makes this check on the server for every request, so hiding the link is never the only protection. A server function answers on every app's hostname, so each of Mail's and Storage's server functions checks too.
+- A page that was already open stays where it is, and each request it makes is refused in plain words. A redirect to the off page would reach that page as an answer it can't read.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
 - The only other exception is a `GET` of `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.

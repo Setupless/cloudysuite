@@ -44,8 +44,19 @@ test.each([
 
 const app: HostRoute = { kind: "app", app: "mail" };
 const off: HostRoute = { kind: "off", app: "mail" };
+const storageIsOff: HostRoute = { kind: "off", app: "storage" };
 const setup: HostRoute = { kind: "setup" };
 const unknown: HostRoute = { kind: "unknown" };
+
+const request = (mode: string, method: string, path: string) =>
+  new Request(`https://host.example.com${path}`, {
+    method,
+    headers: { "Sec-Fetch-Mode": mode },
+  });
+const opening = (path: string, method = "GET") =>
+  request("navigate", method, path);
+const calling = (path: string, method = "GET") =>
+  request("same-origin", method, path);
 
 test.each([
   [setup, "/setup", { action: "pass" }],
@@ -68,44 +79,47 @@ test.each([
   [unknown, "/", { action: "notFound" }],
   [unknown, "/setup", { action: "notFound" }],
   [unknown, "/setup/api", { action: "notFound" }],
-] as const)("gate %j at %s", (route, pathname, expected) => {
-  expect(gate(route, pathname, "GET")).toEqual(expected);
+] as const)("opening %j at %s", (route, pathname, expected) => {
+  expect(gate(route, opening(pathname))).toEqual(expected);
 });
 
 test.each(["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])(
-  "with Mail off, %s on the device session address gets the off page",
+  "with Mail off, %s on the device session address is refused",
   (method) => {
-    expect(gate({ kind: "off", app: "mail" }, "/pwa/session", method)).toEqual({
-      action: "redirect",
-      to: "/off",
+    expect(gate(off, calling("/pwa/session", method))).toEqual({
+      action: "refuse",
+      app: "mail",
     });
   },
 );
 
 test("with Mail off, GET on the device session address still answers", () => {
-  expect(gate({ kind: "off", app: "mail" }, "/pwa/session", "GET")).toEqual({
-    action: "pass",
-  });
+  expect(gate(off, calling("/pwa/session"))).toEqual({ action: "pass" });
+  expect(gate(off, opening("/pwa/session"))).toEqual({ action: "pass" });
 });
 
 test("only Mail's host serves the offline shell, and only while Mail is on", () => {
   const app = (name: "auth" | "mail") => ({ kind: "app" as const, app: name });
-  expect(gate(app("mail"), "/offline-shell", "GET")).toEqual({
+  expect(gate(app("mail"), opening("/offline-shell"))).toEqual({
     action: "pass",
   });
-  expect(gate(app("auth"), "/offline-shell", "GET")).toEqual({
+  expect(gate(app("auth"), opening("/offline-shell"))).toEqual({
     action: "notFound",
   });
-  expect(gate({ kind: "off", app: "mail" }, "/offline-shell", "GET")).toEqual({
+  expect(gate(off, opening("/offline-shell"))).toEqual({
     action: "redirect",
     to: "/off",
   });
-  expect(gate({ kind: "unknown" }, "/offline-shell", "GET")).toEqual({
+  expect(gate(off, calling("/offline-shell"))).toEqual({
+    action: "refuse",
+    app: "mail",
+  });
+  expect(gate(unknown, opening("/offline-shell"))).toEqual({
     action: "notFound",
   });
 });
 
-test.each([
+const STORAGE_REQUESTS = [
   ["GET", "/"],
   ["GET", "/drive/x"],
   ["GET", "/download/x/y"],
@@ -114,9 +128,31 @@ test.each([
   ["PUT", "/api/drives/x/uploads/y/parts/1"],
   ["GET", "/pwa/session"],
   ["POST", "/_serverFn/anything"],
-])("%s %s on Storage while it is off goes to the off page", (method, path) => {
-  expect(gate({ kind: "off", app: "storage" }, path, method)).toEqual({
-    action: "redirect",
-    to: "/off",
+] as const;
+
+test.each(STORAGE_REQUESTS)(
+  "opening %s %s on Storage while it is off goes to the off page",
+  (method, path) => {
+    expect(gate(storageIsOff, opening(path, method))).toEqual({
+      action: "redirect",
+      to: "/off",
+    });
+  },
+);
+
+test.each(STORAGE_REQUESTS)(
+  "a page left open that calls %s %s on Storage while it is off is refused",
+  (method, path) => {
+    expect(gate(storageIsOff, calling(path, method))).toEqual({
+      action: "refuse",
+      app: "storage",
+    });
+  },
+);
+
+test("a request that doesn't say how it was made is refused, not sent to a page", () => {
+  const bare = new Request("https://host.example.com/_serverFn/anything", {
+    method: "POST",
   });
+  expect(gate(off, bare)).toEqual({ action: "refuse", app: "mail" });
 });
