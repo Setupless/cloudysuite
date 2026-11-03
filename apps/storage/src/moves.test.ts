@@ -621,7 +621,10 @@ test("an upload near a full organisation limit is refused during a move, and wor
     mimeType: "image/png",
     fingerprint: "small-refused",
   });
-  expect(refused.ok).toBe(false);
+  expect(refused).toMatchObject({
+    ok: false,
+    message: expect.stringContaining("Try again in a minute"),
+  });
 
   mend();
   await kit.fireAlarm();
