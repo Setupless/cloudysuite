@@ -11,12 +11,12 @@ import {
 } from "@cloudysuite/transfer";
 import { and, eq, lte, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { isAppOff } from "../../../src/app-on";
 import {
   mailboxAccess,
   savedMailAttachments as saved,
 } from "../../../src/db/schema";
 import { openDriveAs } from "./access";
-import { assertMailOn, isMailOff } from "./app-on";
 import { ensureMyDrive } from "./my-drive";
 import { cleanItemName, withoutHiddenCharacters } from "./names";
 import { type ItemId } from "./types";
@@ -34,6 +34,8 @@ const BUSY =
   "This attachment is already being saved. Give it a moment, then reload the page.";
 const COULD_NOT_SAVE =
   "We couldn't finish saving this attachment. Nothing is lost. Try again in a moment.";
+export const MAIL_OFF =
+  "An admin turned Mail off, so attachments can't be saved from it. Nothing was changed, and you can save them when it's turned on again.";
 
 export type MailAttachmentKey = {
   mailboxId: MailboxId;
@@ -84,7 +86,7 @@ const senderOf = (row: {
 export async function listMailAttachments(
   userId: UserId,
 ): Promise<MailAttachmentRow[]> {
-  if (await isMailOff(env.DB)) return [];
+  if (await isAppOff(env.DB, "mail")) return [];
   const db = drizzle(env.DB);
   const reachable = await db
     .select({ mailboxId: mailboxAccess.mailboxId })
@@ -162,7 +164,7 @@ export async function saveMailAttachment(
   key: MailAttachmentKey,
 ): Promise<void> {
   const { mailboxId, messageId, attachmentId } = key;
-  await assertMailOn(env.DB);
+  if (await isAppOff(env.DB, "mail")) throw refusal(403, MAIL_OFF);
   const mailbox = await openMailboxAs(userId, mailboxId);
 
   const db = drizzle(env.DB);

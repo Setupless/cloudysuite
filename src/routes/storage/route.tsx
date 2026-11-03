@@ -3,6 +3,7 @@ import {
   requireStorageUser,
   StorageLayout,
   StorageRoot,
+  StorageRouteError,
 } from "@cloudysuite/storage";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
@@ -11,6 +12,7 @@ export const Route = createFileRoute("/storage")({
     user: await requireStorageUser(location),
   }),
   loader: () => prefetchDirectory(),
+  errorComponent: StorageRouteError,
   component: () => (
     <StorageRoot>
       <StorageLayout

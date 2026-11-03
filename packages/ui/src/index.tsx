@@ -24,6 +24,13 @@ export const useHydrated = (): boolean =>
     () => false,
   );
 
+// For a page left open when an admin turned its app off. Loading the address again
+// reaches the server's check, which answers with the page that says so.
+export function GoToOffPage() {
+  useEffect(() => window.location.reload(), []);
+  return null;
+}
+
 export function Page({
   icon: PageIcon,
   title,

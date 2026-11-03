@@ -30,7 +30,9 @@ Later ideas include a password manager, docs, and sheets.
 Every deployment contains every released app. An admin can turn each app off for the whole organisation, for example when the organisation keeps another mail provider.
 
 - A person who opens a turned-off app sees a page that says an admin turned it off, with a link to Account. The app also leaves the app switcher.
-- The hostname router makes this check on the server for every request, so hiding the link is never the only protection.
+- The hostname router makes this check on the server for every request, so hiding the link is never the only protection. A server function answers on every app's hostname, so each of Mail's and Storage's server functions checks too.
+- A page that was already open stays where it is, and each request it makes is refused in plain words. A redirect to the off page would reach that page as an answer it can't read. If the refusal stops it opening another of its pages, it loads that address again, and the hostname router sends the browser to the off page.
+- A download is a plain link to an answer marked as a file, not a link marked `download`. A browser saves whatever answers a link marked `download`, so a download started from an open page would save the off page as the file.
 - Turning an app off deletes nothing. Turning it back on restores everything.
 - Inbound mail still reaches the mailbox while Mail is off, because a bounced message cannot be recovered later.
 - The only other exception is a `GET` of `/pwa/session` on the Mail host. It returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
@@ -219,7 +221,7 @@ Sign-out happens on Account's host, which cannot reach Mail's storage, so it has
 
 Anyone can link to `/device-cleared`, so opening it never clears anything for a person who might still be signed in. It clears only when the server says nobody is signed in, or when the device's own last check is past the 59 days, which is a session's 60 days less the day a renewal can lag. With no answer from the server, it changes nothing, says so, and offers a button. That button is how someone offline signs out of a shared computer.
 
-Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because a `GET` of `/pwa/session` is the one Mail request that gets an answer while Mail is off. It returns a person's id or a 401, and no mail.
+Turning Mail off clears nothing, so turning it back on restores the same device. Sign-out and a session ending elsewhere still clear it, because a `GET` of `/pwa/session` is the one Mail request that still works while Mail is off. It returns a person's id or a 401, and no mail. Every other Mail request is refused, with a mark that tells the device Mail is off, so it keeps its saved mail.
 
 **A tab nobody is looking at makes no requests.** Each request renews the session, so a forgotten background tab would otherwise keep someone signed in forever. Timed refreshes, saving mail for offline, and reconnecting all wait until the tab is visible again, then catch up at once. A visible tab counts as use, even with nobody at the screen.
 

@@ -8,6 +8,7 @@ export { StarredScreen } from "./ui/starred-screen";
 export { requireStorageUser } from "./ui/session";
 export { StorageLayout } from "./ui/storage-layout";
 export { StorageRoot } from "./ui/storage-root";
+export { StorageRouteError } from "./ui/storage-route-error";
 export { TrashScreen } from "./ui/trash-screen";
 export {
   prefetchDirectory,

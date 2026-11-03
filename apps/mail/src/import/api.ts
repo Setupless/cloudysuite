@@ -1,6 +1,5 @@
 import { env } from "cloudflare:workers";
 import { checkMailboxAccess, parseMailboxId } from "@cloudysuite/access";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { isFromApp } from "@cloudysuite/auth/origins";
 import {
   declaredBytes,
@@ -9,6 +8,7 @@ import {
   readUpTo,
 } from "@cloudysuite/transfer";
 import { readSettings } from "../../../../src/settings";
+import { requireMailUser } from "../access";
 import { openMailboxImports } from "../client";
 
 const JOB_ID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -25,7 +25,7 @@ const reply = <Value>(outcome: Outcome<Value>) =>
   outcome.ok ? json(outcome.value) : refusal(outcome.status, outcome.message);
 
 async function respond(request: Request, path: string): Promise<Response> {
-  const user = await requireReadyUser(request);
+  const user = await requireMailUser(request);
   if (request.method !== "GET") {
     // The hostname router sends every request to /setup until a domain is stored.
     const { primaryDomain } = await readSettings(env.DB);

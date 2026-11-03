@@ -1,5 +1,4 @@
 import { env } from "cloudflare:workers";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { asc, eq } from "drizzle-orm";
@@ -12,7 +11,7 @@ import {
   mailboxAccess,
   mailboxes,
 } from "../../../src/db/schema";
-import { openMailboxAs, openMailboxFor } from "./access";
+import { openMailboxAs, openMailboxFor, requireMailUser } from "./access";
 import { renderBody } from "./email/render-body";
 import type { LabelWrite } from "./labels/store";
 import type { MailboxId, MailboxSummary } from "./types";
@@ -45,7 +44,7 @@ const openFor = (mailboxId: MailboxId) =>
 
 export const listMailboxes = createServerFn({ method: "GET" }).handler(
   async (): Promise<MailboxEntry[]> => {
-    const user = await requireReadyUser(getRequest());
+    const user = await requireMailUser(getRequest());
     const rows = await drizzle(env.DB)
       .select({
         id: mailboxes.id,
@@ -76,7 +75,7 @@ export const listMailboxes = createServerFn({ method: "GET" }).handler(
 
 export const firstMailbox = createServerFn({ method: "GET" }).handler(
   async (): Promise<MailboxId | null> => {
-    const user = await requireReadyUser(getRequest());
+    const user = await requireMailUser(getRequest());
     const [row] = await drizzle(env.DB)
       .select({ id: mailboxes.id })
       .from(mailboxAccess)

@@ -1,11 +1,10 @@
 import { env } from "cloudflare:workers";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { mailboxAccess, mailboxes } from "../../../../src/db/schema";
-import { openMailboxAs, openMailboxFor } from "../access";
+import { openMailboxAs, openMailboxFor, requireMailUser } from "../access";
 import type { MailboxId } from "../types";
 import { badRequest, requireMailboxId } from "../wire";
 import { parsePushEndpoint } from "./endpoint";
@@ -85,7 +84,7 @@ export const getPushSetup = createServerFn({ method: "POST" })
     };
   })
   .handler(async ({ data }): Promise<PushSetup> => {
-    const user = await requireReadyUser(getRequest());
+    const user = await requireMailUser(getRequest());
     const [{ publicKey }, subscribed, rows] = await Promise.all([
       ensureVapidKeys(env.DB),
       data.endpoint
@@ -114,7 +113,7 @@ export const subscribePush = createServerFn({ method: "POST" })
   .validator(parseSubscribeInput)
   .handler(async ({ data }): Promise<void> => {
     const request = getRequest();
-    const user = await requireReadyUser(request);
+    const user = await requireMailUser(request);
     await saveSubscription(env.DB, user.id, {
       ...data,
       userAgent:
@@ -128,7 +127,7 @@ export const unsubscribePush = createServerFn({ method: "POST" })
     endpoint: requireEndpoint(record(raw).endpoint),
   }))
   .handler(async ({ data }): Promise<void> => {
-    const user = await requireReadyUser(getRequest());
+    const user = await requireMailUser(getRequest());
     await removeSubscription(env.DB, user.id, data.endpoint);
   });
 

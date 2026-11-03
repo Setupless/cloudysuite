@@ -1,9 +1,8 @@
 import { env } from "cloudflare:workers";
-import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { readSettings } from "../../../../src/settings";
-import { openMailboxAs } from "../access";
+import { openMailboxAs, requireMailUser } from "../access";
 import type { MailboxId } from "../types";
 import { mailboxSenderFacts, refuseSenderOutsideMailbox } from "./addresses";
 import { readReplySource } from "./reply-source";
@@ -33,9 +32,10 @@ const NOT_FOUND =
 const ORIGINAL_GONE =
   "The original message is gone, so this can't go out with it. Check what's left, then send it again.";
 
-// The sign-in rule, then the access check, in the call that uses the grant.
+// Mail being on, the sign-in rule, then the access check, in the call that uses the
+// grant.
 async function open(mailboxId: MailboxId) {
-  const user = await requireReadyUser(getRequest());
+  const user = await requireMailUser(getRequest());
   const mailbox = await openMailboxAs(user.id, mailboxId);
   const editor: Editor = { id: user.id, name: user.name };
   return { mailbox, editor, viewerId: user.id };

@@ -1,4 +1,5 @@
 import type { UserId } from "@cloudysuite/access";
+import { isAppOffRefusal } from "../../../../src/routing";
 import { listMailboxes, listThreads } from "../functions";
 import type { MailboxId, ThreadId, ThreadSummary } from "../types";
 import {
@@ -103,7 +104,8 @@ async function saveMailbox(userId: UserId, mailboxId: MailboxId) {
 }
 
 // Each failed mailbox waits for the next refresh and leaves the rest alone. A refusal
-// means this person can no longer open it, so what is saved has to go.
+// means this person can no longer open it, so what is saved has to go. Mail being
+// turned off ends the refresh instead, because turning it back on restores the device.
 async function refreshDevice(userId: UserId): Promise<void> {
   const mailboxes = await listMailboxes();
   if (!(await saveMailboxes(userId, mailboxes))) return;
@@ -115,6 +117,7 @@ async function refreshDevice(userId: UserId): Promise<void> {
     try {
       await saveMailbox(userId, id);
     } catch (thrown) {
+      if (isAppOffRefusal(thrown, "mail")) throw thrown;
       if (thrown instanceof Response && thrown.status === 403) {
         await forgetMailbox(userId, id);
       } else if (thrown instanceof Response && thrown.status === 401) {
