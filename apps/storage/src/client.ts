@@ -60,6 +60,7 @@ export type DriveClient = {
     to: DriveClient,
     toParentId: ItemId | null,
   ): Promise<MoveResult>;
+  dismissMoveNotice(moveId: string): Promise<void>;
   mayAddTo(parentId: ItemId | null): Promise<boolean>;
   trash(id: ItemId): Promise<TrashResult>;
   trashEntries(limit: number): Promise<TrashEntry[]>;
@@ -143,6 +144,7 @@ export function openDrive(env: Env, grant: DriveGrant): DriveClient {
         toParentId,
       })) as MoveResult;
     },
+    dismissMoveNotice: (moveId) => stub.dismissMoveNotice(actor, moveId),
     trash: async (id) =>
       (await stub.trash({ actor, driveId, id })) as TrashResult,
     trashEntries: async (limit) =>

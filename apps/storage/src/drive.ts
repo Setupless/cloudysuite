@@ -241,11 +241,11 @@ export class Drive extends DurableObject<Env> {
     });
     if (begun.status !== "begun") return begun;
     await this.#scheduleNextWakeUp();
-    return this.#runMove(moveId);
+    return this.#runMove(moveId, true);
   }
 
   // One step of a move, whichever phase it has reached. See moves.ts.
-  async #runMove(moveId: string): Promise<MoveResult> {
+  async #runMove(moveId: string, personWaits: boolean): Promise<MoveResult> {
     const move = this.#store.outgoingMove(moveId);
     if (!move) return { status: "pending" };
     if (this.#sendingMoves.has(moveId)) {
@@ -259,7 +259,11 @@ export class Drive extends DurableObject<Env> {
         case "sending": {
           const answer = await receiver.receive(move);
           if (answer.status !== "received") {
-            this.#store.cancelMoveOut(moveId);
+            this.#store.cancelMoveOut(
+              moveId,
+              personWaits ? null : answer,
+              Date.now(),
+            );
             await this.#afterChange();
             return answer;
           }
@@ -336,6 +340,10 @@ export class Drive extends DurableObject<Env> {
   async abandonMoveIn(moveId: string, driveId: DriveId): Promise<void> {
     this.#store.abandonMoveIn(moveId, driveId, Date.now());
     await this.#afterChange();
+  }
+
+  dismissMoveNotice(actor: Actor, moveId: string): void {
+    this.#store.dismissMoveNotice(actor, moveId);
   }
 
   async trash(input: {
@@ -532,7 +540,7 @@ export class Drive extends DurableObject<Env> {
 
   async #retryMoves(): Promise<void> {
     for (const moveId of this.#store.dueMoves(Date.now(), MOVES_PER_WAKE_UP)) {
-      await this.#runMove(moveId);
+      await this.#runMove(moveId, false);
     }
   }
 

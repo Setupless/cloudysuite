@@ -11,7 +11,7 @@ import {
   DRIVE_A,
   DRIVE_B,
 } from "./test-support";
-import type { FileItem, ItemId } from "./types";
+import type { FileItem, ItemId, MoveNotice } from "./types";
 
 type Kit = Awaited<ReturnType<typeof createStorageTest>>;
 let kit: Kit;
@@ -560,7 +560,7 @@ test("a move refused after the person was told it's on its way tells them why, o
   mend();
   await kit.fireAlarm();
   expect(await names()).toEqual(["Docs", "Big.pdf"]);
-  const told = [
+  const told: MoveNotice[] = [
     {
       moveId: expect.any(String),
       name: "Big.pdf",
@@ -611,7 +611,7 @@ test("a move given up after an hour tells the person it stayed, once", async () 
 
   later(HOUR + 1000);
   await kit.instance(DRIVE_A).object.alarm();
-  const told = [
+  const told: MoveNotice[] = [
     {
       moveId: expect.any(String),
       name: "Docs",

@@ -26,7 +26,9 @@ import type {
   ItemId,
   ItemShare,
   ItemShares,
+  MoveNotice,
   MoveResult,
+  MoveSetback,
   NewFolderResult,
   NoAccess,
   OpenedItem,
@@ -408,7 +410,35 @@ export class DriveStore {
         rows.length > PAGE_SIZE && last
           ? encodeCursor(last.kind, nameKeyOf(last.name))
           : null,
+      moveNotices: this.#moveNotices(actor),
     };
+  }
+
+  #moveNotices(actor: Actor): MoveNotice[] {
+    return this.#rows<{
+      move_id: string;
+      name: string;
+      setback: MoveSetback["status"];
+      bytes: number | null;
+    }>(
+      "SELECT move_id, name, setback, bytes FROM move_notices WHERE user_id = ? ORDER BY noted_at DESC",
+      actor.userId,
+    ).map((row) => ({
+      moveId: row.move_id,
+      name: row.name,
+      setback:
+        row.setback === "overLimit"
+          ? { status: row.setback, bytes: row.bytes as number }
+          : { status: row.setback },
+    }));
+  }
+
+  dismissMoveNotice(actor: Actor, moveId: string): void {
+    this.#db.exec(
+      "DELETE FROM move_notices WHERE move_id = ? AND user_id = ?",
+      moveId,
+      actor.userId,
+    );
   }
 
   // Names above topId stay out of it, because the person can't reach those folders.
@@ -957,8 +987,8 @@ export class DriveStore {
         moveId,
       );
       this.#db.exec(
-        `INSERT INTO moves_out (id, top_id, from_drive_id, to_drive_id, to_parent_id, try_at, give_up_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO moves_out (id, top_id, from_drive_id, to_drive_id, to_parent_id, try_at, give_up_at, moved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         moveId,
         id,
         fromDriveId,
@@ -966,6 +996,7 @@ export class DriveStore {
         toParentId,
         tryAt,
         giveUpAt,
+        actor.userId,
       );
       return { status: "begun" as const };
     });
@@ -1197,9 +1228,26 @@ export class DriveStore {
     this.#db.exec("UPDATE items SET move_id = NULL WHERE move_id = ?", moveId);
   }
 
-  // The other drive refused, so it holds nothing.
-  cancelMoveOut(moveId: string): void {
+  // Only while the move is sending, so the notice is written once, with the name the
+  // locked top row still has.
+  #noteSetback(moveId: string, setback: MoveSetback, now: number): void {
+    this.#db.exec(
+      `INSERT INTO move_notices (move_id, user_id, name, setback, bytes, noted_at)
+       SELECT moves_out.id, moves_out.moved_by, items.name, ?, ?, ?
+       FROM moves_out JOIN items ON items.id = moves_out.top_id
+       WHERE moves_out.id = ? AND moves_out.phase = 'sending' AND moves_out.moved_by IS NOT NULL`,
+      setback.status,
+      setback.status === "overLimit" ? setback.bytes : null,
+      now,
+      moveId,
+    );
+  }
+
+  // The other drive refused, so it holds nothing. Untold is the refusal when nobody is
+  // waiting on the answer, so the person who moved it hears from a notice instead.
+  cancelMoveOut(moveId: string, untold: MoveSetback | null, now: number): void {
     this.#db.transaction(() => {
+      if (untold) this.#noteSetback(moveId, untold, now);
       this.#unlock(moveId);
       this.endMoveOut(moveId);
     });
@@ -1207,12 +1255,13 @@ export class DriveStore {
 
   // The other drive never answered, so it may hold locked rows. Those can't delete
   // anything, so these rows are safe to free now, and the alarm keeps telling it.
-  giveUpMoveOut(moveId: string, tryAt: number): void {
+  giveUpMoveOut(moveId: string, now: number): void {
     this.#db.transaction(() => {
+      this.#noteSetback(moveId, { status: "noAnswer" }, now);
       this.#unlock(moveId);
       this.#db.exec(
         "UPDATE moves_out SET phase = 'abandoning', try_at = ? WHERE id = ? AND phase = 'sending'",
-        tryAt,
+        now,
         moveId,
       );
     });

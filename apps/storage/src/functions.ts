@@ -38,6 +38,7 @@ import {
   parseFolderInput,
   parseItemInput,
   parseMoveInput,
+  parseMoveNoticeInput,
   parseNewFolderInput,
   parseNewTeamFolderInput,
   parseRecentInput,
@@ -387,6 +388,14 @@ export const moveItem = createServerFn({ method: "POST" })
       case "tooMany":
         throw refusal(409, TOO_MANY_TO_MOVE);
     }
+  });
+
+export const dismissMoveNotice = createServerFn({ method: "POST" })
+  .validator(parseMoveNoticeInput)
+  .handler(async ({ data }): Promise<void> => {
+    const me = await requireStorageUser(getRequest());
+    const drive = await openDriveAs(me.id, data.driveId);
+    await drive.dismissMoveNotice(data.moveId);
   });
 
 export const trashItem = createServerFn({ method: "POST" })
