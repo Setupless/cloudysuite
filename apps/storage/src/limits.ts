@@ -37,9 +37,10 @@ export async function readStorageRoom(
 export const hasLimit = (room: StorageRoom) =>
   room.driveLimitBytes !== null || room.orgLimitBytes !== null;
 
-// Null when the file fits. When it fits neither limit, this names the one with less left.
-// D1 can't tell bytes that a move counts twice from a limit that is really full, so only
-// a file bigger than a whole limit is told that trying again won't help.
+// Null when the file fits. A file bigger than a whole limit is told which limits it can
+// never fit, since freeing space can't help. Otherwise D1 can't tell bytes that a move
+// counts twice from a limit that is really full, so the refusal names the limit with less
+// left and says to try again.
 export function limitRefusal(
   room: StorageRoom,
   sizeBytes: number,
@@ -59,23 +60,36 @@ export function limitRefusal(
   ]
     .flatMap(({ used, limit, name }) =>
       limit !== null && used + sizeBytes > limit
-        ? [
-            {
-              left: Math.max(0, limit - used),
-              name: name(formatBytes(limit)),
-              tooBig: sizeBytes > limit,
-            },
-          ]
+        ? [{ limit, left: Math.max(0, limit - used), name }]
         : [],
     )
     .sort((a, b) => a.left - b.left);
+  const tooSmall = refusals.filter(({ limit }) => sizeBytes > limit);
+  if (tooSmall.length > 0) {
+    const show = distinctFigures(
+      sizeBytes,
+      ...tooSmall.map(({ limit }) => limit),
+    );
+    const limits = tooSmall
+      .map(({ limit, name }) => name(show(limit)))
+      .join(" and ");
+    return `This file is ${show(sizeBytes)}, which is bigger than the whole of ${limits}. Ask your admin for more space.`;
+  }
   const [tightest] = refusals;
   if (!tightest) return null;
-  const next = refusals.some((refusal) => refusal.tooBig)
-    ? "Ask your admin for more space."
-    : "Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.";
-  return `This file is ${formatBytes(sizeBytes)}, and ${spaceLeft(tightest.left)} in ${tightest.name}. ${next}`;
+  const show = distinctFigures(sizeBytes, tightest.left);
+  return `This file is ${show(sizeBytes)}, and ${spaceLeft(tightest.left, show)} in ${tightest.name(formatBytes(tightest.limit))}. Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.`;
 }
+
+// A rounded file size that matches the figure it was compared with hides why it was
+// refused, so those figures are given exactly.
+const distinctFigures = (sizeBytes: number, ...others: number[]) =>
+  others.some((other) => formatBytes(other) === formatBytes(sizeBytes))
+    ? exactBytes
+    : formatBytes;
+
+const exactBytes = (bytes: number) =>
+  `${bytes.toLocaleString("en-US")} ${bytes === 1 ? "byte" : "bytes"}`;
 
 // Someone reaching another person's My files through a share didn't set this limit up
 // for themselves, so "your" would send them looking in the wrong place.
@@ -84,8 +98,8 @@ const myFilesLimit = (limit: string, throughShare: boolean) =>
     ? `the ${limit} limit for the My files this is in`
     : `your ${limit} limit for My files`;
 
-const spaceLeft = (bytes: number) =>
-  bytes === 0 ? "there's no space left" : `only ${formatBytes(bytes)} is left`;
+const spaceLeft = (bytes: number, show = formatBytes) =>
+  bytes === 0 ? "there's no space left" : `only ${show(bytes)} is left`;
 
 // A move adds nothing to the organisation's total, so only a limit for My files can
 // refuse it, and that's the only drive with one.

@@ -119,14 +119,29 @@ test("the organisation limit refuses at the start, says how much is left, and la
   expect(usedIn(DRIVE_A)).toBe(1900);
 });
 
-test("a file bigger than a whole limit isn't told to try again", async () => {
+test("a file bigger than a whole limit is told so, and isn't told to try again", async () => {
   setOrgLimit(2000);
   expect(await start(kit.drive, 3000)).toEqual({
     ok: false,
     status: 413,
     message:
-      "This file is 3 KB, and only 2 KB is left in your organisation's 2 KB limit. Ask your admin for more space.",
+      "This file is 3 KB, which is bigger than the whole of your organisation's 2 KB limit. Ask your admin for more space.",
   });
+});
+
+test("figures that would round to the same size are given exactly, so the reason shows", () => {
+  const room = {
+    driveUsedBytes: 0,
+    driveLimitBytes: null,
+    orgUsedBytes: 0,
+    orgLimitBytes: 2000,
+  };
+  expect(limitRefusal(room, 2400)).toBe(
+    "This file is 2,400 bytes, which is bigger than the whole of your organisation's 2,000 bytes limit. Ask your admin for more space.",
+  );
+  expect(limitRefusal({ ...room, orgUsedBytes: 1 }, 2000)).toBe(
+    "This file is 2,000 bytes, and only 1,999 bytes is left in your organisation's 2 KB limit. Try again in a minute, as space can take that long to free up after a move. If it's still refused, ask your admin for more space.",
+  );
 });
 
 test("the organisation limit counts every drive, including a removed person's", async () => {
@@ -160,21 +175,21 @@ test("a person's limit refuses in My files only, and doesn't reach team folders"
 
 test("when a file is over both limits, the refusal names the one with less left", () => {
   const room = {
-    driveUsedBytes: 90,
-    driveLimitBytes: 100,
-    orgUsedBytes: 50,
-    orgLimitBytes: 100,
+    driveUsedBytes: 900,
+    driveLimitBytes: 1000,
+    orgUsedBytes: 500,
+    orgLimitBytes: 1000,
   };
-  expect(limitRefusal(room, 200)).toContain("limit for My files");
-  expect(limitRefusal({ ...room, orgUsedBytes: 95 }, 200)).toContain(
+  expect(limitRefusal(room, 600)).toContain("limit for My files");
+  expect(limitRefusal({ ...room, orgUsedBytes: 950 }, 600)).toContain(
     "organisation",
   );
-  expect(limitRefusal({ ...room, driveUsedBytes: 100 }, 200)).toContain(
-    "there's no space left in your 100 bytes limit for My files",
+  expect(limitRefusal({ ...room, driveUsedBytes: 1000 }, 600)).toContain(
+    "there's no space left in your 1 KB limit for My files",
   );
 });
 
-test("a file bigger than My files' whole limit isn't told to try again, even when the organisation has less left", () => {
+test("a file bigger than My files' whole limit names that limit, even when the organisation has less left", () => {
   const room = {
     driveUsedBytes: 100,
     driveLimitBytes: 500,
@@ -182,7 +197,19 @@ test("a file bigger than My files' whole limit isn't told to try again, even whe
     orgLimitBytes: 1000,
   };
   expect(limitRefusal(room, 600)).toBe(
-    "This file is 600 bytes, and only 100 bytes is left in your organisation's 1 KB limit. Ask your admin for more space.",
+    "This file is 600 bytes, which is bigger than the whole of your 500 bytes limit for My files. Ask your admin for more space.",
+  );
+});
+
+test("a file bigger than both whole limits names both", () => {
+  const room = {
+    driveUsedBytes: 0,
+    driveLimitBytes: 500,
+    orgUsedBytes: 0,
+    orgLimitBytes: 1000,
+  };
+  expect(limitRefusal(room, 3000)).toBe(
+    "This file is 3 KB, which is bigger than the whole of your 500 bytes limit for My files and your organisation's 1 KB limit. Ask your admin for more space.",
   );
 });
 
