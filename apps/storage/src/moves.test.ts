@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
-import type { DriveId } from "@cloudysuite/access";
+import type { DriveId, UserId } from "@cloudysuite/access";
+import { type MoveNoticeRow, moveNoticesAcrossDrives } from "./across-drives";
 import type { DriveClient } from "./client";
 import { downloadResponse } from "./file-responses";
 import { moveRefusal, readStorageRoom } from "./limits";
 import { parseItemName } from "./names";
-import { ALICE, createStorageTest, DRIVE_A, DRIVE_B } from "./test-support";
+import {
+  ALICE,
+  BOB,
+  createStorageTest,
+  DRIVE_A,
+  DRIVE_B,
+} from "./test-support";
 import type { FileItem, ItemId } from "./types";
 
 type Kit = Awaited<ReturnType<typeof createStorageTest>>;
@@ -72,6 +79,13 @@ const names = async (
   parentId: ItemId | null = null,
 ) => (await drive.list(parentId, null))?.items.map((item) => item.name);
 
+const opener = (userId: UserId) => async (driveId: DriveId) =>
+  kit.open(await kit.grantFor(userId, driveId));
+
+// What the person sees at the top of any Storage page.
+const noticesFor = (userId: UserId = ALICE) =>
+  moveNoticesAcrossDrives(kit.d1, userId, opener(userId));
+
 const trashNames = async (drive: DriveClient = kit.drive) =>
   (await drive.trashEntries(200)).map((entry) => entry.name);
 
@@ -98,8 +112,8 @@ function receiverCommitsThenLosesAnswer() {
   };
 }
 
-function receiverNeverAnswers() {
-  const object = kit.instance(DRIVE_B).object;
+function receiverNeverAnswers(driveId: DriveId = DRIVE_B) {
+  const object = kit.instance(driveId).object;
   const real = object.receiveMove.bind(object);
   object.receiveMove = async () => {
     throw new Error("connection lost");
@@ -533,6 +547,196 @@ test("a move into a My files with no room is refused in plain words before anyth
   expect(moveRefusal(await readStorageRoom(kit.d1, MY_FILES), 4)).toBe(
     "This is 4 bytes, and only 3 bytes is left in your 8 bytes limit for My files. Delete something there or ask your admin for more space.",
   );
+  // The person heard it in the dialog, so nothing waits for them on the page.
+  expect(await noticesFor()).toEqual([]);
+});
+
+test("a move refused after the person was told it's on its way tells them why, once", async () => {
+  const mine = await withMyFiles(8);
+  await upload("Mine.pdf", null, 5, mine);
+  const file = await upload("Big.pdf", null, 4);
+  const mend = receiverNeverAnswers(MY_FILES);
+  expect((await kit.drive.move(file.id, mine, null)).status).toBe("pending");
+  expect(await noticesFor()).toEqual([]);
+
+  mend();
+  await kit.fireAlarm();
+  expect(await names()).toEqual(["Big.pdf"]);
+  const told: MoveNoticeRow[] = [
+    {
+      driveId: DRIVE_A,
+      moveId: expect.any(String),
+      name: "Big.pdf",
+      setback: { status: "overLimit", bytes: 4 },
+      notedAt: expect.any(Number),
+    },
+  ];
+  expect(await noticesFor()).toEqual(told);
+
+  await kit.fireAlarm();
+  kit.restart(DRIVE_A);
+  expect(await noticesFor()).toEqual(told);
+});
+
+test("only the person who moved it sees the notice, and only they can dismiss it", async () => {
+  const mine = await withMyFiles(8);
+  await upload("Mine.pdf", null, 5, mine);
+  const file = await upload("Big.pdf", null, 4);
+  const mend = receiverNeverAnswers(MY_FILES);
+  await kit.drive.move(file.id, mine, null);
+  mend();
+  await kit.fireAlarm();
+  const [notice] = await noticesFor();
+  if (!notice) throw new Error("expected a notice");
+
+  kit.directory.run(
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'editor')",
+    [DRIVE_A, BOB],
+  );
+  const bob = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  expect(await noticesFor(BOB)).toEqual([]);
+  await bob.dismissMoveNotice(notice.moveId);
+  expect(await noticesFor()).toEqual([notice]);
+
+  await kit.drive.dismissMoveNotice(notice.moveId);
+  await kit.drive.dismissMoveNotice(notice.moveId);
+  expect(await noticesFor()).toEqual([]);
+  expect(await names()).toEqual(["Big.pdf"]);
+});
+
+test("someone who reaches a file only through a share is told why it didn't move, and can dismiss it", async () => {
+  const docs = await folder("Docs");
+  const file = await upload("Plan.png", docs.id);
+  await kit.drive.sharePeople(file.id, [BOB], "edit");
+  kit.directory.run(
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'editor')",
+    [DRIVE_B, BOB],
+  );
+  const bob = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  const bobB = kit.open(await kit.grantFor(BOB, DRIVE_B));
+  expect(await bob.list(null, null)).toBeNull();
+
+  const mend = receiverNeverAnswers();
+  expect((await bob.move(file.id, bobB, null)).status).toBe("pending");
+  mend();
+  await upload("Plan.png", null, 5, kit.driveB);
+  await kit.fireAlarm();
+
+  const [notice, ...others] = await noticesFor(BOB);
+  expect(others).toEqual([]);
+  expect(notice).toEqual({
+    driveId: DRIVE_A,
+    moveId: expect.any(String),
+    name: "Plan.png",
+    setback: { status: "nameTaken" },
+    notedAt: expect.any(Number),
+  });
+  expect(await noticesFor(ALICE)).toEqual([]);
+
+  await bob.dismissMoveNotice(notice?.moveId as string);
+  expect(await noticesFor(BOB)).toEqual([]);
+});
+
+test("once the person can't open what they moved, the notice leaves out its name", async () => {
+  const file = await upload("Plan.png");
+  await kit.drive.sharePeople(file.id, [BOB], "edit");
+  kit.directory.run(
+    "INSERT INTO drive_access (drive_id, user_id, role) VALUES (?, ?, 'editor')",
+    [DRIVE_B, BOB],
+  );
+  const bob = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  const mend = receiverNeverAnswers();
+  await bob.move(file.id, kit.open(await kit.grantFor(BOB, DRIVE_B)), null);
+  mend();
+  await upload("Plan.png", null, 5, kit.driveB);
+  await kit.fireAlarm();
+  await kit.drive.unshare(file.id, BOB);
+
+  const [notice] = await noticesFor(BOB);
+  expect(notice).toMatchObject({ driveId: DRIVE_A, name: null });
+  await bob.dismissMoveNotice(notice?.moveId as string);
+  expect(await noticesFor(BOB)).toEqual([]);
+});
+
+// Which drives a page had to wake to show this person their notices.
+async function drivesAsked(userId: UserId = ALICE) {
+  const asked: DriveId[] = [];
+  await moveNoticesAcrossDrives(kit.d1, userId, async (driveId) => {
+    asked.push(driveId);
+    return opener(userId)(driveId);
+  });
+  return asked;
+}
+
+test("with nothing to tell, no drive is woken to find out", async () => {
+  await upload("Report.pdf");
+  await upload("Budget.pdf", null, 5, kit.driveB);
+  expect(await drivesAsked()).toEqual([]);
+});
+
+test("a notice D1 couldn't be told about arrives once the alarm tries again, and so does its dismissal", async () => {
+  const docs = await folder("Docs");
+  const mend = receiverNeverAnswers();
+  await kit.drive.move(docs.id, kit.driveB, null);
+  mend();
+  await kit.driveB.createFolder(null, named("Docs"));
+  kit.d1Failures.moveNotices = true;
+  await kit.fireAlarm();
+  expect(await noticesFor()).toEqual([]);
+
+  kit.d1Failures.moveNotices = false;
+  await kit.fireAlarm();
+  const [notice] = await noticesFor();
+  expect(notice).toMatchObject({
+    name: "Docs",
+    setback: { status: "nameTaken" },
+  });
+  expect(await drivesAsked()).toEqual([DRIVE_A]);
+
+  kit.d1Failures.moveNotices = true;
+  await kit.drive.dismissMoveNotice(notice?.moveId as string);
+  kit.d1Failures.moveNotices = false;
+  expect(await noticesFor()).toEqual([]);
+  expect(await drivesAsked()).toEqual([DRIVE_A]);
+  await kit.fireAlarm();
+  expect(await drivesAsked()).toEqual([]);
+  expect(kit.instance(DRIVE_A).alarm).toBeNull();
+});
+
+test("a move given up after an hour tells the person it stayed, once", async () => {
+  const docs = await folder("Docs");
+  const mend = receiverNeverAnswers();
+  expect((await kit.drive.move(docs.id, kit.driveB, null)).status).toBe(
+    "pending",
+  );
+
+  later(HOUR + 1000);
+  await kit.instance(DRIVE_A).object.alarm();
+  const told: MoveNoticeRow[] = [
+    {
+      driveId: DRIVE_A,
+      moveId: expect.any(String),
+      name: "Docs",
+      setback: { status: "noAnswer" },
+      notedAt: expect.any(Number),
+    },
+  ];
+  expect(await noticesFor()).toEqual(told);
+
+  mend();
+  await kit.instance(DRIVE_A).object.alarm();
+  expect(kit.instance(DRIVE_A).alarm).toBeNull();
+  expect(await noticesFor()).toEqual(told);
+});
+
+test("a move the alarm finishes leaves nothing to tell", async () => {
+  const file = await upload("Report.pdf");
+  const mend = receiverNeverAnswers();
+  await kit.drive.move(file.id, kit.driveB, null);
+  mend();
+  await kit.fireAlarm();
+  expect(await names(kit.driveB)).toEqual(["Report.pdf"]);
+  expect(await noticesFor()).toEqual([]);
 });
 
 test("a folder's whole size counts, and a move that exactly fits goes through", async () => {

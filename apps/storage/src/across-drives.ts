@@ -1,9 +1,14 @@
 import type { DriveId, UserId } from "@cloudysuite/access";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { driveAccess, driveShares, drives } from "../../../src/db/schema";
+import {
+  driveAccess,
+  driveMoveNotices,
+  driveShares,
+  drives,
+} from "../../../src/db/schema";
 import type { DriveClient } from "./client";
-import type { SearchLine, StarredLine } from "./types";
+import type { MoveNotice, SearchLine, StarredLine } from "./types";
 
 // Workers allows six open connections at once, and the rest of the request needs some.
 const DRIVES_AT_ONCE = 5;
@@ -145,6 +150,31 @@ export async function searchDrives(
       sorted.length > SEARCH_LINES_SHOWN,
     incomplete,
   };
+}
+
+export type MoveNoticeRow = MoveNotice & { driveId: DriveId };
+
+// Only the drives D1 says hold a note for this person, so a page with nothing to tell
+// wakes no drive. A drive that can't answer just shows nothing this time.
+export async function moveNoticesAcrossDrives(
+  database: D1Database,
+  me: UserId,
+  open: OpenDrive,
+): Promise<MoveNoticeRow[]> {
+  const indexed = await drizzle(database)
+    .selectDistinct({ driveId: driveMoveNotices.driveId })
+    .from(driveMoveNotices)
+    .where(eq(driveMoveNotices.userId, me));
+  const { answers } = await askEach(
+    indexed.map(({ driveId }) => ({ driveId, name: null })),
+    open,
+    async (drive, { driveId }) =>
+      (await drive.moveNotices()).map((notice): MoveNoticeRow => ({
+        ...notice,
+        driveId,
+      })),
+  );
+  return answers.flat().sort((a, b) => b.notedAt - a.notedAt);
 }
 
 export type StarredRow = StarredLine & { driveId: DriveId };

@@ -10,6 +10,7 @@ import {
   getDirectory,
   getFile,
   getFolder,
+  getMoveNotices,
   getRecent,
   getTrash,
 } from "./functions";
@@ -69,6 +70,7 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 export const storageKeys = {
   all: ["storage"] as const,
   directory: ["storage", "directory"] as const,
+  moveNotices: ["storage", "move-notices"] as const,
   folder: (driveId: DriveId, folderId: ItemId | null) =>
     ["storage", "folder", driveId, folderId] as const,
   file: (driveId: DriveId, fileId: ItemId) =>
@@ -89,6 +91,14 @@ export const directoryQuery = () =>
   queryOptions({
     queryKey: storageKeys.directory,
     queryFn: () => call(() => getDirectory()),
+  });
+
+// Every page shows these, and asks again as it opens, so a note written while the person
+// was elsewhere shows on the next page they go to.
+export const moveNoticesQuery = () =>
+  queryOptions({
+    queryKey: storageKeys.moveNotices,
+    queryFn: () => call(() => getMoveNotices()),
   });
 
 export const folderQuery = (driveId: DriveId, folderId: ItemId | null) =>
@@ -172,7 +182,10 @@ export const starIdsQuery = (driveId: DriveId) =>
 export async function prefetchDirectory() {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
-  await client.prefetchQuery(directoryQuery());
+  await Promise.all([
+    client.prefetchQuery(directoryQuery()),
+    client.prefetchQuery(moveNoticesQuery()),
+  ]);
   return dehydrate(client);
 }
 

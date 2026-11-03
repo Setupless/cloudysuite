@@ -26,7 +26,9 @@ import type {
   ItemId,
   ItemShare,
   ItemShares,
+  MoveNotice,
   MoveResult,
+  MoveSetback,
   NewFolderResult,
   NoAccess,
   OpenedItem,
@@ -43,6 +45,7 @@ import { MAX_ITEMS_ACROSS_DRIVES, TRASH_MS } from "./types";
 export const UPLOAD_EXPIRY_MS = 3 * 24 * 60 * 60 * 1000;
 export const USAGE_RETRY_MS = 60_000;
 export const SHARE_INDEX_RETRY_MS = 60_000;
+export const NOTICE_INDEX_RETRY_MS = 60_000;
 const PAGE_SIZE = 200;
 // Long enough for any late copy of a delivery to have arrived or died.
 const SETTLED_MOVE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -135,6 +138,12 @@ export type ShareIndexWrite = {
   itemId: string;
   userId: string;
   revision: number;
+  present: boolean;
+};
+
+export type NoticeIndexWrite = {
+  moveId: string;
+  userId: string;
   present: boolean;
 };
 
@@ -409,6 +418,81 @@ export class DriveStore {
           ? encodeCursor(last.kind, nameKeyOf(last.name))
           : null,
     };
+  }
+
+  moveNotices(actor: Actor): MoveNotice[] {
+    return this.#rows<{
+      move_id: string;
+      item_id: string;
+      name: string;
+      setback: MoveSetback["status"];
+      bytes: number | null;
+      noted_at: number;
+    }>(
+      `SELECT move_id, item_id, name, setback, bytes, noted_at FROM move_notices
+       WHERE user_id = ? AND dismissed = 0 ORDER BY noted_at DESC`,
+      actor.userId,
+    ).map((row) => ({
+      moveId: row.move_id,
+      name: this.reachOf(actor, row.item_id as ItemId) ? row.name : null,
+      setback:
+        row.setback === "overLimit"
+          ? { status: row.setback, bytes: row.bytes as number }
+          : { status: row.setback },
+      notedAt: row.noted_at,
+    }));
+  }
+
+  // Only the person it's for can dismiss it, and doing it twice changes nothing.
+  dismissMoveNotice(actor: Actor, moveId: string, now: number): void {
+    this.#db.exec(
+      `UPDATE move_notices SET dismissed = 1, index_due_at = ?
+       WHERE move_id = ? AND user_id = ? AND dismissed = 0`,
+      now + NOTICE_INDEX_RETRY_MS,
+      moveId,
+      actor.userId,
+    );
+  }
+
+  noticeIndexWrites(limit: number): NoticeIndexWrite[] {
+    return this.#rows<{ move_id: string; user_id: string; dismissed: number }>(
+      `SELECT move_id, user_id, dismissed FROM move_notices
+       WHERE index_due_at IS NOT NULL ORDER BY index_due_at LIMIT ?`,
+      limit,
+    ).map((row) => ({
+      moveId: row.move_id,
+      userId: row.user_id,
+      present: row.dismissed === 0,
+    }));
+  }
+
+  // A dismissal made while the write was on its way no longer matches, so it stays queued.
+  finishNoticeIndexWrites(written: readonly NoticeIndexWrite[]): void {
+    this.#db.transaction(() => {
+      for (const { moveId, present } of written) {
+        this.#db.exec(
+          present
+            ? "UPDATE move_notices SET index_due_at = NULL WHERE move_id = ? AND dismissed = 0"
+            : "DELETE FROM move_notices WHERE move_id = ? AND dismissed = 1",
+          moveId,
+        );
+      }
+    });
+  }
+
+  postponeNoticeIndexWrites(retryAt: number): void {
+    this.#db.exec(
+      "UPDATE move_notices SET index_due_at = ? WHERE index_due_at IS NOT NULL",
+      retryAt,
+    );
+  }
+
+  nextNoticeIndexWriteAt(): number | null {
+    return (
+      this.#rows<{ next: number | null }>(
+        "SELECT min(index_due_at) AS next FROM move_notices",
+      )[0]?.next ?? null
+    );
   }
 
   // Names above topId stay out of it, because the person can't reach those folders.
@@ -957,8 +1041,8 @@ export class DriveStore {
         moveId,
       );
       this.#db.exec(
-        `INSERT INTO moves_out (id, top_id, from_drive_id, to_drive_id, to_parent_id, try_at, give_up_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO moves_out (id, top_id, from_drive_id, to_drive_id, to_parent_id, try_at, give_up_at, moved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         moveId,
         id,
         fromDriveId,
@@ -966,6 +1050,7 @@ export class DriveStore {
         toParentId,
         tryAt,
         giveUpAt,
+        actor.userId,
       );
       return { status: "begun" as const };
     });
@@ -1197,9 +1282,25 @@ export class DriveStore {
     this.#db.exec("UPDATE items SET move_id = NULL WHERE move_id = ?", moveId);
   }
 
+  // Only while the move is sending, so it's written once.
+  #noteSetback(moveId: string, setback: MoveSetback, now: number): void {
+    this.#db.exec(
+      `INSERT INTO move_notices (move_id, user_id, item_id, name, setback, bytes, noted_at, index_due_at)
+       SELECT moves_out.id, moves_out.moved_by, items.id, items.name, ?, ?, ?, ?
+       FROM moves_out JOIN items ON items.id = moves_out.top_id
+       WHERE moves_out.id = ? AND moves_out.phase = 'sending' AND moves_out.moved_by IS NOT NULL`,
+      setback.status,
+      setback.status === "overLimit" ? setback.bytes : null,
+      now,
+      now + NOTICE_INDEX_RETRY_MS,
+      moveId,
+    );
+  }
+
   // The other drive refused, so it holds nothing.
-  cancelMoveOut(moveId: string): void {
+  cancelMoveOut(moveId: string, notice: MoveSetback | null, now: number): void {
     this.#db.transaction(() => {
+      if (notice) this.#noteSetback(moveId, notice, now);
       this.#unlock(moveId);
       this.endMoveOut(moveId);
     });
@@ -1207,12 +1308,13 @@ export class DriveStore {
 
   // The other drive never answered, so it may hold locked rows. Those can't delete
   // anything, so these rows are safe to free now, and the alarm keeps telling it.
-  giveUpMoveOut(moveId: string, tryAt: number): void {
+  giveUpMoveOut(moveId: string, now: number): void {
     this.#db.transaction(() => {
+      this.#noteSetback(moveId, { status: "noAnswer" }, now);
       this.#unlock(moveId);
       this.#db.exec(
         "UPDATE moves_out SET phase = 'abandoning', try_at = ? WHERE id = ? AND phase = 'sending'",
-        tryAt,
+        now,
         moveId,
       );
     });

@@ -151,7 +151,7 @@ export function ItemActions({
               message:
                 outcome === "moved"
                   ? `"${item.name}" moved to ${placeName}.`
-                  : `"${item.name}" is on its way to ${placeName}. This can take a minute, and you don't need to wait.`,
+                  : `"${item.name}" is on its way to ${placeName}. This can take a minute, and you don't need to wait. If it can't move, you'll see why here.`,
             });
           }}
           onClose={() => setDialog(null)}

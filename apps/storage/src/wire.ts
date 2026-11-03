@@ -223,6 +223,13 @@ export const parseDriveInput = (raw: unknown) => ({
   driveId: requireDriveId(record(raw).driveId),
 });
 
+export function parseMoveNoticeInput(raw: unknown) {
+  const { moveId } = record(raw);
+  // A move's id is a UUID, the same shape as an item's.
+  if (typeof moveId !== "string" || !parseItemId(moveId)) throw badRequest();
+  return { ...parseDriveInput(raw), moveId };
+}
+
 export function parseAddMembersInput(raw: unknown) {
   const input = record(raw);
   return {

@@ -1,8 +1,13 @@
 import type { DriveId, UserId } from "@cloudysuite/access";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { driveShares, drives, orgSettings } from "../../../src/db/schema";
-import type { ShareIndexWrite, Usage } from "./store";
+import {
+  driveMoveNotices,
+  driveShares,
+  drives,
+  orgSettings,
+} from "../../../src/db/schema";
+import type { NoticeIndexWrite, ShareIndexWrite, Usage } from "./store";
 
 // Absolute values, so writing the same usage twice changes nothing.
 export async function writeDriveUsage(
@@ -88,6 +93,35 @@ export async function writeShareIndex(
               eq(driveShares.userId, userId as UserId),
               eq(driveShares.driveId, driveId),
               eq(driveShares.itemId, itemId),
+            ),
+          ),
+  );
+  if (first) await db.batch([first, ...rest]);
+}
+
+// The same rules as writeShareIndex, for which drives hold a note for a person.
+export async function writeNoticeIndex(
+  database: D1Database,
+  driveId: DriveId,
+  writes: readonly NoticeIndexWrite[],
+): Promise<void> {
+  const db = drizzle(database);
+  const [first, ...rest] = writes.map(({ moveId, userId, present }) =>
+    present
+      ? db.run(
+          sql`INSERT INTO drive_move_notices (user_id, drive_id, move_id)
+              SELECT ${userId}, ${driveId}, ${moveId}
+              WHERE EXISTS (SELECT 1 FROM user WHERE id = ${userId})
+                AND EXISTS (SELECT 1 FROM drives WHERE id = ${driveId})
+              ON CONFLICT DO NOTHING`,
+        )
+      : db
+          .delete(driveMoveNotices)
+          .where(
+            and(
+              eq(driveMoveNotices.userId, userId as UserId),
+              eq(driveMoveNotices.driveId, driveId),
+              eq(driveMoveNotices.moveId, moveId),
             ),
           ),
   );

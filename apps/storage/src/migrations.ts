@@ -182,4 +182,24 @@ export const MIGRATIONS: Migrations = [
     ) WITHOUT ROWID`,
     `CREATE INDEX stars_on_item ON stars(item_id)`,
   ],
+  [
+    // Null for a move that started before this, which has nobody to tell.
+    `ALTER TABLE moves_out ADD COLUMN moved_by TEXT`,
+    // Written in the transaction that ends the move, so a retry can't lose or repeat it.
+    // index_due_at says D1's drive_move_notices still needs telling, and what to write is
+    // read from dismissed when the write runs. A dismissed row goes once D1 has dropped it.
+    `CREATE TABLE move_notices (
+      move_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      setback TEXT NOT NULL CHECK (setback IN ('nameTaken', 'noDestination', 'folderBusy', 'overLimit', 'noAnswer')),
+      bytes INTEGER,
+      noted_at INTEGER NOT NULL,
+      dismissed INTEGER NOT NULL DEFAULT 0 CHECK (dismissed IN (0, 1)),
+      index_due_at INTEGER,
+      CHECK ((setback = 'overLimit') = (bytes IS NOT NULL))
+    ) WITHOUT ROWID`,
+    `CREATE INDEX move_notices_for_person ON move_notices(user_id, noted_at)`,
+  ],
 ];

@@ -433,3 +433,25 @@ export const driveShares = sqliteTable(
     index("drive_shares_drive_id_idx").on(table.driveId),
   ],
 );
+
+// Which drives hold a note for a person about a move that didn't happen, so every page
+// can show it without waking any other drive. Like drive_shares, it holds no names, and
+// the Drive object writes each row from its own notes.
+export const driveMoveNotices = sqliteTable(
+  "drive_move_notices",
+  {
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    driveId: text("drive_id")
+      .$type<DriveId>()
+      .notNull()
+      .references(() => drives.id, { onDelete: "cascade" }),
+    moveId: text("move_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.driveId, table.moveId] }),
+    index("drive_move_notices_drive_id_idx").on(table.driveId),
+  ],
+);

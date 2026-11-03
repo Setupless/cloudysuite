@@ -19,6 +19,7 @@ import type { ItemId } from "../types";
 import type { Destination } from "./upload-queue";
 import { destinationName } from "./upload-queue";
 import { focusDetails } from "./details-focus";
+import { MoveNotices } from "./move-notices";
 import { useUploads } from "./uploads-context";
 
 export function FolderLink({
@@ -113,13 +114,17 @@ export function PageTop({
   title: string;
   children?: ReactNode;
 }) {
+  // Every page has this, so a person sees why a move didn't happen wherever they are.
   return (
-    <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5">
-      <h1 className="mr-auto min-w-0 text-[21px] font-semibold break-words">
-        {title}
-      </h1>
-      {children}
-    </div>
+    <>
+      <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5">
+        <h1 className="mr-auto min-w-0 text-[21px] font-semibold break-words">
+          {title}
+        </h1>
+        {children}
+      </div>
+      <MoveNotices />
+    </>
   );
 }
 
