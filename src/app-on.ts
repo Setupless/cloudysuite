@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { appSettings } from "./db/schema";
-import type { ToggleableApp } from "./routing";
+import { APP_OFF_HEADER, type ToggleableApp } from "./routing";
 
 const OFF_MESSAGE: Record<ToggleableApp, string> = {
   mail: "An admin turned Mail off. Your mail is safe, and it comes back when it's turned on again.",
@@ -23,7 +23,7 @@ export async function isAppOff(
 export const appOffRefusal = (app: ToggleableApp) =>
   new Response(JSON.stringify({ message: OFF_MESSAGE[app] }), {
     status: 403,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", [APP_OFF_HEADER]: app },
   });
 
 // The hostname router can't do this alone. A server function answers on every app's

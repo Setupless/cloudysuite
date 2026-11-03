@@ -70,6 +70,13 @@ export const OFFLINE_SHELL_PATH = "/offline-shell";
 // that page carries the signed-in person's details.
 export const DEVICE_SESSION_PATH = "/pwa/session";
 
+// Names the app on a refusal because that app is off. It is a 403 like losing access,
+// and a device must not forget its saved mail for it.
+export const APP_OFF_HEADER = "CloudySuite-App-Off";
+
+export const isAppOffRefusal = (thrown: unknown, app: ToggleableApp) =>
+  thrown instanceof Response && thrown.headers.get(APP_OFF_HEADER) === app;
+
 export function gate(route: HostRoute, request: Request): Gate {
   const { pathname } = new URL(request.url);
   switch (route.kind) {
