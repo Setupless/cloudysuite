@@ -11,6 +11,9 @@ const SEARCH_LINES_PER_DRIVE = 50;
 const SEARCH_LINES_SHOWN = 100;
 const STARRED_PER_DRIVE = 200;
 const STARRED_SHOWN = 200;
+// Long enough for a Drive object that has to wake first, short enough that stuck drives
+// can't leave the page waiting with no results. It covers asking all of them, not each one.
+const DRIVES_DEADLINE_MS = 5_000;
 
 // Null name for a drive this person isn't on, whose name they must not learn.
 type DriveToAsk = { driveId: DriveId; name: string | null };
@@ -44,29 +47,57 @@ async function drivesToAsk(
   ];
 }
 
-// One drive failing doesn't fail the rest. Being refused isn't a failure: it means this
-// person has no access any more, so there is nothing of theirs to show.
-async function askEach<Line>(
+// Being refused means this person has no access any more, so there is nothing of theirs to
+// show. A drive that fails, answers after the deadline, or isn't reached by then is missing.
+type Outcome<Answer> = { answer: Answer } | "refused" | "missing";
+
+async function askEach<Answer>(
   list: readonly DriveToAsk[],
   open: OpenDrive,
-  ask: (drive: DriveClient, entry: DriveToAsk) => Promise<Line[]>,
-): Promise<{ lines: Line[]; incomplete: boolean }> {
-  const lines: Line[] = [];
-  let incomplete = false;
+  ask: (drive: DriveClient, entry: DriveToAsk) => Promise<Answer>,
+): Promise<{ answers: Answer[]; incomplete: boolean }> {
+  const outcomes: Outcome<Answer>[] = list.map(() => "missing");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), DRIVES_DEADLINE_MS);
+  });
   let next = 0;
   const worker = async () => {
-    for (let entry = list[next++]; entry; entry = list[next++]) {
+    for (let index = next++; index < list.length; index = next++) {
+      const entry = list[index]!;
       try {
-        lines.push(...(await ask(await open(entry.driveId), entry)));
+        const outcome = await Promise.race([
+          open(entry.driveId)
+            .then((drive) => ask(drive, entry))
+            .then((answer) => ({ answer })),
+          late,
+        ]);
+        if (outcome === "late") return;
+        outcomes[index] = outcome;
       } catch (thrown) {
-        if (thrown instanceof Response && thrown.status === 403) continue;
-        console.error("Could not read one drive.", thrown);
-        incomplete = true;
+        if (thrown instanceof Response && thrown.status === 403) {
+          outcomes[index] = "refused";
+        } else {
+          console.error("Could not read one drive.", thrown);
+        }
       }
     }
   };
-  await Promise.all(Array.from({ length: DRIVES_AT_ONCE }, worker));
-  return { lines, incomplete };
+  try {
+    await Promise.all(Array.from({ length: DRIVES_AT_ONCE }, worker));
+  } finally {
+    clearTimeout(timer);
+  }
+  const missing = outcomes.filter((outcome) => outcome === "missing").length;
+  if (missing > 0) {
+    console.error(`Answered without ${missing} of ${list.length} drives.`);
+  }
+  return {
+    answers: outcomes.flatMap((outcome) =>
+      typeof outcome === "object" ? [outcome.answer] : [],
+    ),
+    incomplete: missing > 0,
+  };
 }
 
 export type SearchRow = SearchLine & {
@@ -89,24 +120,29 @@ export async function searchDrives(
   open: OpenDrive,
   text: string,
 ): Promise<SearchAnswer> {
-  let more = false;
-  const { lines, incomplete } = await askEach(
+  const { answers, incomplete } = await askEach(
     await drivesToAsk(database, me),
     open,
     async (drive, { driveId, name }) => {
       const found = await drive.search(text, SEARCH_LINES_PER_DRIVE);
-      more ||= found.more;
-      return found.lines.map((line): SearchRow => ({
-        ...line,
-        driveId,
-        driveName: name,
-      }));
+      return {
+        more: found.more,
+        rows: found.lines.map((line): SearchRow => ({
+          ...line,
+          driveId,
+          driveName: name,
+        })),
+      };
     },
   );
-  const sorted = lines.sort((a, b) => b.item.changedAt - a.item.changedAt);
+  const sorted = answers
+    .flatMap((answer) => answer.rows)
+    .sort((a, b) => b.item.changedAt - a.item.changedAt);
   return {
     rows: sorted.slice(0, SEARCH_LINES_SHOWN),
-    more: more || sorted.length > SEARCH_LINES_SHOWN,
+    more:
+      answers.some((answer) => answer.more) ||
+      sorted.length > SEARCH_LINES_SHOWN,
     incomplete,
   };
 }
@@ -118,7 +154,7 @@ export async function starredAcrossDrives(
   me: UserId,
   open: OpenDrive,
 ): Promise<{ rows: StarredRow[]; incomplete: boolean }> {
-  const { lines, incomplete } = await askEach(
+  const { answers, incomplete } = await askEach(
     await drivesToAsk(database, me),
     open,
     async (drive, { driveId }) =>
@@ -128,7 +164,8 @@ export async function starredAcrossDrives(
       })),
   );
   return {
-    rows: lines
+    rows: answers
+      .flat()
       .sort((a, b) => b.starredAt - a.starredAt)
       .slice(0, STARRED_SHOWN),
     incomplete,
