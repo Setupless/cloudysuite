@@ -47,7 +47,11 @@ export async function createStorageTest() {
   const { sqlite: directory, d1 } = createTestDatabase();
   const bucket = new FakeBucket();
   const instances = new Map<string, Instance>();
-  const d1Failures = { usageWrites: false, shareIndex: false };
+  const d1Failures = {
+    usageWrites: false,
+    shareIndex: false,
+    moveNotices: false,
+  };
 
   const database = new Proxy(d1, {
     get(target, property) {
@@ -57,6 +61,12 @@ export async function createStorageTest() {
           throw new Error("D1 is unavailable");
         }
         if (d1Failures.shareIndex && /drive_shares/i.test(query)) {
+          throw new Error("D1 is unavailable");
+        }
+        if (
+          d1Failures.moveNotices &&
+          /^\s*(insert|delete)\b[\s\S]*drive_move_notices/i.test(query)
+        ) {
           throw new Error("D1 is unavailable");
         }
         return target.prepare(query);
