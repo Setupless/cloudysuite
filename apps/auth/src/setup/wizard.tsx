@@ -1,4 +1,4 @@
-import { Button, TextField } from "@cloudysuite/ui";
+import { Button, Spinner, TextField } from "@cloudysuite/ui";
 import {
   type Icon,
   IconAlertTriangle,
@@ -8,7 +8,6 @@ import {
   IconCloud,
   IconExternalLink,
   IconKey,
-  IconLoader2,
   IconRefresh,
 } from "@tabler/icons-react";
 import {
@@ -378,12 +377,8 @@ function TokenStage({
                 spellCheck={false}
                 required
               />
-              <Button
-                type="submit"
-                disabled={pending}
-                icon={pending ? IconLoader2 : undefined}
-              >
-                {pending ? "Checking your token" : "Continue"}
+              <Button type="submit" pending={pending}>
+                Continue
               </Button>
             </form>
             <p className="text-sm text-secondary">
@@ -497,7 +492,11 @@ function DomainStage({
         ))}
       </div>
       {pending && (
-        <p className="text-sm text-secondary">
+        <p
+          role="status"
+          className="flex items-center gap-2 text-sm text-secondary"
+        >
+          <Spinner />
           Looking at this domain's settings…
         </p>
       )}
@@ -599,10 +598,23 @@ function DomainStage({
   );
 }
 
-type StepView = StepResult | { state: "working" } | { state: "unknown" };
+// A step being worked keeps showing what it last said, so its guide and
+// buttons stay in place while it runs.
+type StepView =
+  | StepResult
+  | { state: "working"; was: StepResult | null }
+  | { state: "unknown" };
+
+type Running =
+  | "first-check"
+  | "check-all"
+  | "set-up"
+  | "retry"
+  | `check:${StepId}`
+  | `confirm:${StepId}`;
 
 const STATE_ICON: Record<
-  StepView["state"],
+  Exclude<StepView["state"], "working">,
   { icon: Icon; className: string; label: string }
 > = {
   done: { icon: IconCircleCheck, className: "text-success", label: "Done" },
@@ -622,13 +634,31 @@ const STATE_ICON: Record<
     label: "Needs your decision",
   },
   failed: { icon: IconCircleX, className: "text-danger", label: "Didn't work" },
-  working: {
-    icon: IconLoader2,
-    className: "animate-spin text-accent",
-    label: "Working",
-  },
   unknown: { icon: IconCircle, className: "text-secondary", label: "Checking" },
 };
+
+function StepIcon({ view }: { view: StepView }) {
+  if (view.state === "working") {
+    return (
+      <span
+        role="img"
+        aria-label="Working"
+        className="mt-0.5 flex size-[22px] shrink-0 items-center justify-center text-accent"
+      >
+        <Spinner size={22} />
+      </span>
+    );
+  }
+  const { icon: StateIcon, className, label } = STATE_ICON[view.state];
+  return (
+    <StateIcon
+      size={22}
+      stroke={1.75}
+      className={`mt-0.5 shrink-0 ${className}`}
+      aria-label={label}
+    />
+  );
+}
 
 const RETRY_MS = 5000;
 const MAX_RETRIES = 12;
@@ -652,7 +682,7 @@ function StepsStage({
   );
   const [plan, setPlan] = useState<DomainPlan | null>(null);
   const [error, setError] = useState<SetupError | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [running, setRunning] = useState<Running | null>("first-check");
   const retries = useRef(0);
 
   async function callStep(
@@ -660,7 +690,21 @@ function StepsStage({
     mode: StepMode,
     confirmReplace?: string,
   ): Promise<StepResult | null> {
-    setViews((current) => ({ ...current, [stepId]: { state: "working" } }));
+    setViews((current) => {
+      const was = current[stepId];
+      return {
+        ...current,
+        [stepId]: {
+          state: "working",
+          was:
+            was.state === "working"
+              ? was.was
+              : was.state === "unknown"
+                ? null
+                : was,
+        },
+      };
+    });
     const outcome = await call<StepResponse>({
       action: "step",
       claim,
@@ -683,22 +727,23 @@ function StepsStage({
     return outcome.result;
   }
 
-  async function checkAll() {
-    setBusy(true);
+  async function checkAll(key: Running) {
+    setRunning(key);
     setError(null);
     for (const stepId of STEP_IDS) {
       const result = await callStep(stepId, "check");
       if (!result) break;
     }
-    setBusy(false);
+    setRunning(null);
   }
 
   async function runFrom(
+    key: Running,
     mode: StepMode,
     ids: readonly StepId[],
     confirmed?: { stepId: StepId; current: string },
   ) {
-    setBusy(true);
+    setRunning(key);
     setError(null);
     for (const stepId of ids) {
       if (mode === "run" && views[stepId].state === "done") continue;
@@ -709,11 +754,11 @@ function StepsStage({
       );
       if (result?.state !== "done") break;
     }
-    setBusy(false);
+    setRunning(null);
   }
 
   useEffect(() => {
-    void checkAll();
+    void checkAll("first-check");
   }, []);
 
   const waiting = STEP_IDS.find((id) => {
@@ -722,9 +767,12 @@ function StepsStage({
   });
 
   useEffect(() => {
-    if (!waiting || busy || retries.current >= MAX_RETRIES) return;
+    if (!waiting || running !== null || retries.current >= MAX_RETRIES) return;
     retries.current++;
-    const timer = setTimeout(() => void runFrom("check", [waiting]), RETRY_MS);
+    const timer = setTimeout(
+      () => void runFrom("retry", "check", [waiting]),
+      RETRY_MS,
+    );
     return () => clearTimeout(timer);
   });
 
@@ -744,30 +792,42 @@ function StepsStage({
             key={id}
             id={id}
             view={views[id]}
-            busy={busy}
+            running={running}
             onCheckAgain={() => {
               retries.current = 0;
-              return runFrom("check", [id]);
+              return runFrom(`check:${id}`, "check", [id]);
             }}
             onConfirm={(current) =>
-              runFrom("run", STEP_IDS, { stepId: id, current })
+              runFrom(`confirm:${id}`, "run", STEP_IDS, {
+                stepId: id,
+                current,
+              })
             }
           />
         ))}
       </ul>
       {error && <ErrorBox error={error} />}
-      {anyLeft && !allDone && (
-        <Button disabled={busy} onClick={() => runFrom("run", STEP_IDS)}>
+      {((anyLeft && !allDone) || running === "set-up") && (
+        <Button
+          pending={running === "set-up"}
+          disabled={running !== null}
+          onClick={() => runFrom("set-up", "run", STEP_IDS)}
+        >
           Set up my domain
         </Button>
       )}
       {allDone && plan && (
-        <Button disabled={busy} onClick={() => onDone(plan)}>
+        <Button disabled={running !== null} onClick={() => onDone(plan)}>
           Continue
         </Button>
       )}
-      {error && !busy && (
-        <Button variant="secondary" icon={IconRefresh} onClick={checkAll}>
+      {((error && running === null) || running === "check-all") && (
+        <Button
+          variant="secondary"
+          icon={IconRefresh}
+          pending={running === "check-all"}
+          onClick={() => checkAll("check-all")}
+        >
           Check again
         </Button>
       )}
@@ -777,27 +837,22 @@ function StepsStage({
 
 function StepRow({
   id,
-  view,
-  busy,
+  view: current,
+  running,
   onCheckAgain,
   onConfirm,
 }: {
   id: StepId;
   view: StepView;
-  busy: boolean;
+  running: Running | null;
   onCheckAgain: () => void;
   onConfirm: (current: string) => void;
 }) {
   const { title, description } = STEP_TEXT[id];
-  const { icon: StateIcon, className, label } = STATE_ICON[view.state];
+  const view = current.state === "working" ? (current.was ?? current) : current;
   return (
     <li className="flex gap-3">
-      <StateIcon
-        size={22}
-        stroke={1.75}
-        className={`mt-0.5 shrink-0 ${className}`}
-        aria-label={label}
-      />
+      <StepIcon view={current} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div>
           <p className="font-medium">{title}</p>
@@ -817,7 +872,11 @@ function StepRow({
               is until you choose.
             </p>
             <div>
-              <Button disabled={busy} onClick={() => onConfirm(view.current)}>
+              <Button
+                pending={running === `confirm:${id}`}
+                disabled={running !== null}
+                onClick={() => onConfirm(view.current)}
+              >
                 Replace this rule
               </Button>
             </div>
@@ -836,7 +895,8 @@ function StepRow({
             <Button
               variant="secondary"
               icon={IconRefresh}
-              disabled={busy}
+              pending={running === `check:${id}`}
+              disabled={running !== null}
               onClick={onCheckAgain}
             >
               Check again
@@ -931,12 +991,8 @@ function AdminStage({
           sign up by themselves: after this, people join only when an admin
           invites them.
         </p>
-        <Button
-          type="submit"
-          disabled={pending}
-          icon={pending ? IconLoader2 : undefined}
-        >
-          {pending ? "Finishing setup" : "Finish setup"}
+        <Button type="submit" pending={pending}>
+          Finish setup
         </Button>
       </form>
       {error && <ErrorBox error={error} />}
