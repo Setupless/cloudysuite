@@ -1,4 +1,11 @@
-import { Button, Modal, Notice, SelectField, TextField } from "@cloudysuite/ui";
+import {
+  Button,
+  Modal,
+  Notice,
+  SelectField,
+  Spinner,
+  TextField,
+} from "@cloudysuite/ui";
 import {
   IconArrowDown,
   IconArrowUp,
@@ -290,136 +297,141 @@ function RuleEditor({
   };
 
   return (
-    <Modal title={title} onClose={onCancel}>
-      <form onSubmit={submit} className="flex flex-col gap-3">
-        {problem && <Notice tone="danger">{problem}</Notice>}
-        <TextField
-          label="Name"
-          autoFocus
-          value={draft.name}
-          maxLength={MAX_RULE_NAME_LENGTH}
-          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-        />
-        <SelectField
-          label="When a new message matches"
-          value={draft.match}
-          onChange={(event) =>
-            setDraft({ ...draft, match: event.target.value as "all" | "any" })
-          }
-        >
-          <option value="all">All of these</option>
-          <option value="any">Any of these</option>
-        </SelectField>
-        <div className="flex flex-col gap-2">
-          {draft.conditions.map((condition, index) => (
-            <ConditionRow
-              key={index}
-              condition={condition}
-              addresses={addresses}
-              jevIsSet={jevIsSet}
-              onChange={(next) => setCondition(index, next)}
-              onRemove={
-                draft.conditions.length > 1
-                  ? () =>
-                      setDraft({
-                        ...draft,
-                        conditions: draft.conditions.filter(
-                          (_, at) => at !== index,
-                        ),
-                      })
-                  : undefined
-              }
-            />
-          ))}
-          {needsJev(draft) && (
-            <p className="text-sm text-secondary">
-              New mail this rule needs to check goes to Jev, a third-party
-              service, and the answer can be wrong. If Jev can't answer in time,
-              the description doesn't match and the message arrives as usual.
-            </p>
-          )}
-          {draft.conditions.length < MAX_CONDITIONS && (
-            <div>
-              <Button
-                variant="link"
-                icon={IconPlus}
-                onClick={() =>
-                  setDraft({
-                    ...draft,
-                    conditions: [...draft.conditions, EMPTY_CONDITION],
-                  })
+    <Modal title={title} onClose={onCancel} busy={saving}>
+      <form onSubmit={submit}>
+        <fieldset disabled={saving} className="flex min-w-0 flex-col gap-3">
+          {problem && <Notice tone="danger">{problem}</Notice>}
+          <TextField
+            label="Name"
+            autoFocus
+            value={draft.name}
+            maxLength={MAX_RULE_NAME_LENGTH}
+            onChange={(event) =>
+              setDraft({ ...draft, name: event.target.value })
+            }
+          />
+          <SelectField
+            label="When a new message matches"
+            value={draft.match}
+            onChange={(event) =>
+              setDraft({ ...draft, match: event.target.value as "all" | "any" })
+            }
+          >
+            <option value="all">All of these</option>
+            <option value="any">Any of these</option>
+          </SelectField>
+          <div className="flex flex-col gap-2">
+            {draft.conditions.map((condition, index) => (
+              <ConditionRow
+                key={index}
+                condition={condition}
+                addresses={addresses}
+                jevIsSet={jevIsSet}
+                onChange={(next) => setCondition(index, next)}
+                onRemove={
+                  draft.conditions.length > 1
+                    ? () =>
+                        setDraft({
+                          ...draft,
+                          conditions: draft.conditions.filter(
+                            (_, at) => at !== index,
+                          ),
+                        })
+                    : undefined
                 }
-              >
-                Add a condition
-              </Button>
-            </div>
-          )}
-        </div>
-        <fieldset className="flex flex-col gap-2">
-          <legend className="pb-1.5 text-sm font-medium">Then</legend>
-          <SelectField
-            label="Add a label"
-            value={actions.labelId ?? ""}
-            onChange={(event) =>
-              setActions({
-                labelId: event.target.value
-                  ? (Number(event.target.value) as LabelId)
-                  : null,
-              })
-            }
-          >
-            <option value="">No label</option>
-            {labels.map((label) => (
-              <option key={label.id} value={label.id}>
-                {label.name}
-              </option>
+              />
             ))}
-          </SelectField>
-          <SelectField
-            label="Where it goes"
-            value={actions.move ?? ""}
-            onChange={(event) =>
-              setActions({
-                move: (event.target.value || null) as RuleFolder | null,
-              })
-            }
-          >
-            <option value="">Stay in the inbox</option>
-            {Object.entries(MOVE_NAMES).map(([folder, name]) => (
-              <option key={folder} value={folder}>
-                {name}
-              </option>
-            ))}
-          </SelectField>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="size-4 accent-accent"
-              checked={actions.markRead}
+            {needsJev(draft) && (
+              <p className="text-sm text-secondary">
+                New mail this rule needs to check goes to Jev, a third-party
+                service, and the answer can be wrong. If Jev can't answer in
+                time, the description doesn't match and the message arrives as
+                usual.
+              </p>
+            )}
+            {draft.conditions.length < MAX_CONDITIONS && (
+              <div>
+                <Button
+                  variant="link"
+                  icon={IconPlus}
+                  onClick={() =>
+                    setDraft({
+                      ...draft,
+                      conditions: [...draft.conditions, EMPTY_CONDITION],
+                    })
+                  }
+                >
+                  Add a condition
+                </Button>
+              </div>
+            )}
+          </div>
+          <fieldset className="flex flex-col gap-2">
+            <legend className="pb-1.5 text-sm font-medium">Then</legend>
+            <SelectField
+              label="Add a label"
+              value={actions.labelId ?? ""}
               onChange={(event) =>
-                setActions({ markRead: event.target.checked })
+                setActions({
+                  labelId: event.target.value
+                    ? (Number(event.target.value) as LabelId)
+                    : null,
+                })
               }
-            />
-            Mark as read
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="size-4 accent-accent"
-              checked={actions.star}
-              onChange={(event) => setActions({ star: event.target.checked })}
-            />
-            Add star
-          </label>
+            >
+              <option value="">No label</option>
+              {labels.map((label) => (
+                <option key={label.id} value={label.id}>
+                  {label.name}
+                </option>
+              ))}
+            </SelectField>
+            <SelectField
+              label="Where it goes"
+              value={actions.move ?? ""}
+              onChange={(event) =>
+                setActions({
+                  move: (event.target.value || null) as RuleFolder | null,
+                })
+              }
+            >
+              <option value="">Stay in the inbox</option>
+              {Object.entries(MOVE_NAMES).map(([folder, name]) => (
+                <option key={folder} value={folder}>
+                  {name}
+                </option>
+              ))}
+            </SelectField>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-accent"
+                checked={actions.markRead}
+                onChange={(event) =>
+                  setActions({ markRead: event.target.checked })
+                }
+              />
+              Mark as read
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-accent"
+                checked={actions.star}
+                onChange={(event) => setActions({ star: event.target.checked })}
+              />
+              Add star
+            </label>
+          </fieldset>
+          <div className="flex justify-end gap-2">
+            <Button variant="quiet" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="action" pending={saving}>
+              Save rule
+            </Button>
+          </div>
         </fieldset>
-        <div className="flex justify-end gap-2">
-          <Button variant="quiet" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="action" disabled={saving}>
-            Save rule
-          </Button>
-        </div>
       </form>
     </Modal>
   );
@@ -436,6 +448,7 @@ function RuleCard({
   paused,
   first,
   last,
+  toggling,
   onEdit,
   onToggle,
   onMove,
@@ -447,6 +460,7 @@ function RuleCard({
   paused: boolean;
   first: boolean;
   last: boolean;
+  toggling: boolean;
   onEdit: () => void;
   onToggle: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -472,11 +486,13 @@ function RuleCard({
                 type="checkbox"
                 className="size-4 accent-accent"
                 checked={rule.enabled}
-                disabled={!hasAction(rule.actions)}
+                disabled={!hasAction(rule.actions) || toggling}
+                aria-busy={toggling || undefined}
                 aria-label={`${rule.name} is on`}
                 onChange={onToggle}
               />
               On
+              {toggling && <Spinner size={16} />}
             </label>
             {!first && (
               <IconButton
@@ -516,23 +532,25 @@ function RuleCard({
 
 function ConfirmDelete({
   name,
+  busy,
   onCancel,
   onConfirm,
 }: {
   name: string;
+  busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <Modal title={`Delete the rule "${name}"?`} onClose={onCancel}>
+    <Modal title={`Delete the rule "${name}"?`} onClose={onCancel} busy={busy}>
       <p className="text-sm text-secondary">
         Mail it has already sorted stays where it is.
       </p>
       <div className="flex justify-end gap-2">
-        <Button variant="quiet" autoFocus onClick={onCancel}>
+        <Button variant="quiet" autoFocus disabled={busy} onClick={onCancel}>
           Keep it
         </Button>
-        <Button variant="danger" onClick={onConfirm}>
+        <Button variant="danger" pending={busy} onClick={onConfirm}>
           Delete rule
         </Button>
       </div>
@@ -541,6 +559,8 @@ function ConfirmDelete({
 }
 
 type Editing = { kind: "new" } | { kind: "existing"; rule: Rule } | null;
+// Moving a rule shows at once, so only these wait on the server.
+type RuleWork = { kind: "toggle" | "delete"; id: RuleId };
 
 function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const queryClient = useQueryClient();
@@ -552,6 +572,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const [editing, setEditing] = useState<Editing>(null);
   const [deleting, setDeleting] = useState<Rule | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [working, setWorking] = useState<RuleWork | null>(null);
 
   const rules = rulesData.data?.rules ?? [];
   const addresses = rulesData.data?.addresses ?? [];
@@ -560,14 +581,19 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: mailKeys.rules(mailboxId) });
 
-  const attempt = async (run: () => Promise<unknown>) => {
+  const attempt = async (
+    work: RuleWork | null,
+    run: () => Promise<unknown>,
+  ) => {
     setProblem(null);
+    if (work) setWorking(work);
     try {
       await callAction(run);
     } catch (thrown) {
       setProblem((await asMailFailure(thrown)).message);
     }
     await refresh();
+    if (work) setWorking(null);
   };
 
   const save = async (draft: RuleDraft): Promise<string | null> => {
@@ -582,8 +608,8 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
     } catch (thrown) {
       return (await asMailFailure(thrown)).message;
     }
-    setEditing(null);
     await refresh();
+    setEditing(null);
     return null;
   };
 
@@ -605,7 +631,9 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
         ),
       });
     }
-    void attempt(() => reorderRules({ data: { mailboxId, ruleIds: ids } }));
+    void attempt(null, () =>
+      reorderRules({ data: { mailboxId, ruleIds: ids } }),
+    );
   };
 
   let body: ReactNode;
@@ -642,9 +670,10 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
             paused={!jevIsSet && needsJev(rule)}
             first={index === 0}
             last={index === rules.length - 1}
+            toggling={working?.kind === "toggle" && working.id === rule.id}
             onEdit={() => setEditing({ kind: "existing", rule })}
             onToggle={() =>
-              void attempt(() =>
+              void attempt({ kind: "toggle", id: rule.id }, () =>
                 updateRule({
                   data: {
                     mailboxId,
@@ -719,11 +748,14 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
       {deleting && (
         <ConfirmDelete
           name={deleting.name}
+          busy={working?.kind === "delete" && working.id === deleting.id}
           onCancel={() => setDeleting(null)}
-          onConfirm={() => {
+          onConfirm={async () => {
             const { id } = deleting;
+            await attempt({ kind: "delete", id }, () =>
+              deleteRule({ data: { mailboxId, ruleId: id } }),
+            );
             setDeleting(null);
-            void attempt(() => deleteRule({ data: { mailboxId, ruleId: id } }));
           }}
         />
       )}

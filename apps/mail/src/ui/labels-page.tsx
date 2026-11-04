@@ -1,4 +1,11 @@
-import { Button, Modal, Notice, Section, TextField } from "@cloudysuite/ui";
+import {
+  Button,
+  Modal,
+  Notice,
+  Section,
+  Spinner,
+  TextField,
+} from "@cloudysuite/ui";
 import { IconPlus, IconTag, IconTrash } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useId, useState } from "react";
@@ -55,26 +62,37 @@ function ColourChoice({
 function ConfirmDelete({
   label,
   ruleCount,
+  deleting,
   onCancel,
   onConfirm,
 }: {
   label: LabelSummary;
   ruleCount: number;
+  deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <Modal title={`Delete the label "${label.name}"?`} onClose={onCancel}>
+    <Modal
+      title={`Delete the label "${label.name}"?`}
+      onClose={onCancel}
+      busy={deleting}
+    >
       <p className="text-sm text-secondary">
         The mail stays where it is and only loses this label.
         {ruleCount > 0 &&
           ` ${ruleCount === 1 ? "1 rule adds" : `${ruleCount} rules add`} this label and will stop adding it.`}
       </p>
       <div className="flex justify-end gap-2">
-        <Button variant="quiet" autoFocus onClick={onCancel}>
+        <Button
+          variant="quiet"
+          autoFocus
+          disabled={deleting}
+          onClick={onCancel}
+        >
           Keep it
         </Button>
-        <Button variant="danger" onClick={onConfirm}>
+        <Button variant="danger" pending={deleting} onClick={onConfirm}>
           Delete label
         </Button>
       </div>
@@ -104,16 +122,21 @@ function LabelRow({
   const [confirming, setConfirming] = useState<{ ruleCount: number } | null>(
     null,
   );
+  // Changing the colour shows at once, so it never waits here.
+  const [working, setWorking] = useState<
+    "rename" | "checkDelete" | "delete" | null
+  >(null);
 
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
-    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
-  };
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes }),
+      queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) }),
+    ]);
   const attempt = async (run: () => Promise<unknown>) => {
     onProblem(null);
     try {
       await callAction(run);
-      refresh();
+      await refresh();
       return true;
     } catch (thrown) {
       onProblem((await asMailFailure(thrown)).message);
@@ -131,9 +154,11 @@ function LabelRow({
       return;
     }
     if (clean === label.name) return;
+    setWorking("rename");
     const saved = await attempt(() =>
       updateLabel({ data: { mailboxId, labelId: label.id, name: clean } }),
     );
+    setWorking(null);
     if (!saved) setName(label.name);
   };
 
@@ -151,6 +176,11 @@ function LabelRow({
         }}
         className="min-w-40 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-sm text-text outline-accent hover:border-line focus-visible:outline-2"
       />
+      {working === "rename" && (
+        <span className="flex text-secondary">
+          <Spinner size={16} />
+        </span>
+      )}
       <ColourChoice
         legend={`Colour of the label ${label.name}`}
         value={colour}
@@ -168,9 +198,12 @@ function LabelRow({
         type="button"
         aria-label={`Delete the label ${label.name}`}
         title="Delete label"
+        disabled={working !== null}
+        aria-busy={working === "checkDelete" || undefined}
         onClick={async () => {
           onProblem(isOffline() ? OFFLINE_ACTION_REFUSED : null);
           if (isOffline()) return;
+          setWorking("checkDelete");
           try {
             const { rules } = await queryClient.fetchQuery(
               rulesQuery(mailboxId),
@@ -183,21 +216,29 @@ function LabelRow({
           } catch (thrown) {
             onProblem((await asMailFailure(thrown)).message);
           }
+          setWorking(null);
         }}
-        className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2"
+        className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress"
       >
-        <IconTrash size={18} stroke={1.75} aria-hidden />
+        {working === "checkDelete" ? (
+          <Spinner />
+        ) : (
+          <IconTrash size={18} stroke={1.75} aria-hidden />
+        )}
       </button>
       {confirming && (
         <ConfirmDelete
           label={label}
           ruleCount={confirming.ruleCount}
+          deleting={working === "delete"}
           onCancel={() => setConfirming(null)}
-          onConfirm={() => {
-            setConfirming(null);
-            void attempt(() =>
+          onConfirm={async () => {
+            setWorking("delete");
+            await attempt(() =>
               deleteLabel({ data: { mailboxId, labelId: label.id } }),
             );
+            setWorking(null);
+            setConfirming(null);
           }}
         />
       )}
@@ -212,9 +253,11 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
   const [name, setName] = useState("");
   const [colour, setColour] = useState<LabelColour>("accent");
   const [problem, setProblem] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
+    if (creating) return;
     setProblem(null);
     const clean = cleanLabelName(name);
     if (clean === null) {
@@ -223,7 +266,9 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
       );
       return;
     }
+    setCreating(true);
     if (await createLabel(clean, colour)) setName("");
+    setCreating(false);
   };
 
   return (
@@ -246,7 +291,12 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
           />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ColourChoice legend="Colour" value={colour} onChange={setColour} />
-            <Button type="submit" variant="action" icon={IconPlus}>
+            <Button
+              type="submit"
+              variant="action"
+              icon={IconPlus}
+              pending={creating}
+            >
               Create label
             </Button>
           </div>

@@ -40,7 +40,7 @@ export function SignOut() {
       )}
       <Button
         variant={state === "failed" ? "secondary" : "primary"}
-        disabled={state === "working"}
+        pending={state === "working"}
         onClick={signOut}
       >
         {state === "failed" ? "Try again" : "Sign out"}

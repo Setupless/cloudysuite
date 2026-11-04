@@ -1,4 +1,4 @@
-import { Button, Modal } from "@cloudysuite/ui";
+import { Button, Modal, Spinner } from "@cloudysuite/ui";
 import { IconPlus } from "@tabler/icons-react";
 import { useState } from "react";
 import { cleanLabelName } from "../labels/store";
@@ -21,6 +21,7 @@ export function LabelPicker({
 }) {
   const labels = useLabels(mailboxId);
   const [filter, setFilter] = useState("");
+  const [creating, setCreating] = useState(false);
   const wanted = filter.trim().toLowerCase();
   const matching = labels.filter((label) =>
     label.name.toLowerCase().includes(wanted),
@@ -34,8 +35,10 @@ export function LabelPicker({
     commands.setApplied(threadId, labelId, !applied.includes(labelId));
 
   const createAndApply = async () => {
-    if (!newName) return;
+    if (!newName || creating) return;
+    setCreating(true);
     const created = await commands.create(newName);
+    setCreating(false);
     if (!created) return;
     commands.setApplied(threadId, created.id, true);
     setFilter("");
@@ -85,9 +88,20 @@ export function LabelPicker({
         <button
           type="button"
           onClick={() => void createAndApply()}
-          className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1.5 text-left text-sm text-accent outline-accent hover:bg-field focus-visible:outline-2"
+          disabled={creating}
+          aria-busy={creating || undefined}
+          className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1.5 text-left text-sm text-accent outline-accent hover:bg-field focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress"
         >
-          <IconPlus size={16} stroke={1.75} className="flex-none" aria-hidden />
+          {creating ? (
+            <Spinner size={16} />
+          ) : (
+            <IconPlus
+              size={16}
+              stroke={1.75}
+              className="flex-none"
+              aria-hidden
+            />
+          )}
           <span className="min-w-0 truncate">Create "{newName}"</span>
         </button>
       )}

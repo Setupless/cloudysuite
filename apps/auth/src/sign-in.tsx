@@ -1,6 +1,7 @@
 import { Button, Page, TextField } from "@cloudysuite/ui";
 import { IconCloud, IconKey } from "@tabler/icons-react";
 import { type FormEvent, useState } from "react";
+import { leave } from "./account/use-action";
 import { authClient } from "./client";
 
 type Step = "passkey" | "password" | "code" | "backup-code";
@@ -31,9 +32,7 @@ export function SignIn({ returnTo }: { returnTo: string }) {
     setStep(next);
   }
 
-  function finish() {
-    window.location.assign(returnTo);
-  }
+  const finish = () => leave(returnTo);
 
   async function attempt(action: () => Promise<void>) {
     setError(null);
@@ -61,7 +60,7 @@ export function SignIn({ returnTo }: { returnTo: string }) {
         );
         return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -86,7 +85,7 @@ export function SignIn({ returnTo }: { returnTo: string }) {
         goTo("code");
         return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -109,7 +108,7 @@ export function SignIn({ returnTo }: { returnTo: string }) {
         );
         return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -117,10 +116,14 @@ export function SignIn({ returnTo }: { returnTo: string }) {
     <Page icon={IconCloud} title={STEP_TITLES[step]}>
       {step === "passkey" && (
         <>
-          <Button icon={IconKey} disabled={pending} onClick={signInWithPasskey}>
+          <Button icon={IconKey} pending={pending} onClick={signInWithPasskey}>
             Continue with passkey
           </Button>
-          <Button variant="link" onClick={() => goTo("password")}>
+          <Button
+            variant="link"
+            disabled={pending}
+            onClick={() => goTo("password")}
+          >
             Use a password instead
           </Button>
         </>
@@ -143,10 +146,14 @@ export function SignIn({ returnTo }: { returnTo: string }) {
             autoComplete="current-password"
             required
           />
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" pending={pending}>
             Sign in
           </Button>
-          <Button variant="link" onClick={() => goTo("passkey")}>
+          <Button
+            variant="link"
+            disabled={pending}
+            onClick={() => goTo("passkey")}
+          >
             Use a passkey instead
           </Button>
         </form>
@@ -172,11 +179,12 @@ export function SignIn({ returnTo }: { returnTo: string }) {
               autoFocus
             />
           )}
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" pending={pending}>
             Continue
           </Button>
           <Button
             variant="link"
+            disabled={pending}
             onClick={() => goTo(step === "code" ? "backup-code" : "code")}
           >
             {step === "code"

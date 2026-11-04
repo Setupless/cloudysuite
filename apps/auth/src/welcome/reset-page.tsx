@@ -2,7 +2,7 @@ import { Button, Page, TextField } from "@cloudysuite/ui";
 import { IconKey, IconLink, IconLock } from "@tabler/icons-react";
 import { type FormEvent, useState } from "react";
 import { PASSWORD_HINT } from "../account/password";
-import { useAction } from "../account/use-action";
+import { leave, useAction } from "../account/use-action";
 import type { ResetView } from "../admin/reset";
 import { authClient } from "../client";
 import { SUSPENDED } from "../sign-in";
@@ -37,7 +37,7 @@ export function ResetPage({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const password = String(new FormData(event.currentTarget).get("password"));
-    return run(async () => {
+    return run("set", async () => {
       const outcome = await finishReset({ data: { token, password } });
       if (!outcome.ok) return outcome.message;
       const { error: failure } = await authClient.signIn.email({
@@ -45,7 +45,7 @@ export function ResetPage({
         password,
       });
       if (failure?.code === "BANNED_USER") setSuspended(true);
-      else window.location.assign(failure ? "/sign-in" : "/");
+      else await leave(failure ? "/sign-in" : "/");
     });
   }
 
@@ -67,7 +67,7 @@ export function ResetPage({
           required
           autoFocus
         />
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" pending={pending !== null}>
           Set my password
         </Button>
       </form>

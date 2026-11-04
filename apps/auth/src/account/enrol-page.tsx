@@ -3,6 +3,7 @@ import { IconShieldLock } from "@tabler/icons-react";
 import { useState } from "react";
 import { AddPasskeyForm } from "./passkeys";
 import { AuthenticatorSetup } from "./authenticator";
+import { leave } from "./use-action";
 
 export function EnrolPage({
   returnTo,
@@ -12,7 +13,7 @@ export function EnrolPage({
   signOutHref: string;
 }) {
   const [method, setMethod] = useState<"passkey" | "authenticator">("passkey");
-  const proceed = () => window.location.assign(returnTo);
+  const proceed = () => leave(returnTo);
   return (
     <Page icon={IconShieldLock} title="Add a second way to prove it's you">
       <p className="text-secondary">

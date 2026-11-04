@@ -3,25 +3,35 @@ import { useState } from "react";
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";
 
-// Runs one form's action. It returns a message when the person has something
-// to fix, and nothing when the action worked.
-export function useAction() {
-  const [pending, setPending] = useState(false);
+// Runs a form's actions one at a time. `pending` names the action that is
+// running, so its control can spin while the others wait. An action returns a
+// message when the person has something to fix, and nothing when it worked.
+export function useAction<Key extends string = string>() {
+  const [pending, setPending] = useState<Key | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(action: () => Promise<string | null | void>) {
+  async function run(key: Key, action: () => Promise<string | null | void>) {
     setError(null);
-    setPending(true);
+    setPending(key);
     try {
       setError((await action()) ?? null);
     } catch {
       setError(CANNOT_REACH);
     } finally {
-      setPending(false);
+      setPending(null);
     }
   }
 
   return { pending, error, run };
+}
+
+export type Action<Key extends string> = ReturnType<typeof useAction<Key>>;
+
+// Loads another page. The promise never settles, so an action that awaits it
+// stays pending until the page is gone.
+export function leave(href: string): Promise<never> {
+  window.location.assign(href);
+  return new Promise(() => {});
 }
 
 const TOO_MANY_TRIES = "That's too many tries. Wait a minute, then try again.";

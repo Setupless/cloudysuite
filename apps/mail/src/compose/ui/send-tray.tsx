@@ -1,3 +1,4 @@
+import { Spinner } from "@cloudysuite/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { IconAlertCircle, IconX } from "@tabler/icons-react";
@@ -19,9 +20,9 @@ import { composeKeys, isOnItsWay, outgoingQuery } from "./queries";
 const SENT_NOTE_MS = 6_000;
 
 const TRAY_ACTION =
-  "cursor-pointer font-semibold underline outline-page focus-visible:outline-2";
+  "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline outline-page focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress";
 const NOTICE_ACTION =
-  "cursor-pointer font-semibold text-accent underline outline-accent focus-visible:outline-2";
+  "inline-flex cursor-pointer items-center gap-1.5 font-semibold text-accent underline outline-accent focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress";
 
 const STILL_GOING_OFFLINE =
   "You're offline, so Undo isn't available. This message doesn't need this device and will still go.";
@@ -54,7 +55,9 @@ function useUndoSend(mailboxId: MailboxId) {
   const { openDraft } = useCompose();
   const queryClient = useQueryClient();
   const toast = useToast();
-  return async (job: OutgoingSummary) => {
+  const [undoing, setUndoing] = useState<OutgoingId | null>(null);
+  const undo = async (job: OutgoingSummary) => {
+    setUndoing(job.id);
     try {
       const { undone } = await callAction(() =>
         undoSend({ data: { mailboxId, id: job.id } }),
@@ -74,10 +77,12 @@ function useUndoSend(mailboxId: MailboxId) {
         message: `We couldn't undo that. ${(error as Error).message}`,
       });
     }
-    void queryClient.invalidateQueries({
+    await queryClient.invalidateQueries({
       queryKey: composeKeys.outgoing(mailboxId),
     });
+    setUndoing(null);
   };
+  return { undo, undoing };
 }
 
 function Card({
@@ -139,7 +144,8 @@ export function SendNotices() {
   const toast = useToast();
   const outgoing = useQuery(outgoingQuery(mailboxId));
   const mine = (outgoing.data ?? []).filter((job) => job.sentByViewer);
-  const undo = useUndoSend(mailboxId);
+  const { undo, undoing } = useUndoSend(mailboxId);
+  const [reopening, setReopening] = useState<OutgoingId | null>(null);
   const [dismissed, setDismissed] = useState(readDismissed);
   const offline = useOffline();
 
@@ -152,6 +158,7 @@ export function SendNotices() {
   );
 
   const reopen = async (job: OutgoingSummary) => {
+    setReopening(job.id);
     try {
       await callAction(() =>
         reopenOutgoing({ data: { mailboxId, id: job.id } }),
@@ -163,9 +170,10 @@ export function SendNotices() {
     } catch (error) {
       toast({ tone: "danger", message: (error as Error).message });
     }
-    void queryClient.invalidateQueries({
+    await queryClient.invalidateQueries({
       queryKey: composeKeys.outgoing(mailboxId),
     });
+    setReopening(null);
   };
   const dismiss = (job: OutgoingSummary) => {
     const next = new Set(dismissed).add(job.id);
@@ -192,9 +200,12 @@ export function SendNotices() {
           <button
             type="button"
             className={NOTICE_ACTION}
+            disabled={undoing === waiting.id}
+            aria-busy={undoing === waiting.id || undefined}
             onClick={() => void undo(waiting)}
           >
             Undo
+            {undoing === waiting.id && <Spinner size={14} />}
           </button>
         </Notice>
       )}
@@ -210,9 +221,12 @@ export function SendNotices() {
           <button
             type="button"
             className={NOTICE_ACTION}
+            disabled={reopening === failed.id}
+            aria-busy={reopening === failed.id || undefined}
             onClick={() => void reopen(failed)}
           >
             {failed.state === "unknown" ? "Open as a draft" : "Open draft"}
+            {reopening === failed.id && <Spinner size={14} />}
           </button>
           <button
             type="button"
@@ -280,7 +294,7 @@ export function SendTray() {
     return () => clearTimeout(timer);
   }, [justSentId]);
 
-  const undo = useUndoSend(mailboxId);
+  const { undo, undoing } = useUndoSend(mailboxId);
   const offline = useOffline();
 
   return (
@@ -301,9 +315,12 @@ export function SendTray() {
               <button
                 type="button"
                 className={TRAY_ACTION}
+                disabled={undoing === job.id}
+                aria-busy={undoing === job.id || undefined}
                 onClick={() => void undo(job)}
               >
                 Undo
+                {undoing === job.id && <Spinner size={14} />}
               </button>
             </Card>
           );
