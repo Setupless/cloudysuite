@@ -83,6 +83,17 @@ export const mailKeys = {
     ["mail", mailboxId, "body", messageId] as const,
 };
 
+// A message's content never changes, so a refresh after an action skips the bodies
+// it already holds. A body that failed to load still retries.
+export function refreshMailbox(queryClient: QueryClient, mailboxId: MailboxId) {
+  void queryClient.invalidateQueries({
+    queryKey: mailKeys.all(mailboxId),
+    predicate: (query) =>
+      query.queryKey[2] !== "body" || query.state.status !== "success",
+  });
+  return queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
+}
+
 export const mailboxesQuery = () =>
   queryOptions({
     queryKey: mailKeys.mailboxes,

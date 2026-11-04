@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { IconAlertCircle, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { useOffline } from "../../pwa/connectivity";
-import { callAction, mailKeys } from "../../queries";
+import { callAction, refreshMailbox } from "../../queries";
 import type { MailboxId } from "../../types";
 import { useToast } from "../../ui/toast";
 import { reopenOutgoing, undoSend } from "../functions";
@@ -283,8 +283,7 @@ export function SendTray() {
     const [latest] = finished;
     if (!latest) return;
     setJustSent(latest);
-    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
-    void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
+    void refreshMailbox(queryClient, mailboxId);
   }, [outgoing.data]);
 
   const justSentId = justSent?.id;
