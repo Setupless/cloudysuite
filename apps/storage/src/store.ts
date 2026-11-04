@@ -134,6 +134,8 @@ export type Actor = { userId: UserId; role: DriveRole | null };
 // person can see the whole drive.
 export type Reach = { level: AccessLevel; topId: ItemId | null };
 
+export type StoredFile = { file: FileItem; r2Key: string };
+
 export type ShareIndexWrite = {
   itemId: string;
   userId: string;
@@ -865,13 +867,14 @@ export class DriveStore {
     this.#db.exec("DELETE FROM uploads WHERE id = ?", id);
   }
 
-  r2KeyOf(actor: Actor, id: ItemId): string | null {
-    if (!this.reachOf(actor, id)) return null;
-    const [row] = this.#rows<{ r2_key: string | null }>(
-      "SELECT r2_key FROM items WHERE id = ? AND trash_id IS NULL",
+  storedFile(actor: Actor, id: ItemId): StoredFile | null {
+    const file = this.opened(actor, id)?.item;
+    if (file?.kind !== "file") return null;
+    const [row] = this.#rows<{ r2_key: string }>(
+      "SELECT r2_key FROM items WHERE id = ?",
       id,
     );
-    return row?.r2_key ?? null;
+    return row ? { file, r2Key: row.r2_key } : null;
   }
 
   // R2 calls let other requests run in between, so a stale upload is closed before any

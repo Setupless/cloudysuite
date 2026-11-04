@@ -42,12 +42,13 @@ async function upload(
   name: string,
   parentId: ItemId | null = null,
   drive: DriveClient = kit.drive,
+  mimeType = "image/png",
 ): Promise<FileItem> {
   const started = await drive.uploads.start({
     parentId,
     name,
     size: BYTES.length,
-    mimeType: "image/png",
+    mimeType,
     fingerprint: "print",
   });
   if (!started.ok) throw new Error(started.message);
@@ -294,6 +295,7 @@ test("Can view on the whole drive can read, and every write path refuses", async
   expect((await viewer.list(null, null))?.canEdit).toBe(false);
   expect((await viewer.list(parent.id, null))?.ancestors).toEqual([]);
   expect((await downloadResponse(viewer, secret.id)).status).toBe(200);
+  expect((await previewResponse(viewer, secret.id)).status).toBe(200);
   for (const id of [parent.id, secret.id]) {
     expect(await writesThatGotThrough(viewer, id)).toEqual([]);
   }
@@ -464,6 +466,9 @@ test("moving to another drive ends the shares, and the README's rule holds", asy
 test("everyone in the organisation can view through a link, and never edit", async () => {
   await kit.drive.setEveryone(shared.id, true);
   expect(await bob.file(inner.id)).not.toBeNull();
+  expect((await downloadResponse(bob, inner.id)).status).toBe(200);
+  expect((await previewResponse(bob, inner.id)).status).toBe(200);
+  expect((await previewResponse(bob, secret.id)).status).toBe(404);
   expect((await bob.list(shared.id, null))?.canEdit).toBe(false);
   expect(await bob.file(secret.id)).toBeNull();
   expect((await bob.rename(inner.id, named("x"))).status).toBe("noAccess");
@@ -486,6 +491,18 @@ test("everyone in the organisation can view through a link, and never edit", asy
 
   await kit.drive.setEveryone(shared.id, false);
   expect(await bob.file(inner.id)).toBeNull();
+  expect((await downloadResponse(bob, inner.id)).status).toBe(404);
+  expect((await previewResponse(bob, inner.id)).status).toBe(404);
+});
+
+test("outside a share, a file that can't be shown answers the same as a picture", async () => {
+  await shareWithBob("view");
+  const page = await upload("page.html", sibling.id, kit.drive, "text/html");
+  expect((await previewResponse(kit.drive, page.id)).status).toBe(415);
+  expect((await previewResponse(bob, page.id)).status).toBe(404);
+  expect((await previewResponse(bob, secret.id)).status).toBe(404);
+  const inside = await upload("notes.html", shared.id, kit.drive, "text/html");
+  expect((await previewResponse(bob, inside.id)).status).toBe(415);
 });
 
 test("Shared with me lists direct shares with who and when, and the current name", async () => {
