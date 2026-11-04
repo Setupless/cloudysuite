@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { appSettings } from "./db/schema";
-import { APP_OFF_HEADER, type ToggleableApp } from "./routing";
+import { APP_OFF_HEADER, type Settings, type ToggleableApp } from "./routing";
 
 const OFF_MESSAGE: Record<ToggleableApp, string> = {
   mail: "An admin turned Mail off. Your mail is safe, and it comes back when it's turned on again.",
@@ -28,9 +28,6 @@ export const appOffRefusal = (app: ToggleableApp) =>
 
 // The hostname router can't do this alone. A server function answers on every app's
 // hostname, so with an app off one could still be called through another's.
-export async function assertAppOn(
-  database: D1Database,
-  app: ToggleableApp,
-): Promise<void> {
-  if (await isAppOff(database, app)) throw appOffRefusal(app);
+export function assertAppOn(settings: Settings, app: ToggleableApp): void {
+  if (settings.disabled.has(app)) throw appOffRefusal(app);
 }

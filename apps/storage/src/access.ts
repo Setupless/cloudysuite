@@ -2,13 +2,14 @@ import { env } from "cloudflare:workers";
 import { type DriveId, type UserId } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { assertAppOn } from "../../../src/app-on";
+import { settingsFor } from "../../../src/settings";
 import { openDriveAsPerson } from "./client";
 
 export const NO_ACCESS_MESSAGE =
   "You don't have access to this folder. Ask the person who created it if you need it.";
 
 export async function requireStorageUser(request: Request) {
-  await assertAppOn(env.DB, "storage");
+  assertAppOn(await settingsFor(request, env.DB), "storage");
   return requireReadyUser(request);
 }
 

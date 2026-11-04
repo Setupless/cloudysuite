@@ -1,17 +1,20 @@
 import { expect, test } from "bun:test";
 import { assertAppOn } from "./app-on";
 import { createTestDatabase } from "./db/test-database";
+import type { ToggleableApp } from "./routing";
+import { readSettings } from "./settings";
 
-async function refusalOf(run: Promise<void>) {
-  const refusal = await run.then(
-    () => null,
-    (thrown: unknown) => thrown,
-  );
-  if (!(refusal instanceof Response)) throw refusal ?? new Error("Not off");
-  return {
-    status: refusal.status,
-    message: ((await refusal.json()) as { message: string }).message,
-  };
+async function refusalOf(database: D1Database, app: ToggleableApp) {
+  try {
+    assertAppOn(await readSettings(database), app);
+    return null;
+  } catch (thrown) {
+    if (!(thrown instanceof Response)) throw thrown;
+    return {
+      status: thrown.status,
+      message: ((await thrown.json()) as { message: string }).message,
+    };
+  }
 }
 
 test.each([
@@ -21,16 +24,16 @@ test.each([
   "%s is on until its own row says off, then refused in plain words",
   async (app, other, words) => {
     const { sqlite, d1 } = createTestDatabase();
-    await expect(assertAppOn(d1, app)).resolves.toBeUndefined();
+    expect(await refusalOf(d1, app)).toBeNull();
 
     sqlite.run("INSERT INTO app_settings (app, enabled) VALUES (?, 0)", [
       other,
     ]);
-    await expect(assertAppOn(d1, app)).resolves.toBeUndefined();
+    expect(await refusalOf(d1, app)).toBeNull();
 
     sqlite.run("INSERT INTO app_settings (app, enabled) VALUES (?, 0)", [app]);
-    const refused = await refusalOf(assertAppOn(d1, app));
-    expect(refused.status).toBe(403);
-    expect(refused.message).toContain(words);
+    const refused = await refusalOf(d1, app);
+    expect(refused?.status).toBe(403);
+    expect(refused?.message).toContain(words);
   },
 );

@@ -166,6 +166,7 @@ export async function readViewer(
   auth: ReturnType<typeof createAuth>,
   database: D1Database,
   headers: Headers,
+  { require2fa }: { require2fa: boolean },
 ): Promise<Viewer> {
   const session = await getActiveSession(auth, headers);
   if (!session) return { status: "signed-out" };
@@ -177,7 +178,6 @@ export async function readViewer(
     role: role === "admin" ? "admin" : "user",
   };
   const blocked =
-    (await readRequire2fa(database)) &&
-    !isEnrolled(await readSignInMethods(database, user.id));
+    require2fa && !isEnrolled(await readSignInMethods(database, user.id));
   return { status: blocked ? "must-enrol" : "ready", user };
 }

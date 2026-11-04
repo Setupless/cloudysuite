@@ -1,6 +1,5 @@
-import { env } from "cloudflare:workers";
-import { readViewer, type SessionUser } from "./auth";
-import { getAuth } from "./server";
+import type { SessionUser } from "./auth";
+import { getViewer } from "./server";
 
 function refusal(status: 401 | 403, message: string): Response {
   return new Response(JSON.stringify({ message }), {
@@ -10,8 +9,7 @@ function refusal(status: 401 | 403, message: string): Response {
 }
 
 async function readRefusingSignedOut(request: Request) {
-  const { auth } = await getAuth(request);
-  const viewer = await readViewer(auth, env.DB, request.headers);
+  const viewer = await getViewer(request);
   if (viewer.status === "signed-out") throw refusal(401, "Sign in first.");
   return viewer;
 }

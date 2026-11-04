@@ -5,10 +5,9 @@ import { redirect } from "@tanstack/react-router";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { passkey } from "../../../../src/db/schema";
-import { readViewer } from "../auth";
 import { signedInOnly } from "../middleware";
 import { parseReturnTo, safeReturnUrl, signInUrl } from "../origins";
-import { getAuth } from "../server";
+import { getAuth, getViewer } from "../server";
 import type { SignInMethods } from "../sign-in-methods";
 import { readRequire2fa, readSignInMethods } from "../sign-in-methods-store";
 
@@ -47,11 +46,11 @@ export const prepareEnrol = createServerFn({ method: "GET" })
   .validator(parseReturnTo)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {
     const request = getRequest();
-    const { auth, origins } = await getAuth(request);
+    const { origins } = await getAuth(request);
     const returnTo =
       (data.returnTo && safeReturnUrl(data.returnTo, origins)) ||
       `${origins.auth}/`;
-    const viewer = await readViewer(auth, env.DB, request.headers);
+    const viewer = await getViewer(request);
     if (viewer.status === "signed-out") {
       throw redirect({ href: signInUrl(origins, returnTo) });
     }

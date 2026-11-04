@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { readSettings } from "../../../src/settings";
+import { settingsFor } from "../../../src/settings";
 import {
   addresses,
   type MailboxKind,
@@ -45,21 +45,24 @@ const openFor = (mailboxId: MailboxId) =>
 export const listMailboxes = createServerFn({ method: "GET" }).handler(
   async (): Promise<MailboxEntry[]> => {
     const user = await requireMailUser(getRequest());
-    const rows = await drizzle(env.DB)
-      .select({
-        id: mailboxes.id,
-        kind: mailboxes.kind,
-        name: mailboxes.name,
-        role: mailboxAccess.role,
-      })
-      .from(mailboxAccess)
-      .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
-      .where(eq(mailboxAccess.userId, user.id))
-      .orderBy(asc(mailboxes.kind), asc(mailboxes.name));
-    const primary = await drizzle(env.DB)
-      .select({ mailboxId: addresses.mailboxId, address: addresses.address })
-      .from(addresses)
-      .where(eq(addresses.kind, "primary"));
+    const db = drizzle(env.DB);
+    const [rows, primary] = await db.batch([
+      db
+        .select({
+          id: mailboxes.id,
+          kind: mailboxes.kind,
+          name: mailboxes.name,
+          role: mailboxAccess.role,
+        })
+        .from(mailboxAccess)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
+        .where(eq(mailboxAccess.userId, user.id))
+        .orderBy(asc(mailboxes.kind), asc(mailboxes.name)),
+      db
+        .select({ mailboxId: addresses.mailboxId, address: addresses.address })
+        .from(addresses)
+        .where(eq(addresses.kind, "primary")),
+    ]);
     const addressOf = new Map(
       primary.map((row) => [row.mailboxId, row.address]),
     );
@@ -117,7 +120,7 @@ export const getMessageBody = createServerFn({ method: "GET" })
   .validator(parseMessageInput)
   .handler(async ({ data }) => {
     const mailbox = await openFor(data.mailboxId);
-    const { primaryDomain } = await readSettings(env.DB);
+    const { primaryDomain } = await settingsFor(getRequest(), env.DB);
     // The hostname router sends every request to /setup until a domain is stored.
     if (primaryDomain === null) throw new Error("No primary domain is stored.");
     return renderBody(mailbox, data.messageId, primaryDomain);
