@@ -18,6 +18,7 @@ import {
   unsubscribePush,
 } from "../push/functions";
 import { call } from "../queries";
+import { SkeletonLines } from "../ui/states";
 import { useOffline } from "./connectivity";
 import { DEVICE_CLEARED_PATH } from "./sw-policy";
 import {
@@ -216,6 +217,9 @@ function NotificationsSection() {
   });
 
   const on = setup.data?.subscribed === true;
+  const checking =
+    !offline &&
+    (device.isPending || (device.data?.kind === "ready" && setup.isPending));
   return (
     <Section
       title="Notifications"
@@ -225,6 +229,12 @@ function NotificationsSection() {
         <p className="text-sm text-secondary">
           You're offline. You can change notifications when you're back online.
         </p>
+      )}
+      {checking && (
+        <div>
+          <SkeletonLines rows={1} />
+          <p className="sr-only">Checking notifications on this device.</p>
+        </div>
       )}
       {!offline && device.data?.kind === "unsupported" && (
         <p className="text-sm text-secondary">
@@ -253,7 +263,7 @@ function NotificationsSection() {
             <Button
               variant={on ? "quiet" : "action"}
               icon={on ? IconBellOff : IconBell}
-              disabled={toggle.isPending}
+              pending={toggle.isPending}
               onClick={() => toggle.mutate()}
             >
               {on
