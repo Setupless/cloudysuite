@@ -240,7 +240,9 @@ function AttachmentList({
           key={`${name}-${index}`}
           className="flex max-w-full items-center gap-2 rounded border border-line px-2.5 py-1 text-sm text-secondary"
         >
-          <Spinner size={14} />
+          <span className="flex flex-none">
+            <Spinner size={14} />
+          </span>
           <span className="min-w-0 truncate">{name}</span>
           <span className="flex-none text-xs">Uploading…</span>
         </li>
