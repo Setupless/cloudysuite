@@ -1,22 +1,16 @@
 import type { MailboxId } from "@cloudysuite/access";
 import type { SqlDriver } from "@cloudysuite/object-sql";
 import type { MailboxStore } from "../store";
-import type { Address, AttachmentId } from "../types";
+import type { Address, AttachmentId, MessageId, ThreadId } from "../types";
 import { outgoingPrefix } from "../r2-keys";
 import { holdsSomethingAdded } from "./added";
 import { nextCopyId } from "./copy-id";
 import {
   type AttachmentRow,
-  addressesIn,
-  holdsSomething,
   type OutgoingRow,
   outgoingFiles,
   outgoingRow,
-  parentOf,
-  prefillOf,
   SELECT_ROW,
-  toAttachment,
-  toSummary,
 } from "./rows";
 import type {
   ComposeMode,
@@ -50,6 +44,74 @@ import {
 
 const FINISHED_KEPT_MS = 24 * 60 * 60 * 1000;
 const SENT_NOTE_KEPT_MS = 60 * 60 * 1000;
+const SNIPPET_LENGTH = 140;
+
+const addressesIn = (json: string) => JSON.parse(json) as Address[];
+
+const toAttachment = (row: AttachmentRow): OutgoingAttachment => ({
+  id: row.id,
+  filename: row.filename,
+  mimeType: row.mime_type,
+  size: row.size,
+  carriedFrom: row.carried_from as AttachmentId | null,
+});
+
+const prefillOf = (row: OutgoingRow): DraftPrefill => ({
+  to: addressesIn(row.prefill_to),
+  cc: addressesIn(row.prefill_cc),
+  subject: row.prefill_subject,
+});
+
+const holdsSomething = (row: OutgoingRow) =>
+  holdsSomethingAdded(
+    {
+      content: {
+        to: addressesIn(row.to_addresses),
+        cc: addressesIn(row.cc_addresses),
+        bcc: addressesIn(row.bcc_addresses),
+        subject: row.subject,
+        html: row.html,
+      },
+      uploads: row.upload_count,
+    },
+    prefillOf(row),
+  );
+
+const parentOf = (row: OutgoingRow): ParentFacts | null =>
+  row.parent_message_id === null
+    ? null
+    : {
+        messageId: row.parent_message_id as MessageId,
+        rfcMessageId: row.parent_rfc_id,
+        references: JSON.parse(row.parent_refs) as string[],
+      };
+
+function toSummary(
+  row: OutgoingRow,
+  viewerId: string,
+  now: number,
+): OutgoingSummary {
+  return {
+    id: row.id as OutgoingId,
+    state: row.state,
+    mode: row.mode,
+    to: addressesIn(row.to_addresses),
+    subject: row.subject,
+    snippet: row.body_text.slice(0, SNIPPET_LENGTH),
+    updatedAt: row.updated_at,
+    updatedByName: row.updated_by_name,
+    attachmentCount: row.attachment_count,
+    threadId: row.thread_id === null ? null : (row.thread_id as ThreadId),
+    failure: row.failure,
+    msUntilDue:
+      row.state === "scheduled" && row.due_at !== null
+        ? Math.max(0, row.due_at - now)
+        : null,
+    retrying: row.state === "scheduled" && row.attempts > 0,
+    sentByViewer: row.sent_by === viewerId,
+    isCopy: row.copied_from !== null,
+  };
+}
 
 // Words from a device can ask for a quote that only the row it was written on had.
 const withQuoteOnlyIfHeld = (
@@ -805,10 +867,6 @@ export class OutgoingStore {
         revision: this.#bump(id, editor, session, now),
       };
     });
-  }
-
-  attachmentSizes(id: OutgoingId): number[] {
-    return outgoingFiles(this.#db, id).map((file) => file.size);
   }
 
   suggestions(query: string, limit: number): Address[] {
