@@ -392,7 +392,8 @@ export class Mailbox extends DurableObject<Env> {
       this.#push.nextRunAt(),
     ].filter((time) => time !== null);
     return due.length > 0
-      ? this.ctx.storage.setAlarm(Math.min(...due))
+      ? // The runtime refuses a time of 0, which "due now" in the deletion queue is stored as.
+        this.ctx.storage.setAlarm(Math.max(Math.min(...due), 1))
       : this.ctx.storage.deleteAlarm();
   }
 
