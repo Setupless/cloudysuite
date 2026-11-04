@@ -162,21 +162,22 @@ export function NameDialog({
   }
 
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} busy={pending}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <TextField
           label="Name"
           value={name}
           hint={hint}
           autoFocus
+          disabled={pending}
           onChange={(event) => setName(event.target.value)}
         />
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex justify-end gap-2">
-          <Button variant="toolbar" onClick={onClose}>
+          <Button variant="toolbar" disabled={pending} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="toolbarAction" disabled={pending}>
+          <Button type="submit" variant="toolbarAction" pending={pending}>
             {submitLabel}
           </Button>
         </div>
@@ -201,17 +202,17 @@ export function ConfirmDialog({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} busy={pending}>
       <p className="text-sm text-secondary">{body}</p>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
-        <Button variant="toolbar" onClick={onClose}>
+        <Button variant="toolbar" disabled={pending} onClick={onClose}>
           Cancel
         </Button>
         <Button
           variant="danger"
           icon={IconTrashX}
-          disabled={pending}
+          pending={pending}
           onClick={() => {
             setPending(true);
             setError(null);

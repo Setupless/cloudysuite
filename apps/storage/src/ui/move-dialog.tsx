@@ -13,11 +13,13 @@ function Folders({
   driveId,
   folderId,
   movingId,
+  disabled,
   onOpen,
 }: {
   driveId: DriveId;
   folderId: ItemId | null;
   movingId: ItemId;
+  disabled: boolean;
   onOpen: (id: ItemId | null, name: string | null) => void;
 }) {
   const query = useInfiniteQuery(folderQuery(driveId, folderId));
@@ -37,6 +39,7 @@ function Folders({
         <button
           type="button"
           className={FOLDER_ROW}
+          disabled={disabled}
           onClick={() =>
             onOpen(
               first.folder?.parentId ?? null,
@@ -53,6 +56,7 @@ function Folders({
           key={folder.id}
           type="button"
           className={FOLDER_ROW}
+          disabled={disabled}
           onClick={() => onOpen(folder.id, folder.name)}
         >
           <span className="flex-none text-accent">
@@ -65,7 +69,12 @@ function Folders({
         <p className="py-2 text-sm text-secondary">No folders here yet.</p>
       )}
       {mayHaveMore && (
-        <Button variant="quiet" onClick={() => void query.fetchNextPage()}>
+        <Button
+          variant="quiet"
+          disabled={disabled}
+          pending={query.isFetchingNextPage}
+          onClick={() => void query.fetchNextPage()}
+        >
           Show more
         </Button>
       )}
@@ -74,7 +83,7 @@ function Folders({
 }
 
 const FOLDER_ROW =
-  "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-accent hover:bg-field focus-visible:outline-2";
+  "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-accent not-disabled:hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60";
 
 export function MoveDialog({
   driveId,
@@ -136,10 +145,11 @@ export function MoveDialog({
   }
 
   return (
-    <Modal title={`Move "${item.name}"`} onClose={onClose}>
+    <Modal title={`Move "${item.name}"`} onClose={onClose} busy={pending}>
       <SelectField
         label="Move to"
         value={drive}
+        disabled={pending}
         onChange={(event) => {
           setDrive(event.target.value);
           setFolderId(null);
@@ -164,6 +174,7 @@ export function MoveDialog({
           driveId={drive as DriveId}
           folderId={folderId}
           movingId={item.id}
+          disabled={pending}
           onOpen={(id, name) => {
             setFolderId(id);
             setOpenName(name);
@@ -177,12 +188,13 @@ export function MoveDialog({
       </p>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
-        <Button variant="toolbar" onClick={onClose}>
+        <Button variant="toolbar" disabled={pending} onClick={onClose}>
           Cancel
         </Button>
         <Button
           variant="toolbarAction"
-          disabled={pending || unchanged}
+          disabled={unchanged}
+          pending={pending}
           onClick={() => void submit()}
         >
           Move here
