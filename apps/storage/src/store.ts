@@ -912,7 +912,8 @@ export class DriveStore {
   }
 
   // Taken names are refused rather than numbered, because the person is choosing this
-  // name and can choose another. Only the name's own case can change onto itself.
+  // name and can choose another. Only the name's own case can change onto itself. That
+  // refusal describes the folder around the item, so it needs sight of that folder.
   rename(input: {
     actor: Actor;
     driveId: DriveId;
@@ -925,6 +926,9 @@ export class DriveStore {
       if (!this.#canEdit(actor, id)) return NO_ACCESS;
       const item = this.item(id);
       if (!item) return { status: "gone" };
+      if (!this.reachOf(actor, item.parentId)) {
+        return { status: "folderOutOfReach" };
+      }
       if (this.#isLocked(id)) return { status: "busy" };
       if (
         nameKeyOf(item.name) !== name.nameKey &&

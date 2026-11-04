@@ -353,6 +353,32 @@ test("a stronger share lower down gives edit there and view above it", async () 
   ).toEqual(["Shared"]);
 });
 
+test("renaming what's shared on its own says nothing about the folder around it", async () => {
+  await shareWithBob("edit", inner.id);
+  await shareWithBob("edit", sibling.id);
+  const tries = async () => ({
+    takenFile: (await bob.rename(inner.id, named("sub"))).status,
+    freeFile: (await bob.rename(inner.id, named("Free.png"))).status,
+    takenFolder: (await bob.rename(sibling.id, named("shared"))).status,
+    freeFolder: (await bob.rename(sibling.id, named("Free"))).status,
+  });
+  expect(await tries()).toEqual({
+    takenFile: "folderOutOfReach",
+    freeFile: "folderOutOfReach",
+    takenFolder: "folderOutOfReach",
+    freeFolder: "folderOutOfReach",
+  });
+  expect(await kit.drive.file(inner.id)).toMatchObject({ name: "inner.png" });
+  expect(await kit.drive.item(sibling.id)).toMatchObject({ name: "Sibling" });
+
+  // Seeing the folder around it is enough, even through Can view.
+  await shareWithBob("view", parent.id);
+  expect((await bob.rename(sibling.id, named("shared"))).status).toBe(
+    "nameTaken",
+  );
+  expect((await bob.rename(sibling.id, named("Free"))).status).toBe("renamed");
+});
+
 test("a share covers what's added later, and moving something out ends it", async () => {
   await shareWithBob("view");
   const later = await upload("later.png", sub.id);

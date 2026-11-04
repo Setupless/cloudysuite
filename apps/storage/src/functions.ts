@@ -30,6 +30,7 @@ import {
   NO_SUCH_FOLDER,
   NO_SUCH_ITEM,
   type Person,
+  RENAME_NEEDS_FOLDER,
   type RestoreResult,
   TOO_MANY_TO_MOVE,
   type TrashEntry,
@@ -351,6 +352,8 @@ export const renameItem = createServerFn({ method: "POST" })
         throw noAccess();
       case "nameTaken":
         throw refusal(409, nameTakenMessage(parsed.name));
+      case "folderOutOfReach":
+        throw refusal(403, RENAME_NEEDS_FOLDER);
       case "gone":
         throw refusal(404, NO_SUCH_ITEM);
       case "busy":

@@ -124,14 +124,16 @@ export function ItemActions({
 
   return (
     <>
-      <Button
-        variant="toolbar"
-        icon={IconPencil}
-        disabled={trashing}
-        onClick={() => setDialog("rename")}
-      >
-        Rename
-      </Button>
+      {!(shared && item.parentId === null) && (
+        <Button
+          variant="toolbar"
+          icon={IconPencil}
+          disabled={trashing}
+          onClick={() => setDialog("rename")}
+        >
+          Rename
+        </Button>
+      )}
       <Button
         variant="toolbar"
         icon={IconFolderSymlink}

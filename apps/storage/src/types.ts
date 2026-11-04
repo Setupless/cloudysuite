@@ -158,6 +158,7 @@ export type TrashEntry = {
 export type RenameResult =
   | { status: "renamed"; item: DriveItem }
   | { status: "nameTaken" }
+  | { status: "folderOutOfReach" }
   | { status: "gone" }
   | { status: "busy" }
   | NoAccess;
@@ -195,6 +196,9 @@ export const FOLDER_BUSY = "That folder is being moved. Try again in a minute.";
 export const INTO_ITSELF =
   "A folder can't go inside itself. Choose another folder.";
 export const TOO_MANY_TO_MOVE = `This folder holds more than ${MAX_ITEMS_ACROSS_DRIVES} items, which is too many to move to another team folder in one go. Move the folders inside it one at a time.`;
+
+export const RENAME_NEEDS_FOLDER =
+  "Only people who can open the folder this is in can rename it. Ask the person who shared it with you.";
 
 export const nameTakenMessage = (name: string) =>
   `There's already something called "${name}" here. Choose another name.`;
