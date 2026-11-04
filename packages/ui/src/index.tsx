@@ -84,6 +84,15 @@ export function Spinner({ size = 18 }: { size?: number }) {
   );
 }
 
+export function Working({ children }: { children: ReactNode }) {
+  return (
+    <p role="status" className="flex items-center gap-2 text-sm text-secondary">
+      <Spinner size={16} />
+      {children}
+    </p>
+  );
+}
+
 export function Button({
   variant = "primary",
   icon: ButtonIcon,
@@ -136,7 +145,7 @@ export function TextField({
     <label className="flex w-full flex-col gap-1.5 text-left text-sm font-medium">
       {label}
       <input
-        className="w-full rounded border border-line bg-field px-3 py-2.5 text-base font-normal text-text outline-accent focus-visible:outline-2"
+        className="w-full rounded border border-line bg-field px-3 py-2.5 text-base font-normal text-text outline-accent focus-visible:outline-2 disabled:opacity-60"
         {...props}
       />
       {hint && <span className="font-normal text-secondary">{hint}</span>}
@@ -153,7 +162,7 @@ export function SelectField({
     <label className="flex w-full flex-col gap-1.5 text-left text-sm font-medium">
       {label}
       <select
-        className="w-full rounded border border-line bg-field px-3 py-2.5 text-base font-normal text-text outline-accent focus-visible:outline-2"
+        className="w-full rounded border border-line bg-field px-3 py-2.5 text-base font-normal text-text outline-accent focus-visible:outline-2 disabled:opacity-60"
         {...props}
       >
         {children}
@@ -246,7 +255,12 @@ export function Modal({
   return (
     <dialog
       ref={dialog}
-      onClose={onClose}
+      onClose={() => {
+        // Chromium lets a second Esc close the dialog even when its cancel is
+        // refused, so a busy dialog opens again instead of reporting the close.
+        if (busy) dialog.current?.showModal();
+        else onClose();
+      }}
       onCancel={(event) => {
         if (busy) event.preventDefault();
       }}
