@@ -235,7 +235,7 @@ test("a body over the inline limit goes to R2 and reads back whole", async () =>
   if (result.status !== "stored") throw new Error("expected stored");
 
   const { object, db } = instanceOf(MAILBOX_A);
-  const refs = object.bodyRefs(result.messageId);
+  const refs = object.messageContent(result.messageId)?.body;
   expect(refs).toEqual([
     { kind: "text", r2Key: expect.stringMatching(/body\.text$/) as string },
   ]);
@@ -268,7 +268,7 @@ test("a message that fails parsing is still stored and shown", async () => {
   });
   expect(message!.snippet).toContain("Content-Type");
   expect(bucket.keys()).toHaveLength(1);
-  const [text] = object.bodyRefs(result.messageId);
+  const [text] = object.messageContent(result.messageId)!.body;
   expect(text).toMatchObject({ kind: "text" });
 });
 

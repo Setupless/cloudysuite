@@ -29,13 +29,17 @@ import { type SearchInput, type SearchPage, SearchStore } from "./search/store";
 import { runDuePush } from "./push/job";
 import { announces, PushStore } from "./push/store";
 import type { SqlDriver } from "@cloudysuite/object-sql";
-import { DELETION_SETTLE_MS, MailboxStore, sweepDeletions } from "./store";
+import {
+  DELETION_SETTLE_MS,
+  MailboxStore,
+  type MessageContentRefs,
+  sweepDeletions,
+} from "./store";
 import type {
   AttachmentId,
   AttachmentRef,
   RecentAttachment,
   Address,
-  BodyRef,
   CommitResult,
   Folder,
   LabelColour,
@@ -205,12 +209,8 @@ export class Mailbox extends DurableObject<Env> {
     return this.#store.summary();
   }
 
-  inlineAttachmentRefs(messageId: MessageId): AttachmentRef[] {
-    return this.#store.inlineAttachmentRefs(messageId);
-  }
-
-  bodyRefs(messageId: MessageId): BodyRef[] {
-    return this.#store.bodyRefs(messageId);
+  messageContent(messageId: MessageId): MessageContentRefs | null {
+    return this.#store.messageContent(messageId);
   }
 
   attachmentRef(

@@ -9,11 +9,11 @@ import { rawKey } from "./r2-keys";
 import type { Rule, RuleDraft, RuleId, RuleWrite } from "./rules/types";
 import type { SearchInput, SearchPage } from "./search/store";
 import type { SenderEntry, SenderList, SenderWrite } from "./spam/types";
+import type { MessageContentRefs } from "./store";
 import { mailboxStub } from "./stub";
 import type {
   AttachmentId,
   AttachmentInfo,
-  AttachmentRef,
   Folder,
   LabelColour,
   LabelId,
@@ -60,6 +60,13 @@ export type AttachmentDownload = {
   body: ReadableStream;
 };
 
+export type InlineFile = {
+  info: AttachmentInfo;
+  read(): Promise<ArrayBuffer | null>;
+};
+
+export type MessageContent = { body: MessageBody; inline: InlineFile[] };
+
 export type MailboxClient = {
   summary(): Promise<MailboxSummary>;
   listThreads(query: ThreadQuery): Promise<ThreadPage>;
@@ -88,7 +95,8 @@ export type MailboxClient = {
   restore(selection: MessageSelection): Promise<MessageRef[]>;
   deleteForever(selection: MessageSelection): Promise<number>;
   getBody(messageId: MessageId): Promise<MessageBody | null>;
-  inlineAttachments(messageId: MessageId): Promise<AttachmentInfo[]>;
+  // The inline files are the ones a body can show by content id, in message order.
+  getContent(messageId: MessageId): Promise<MessageContent | null>;
   getAttachment(
     messageId: MessageId,
     attachmentId: AttachmentId,
@@ -117,6 +125,31 @@ export type MailboxClient = {
 // Durable Object and hold up everyone else using the mailbox.
 export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
   const stub = mailboxStub(env, grant.mailboxId);
+  const getContent = async (
+    messageId: MessageId,
+  ): Promise<MessageContent | null> => {
+    const refs = (await stub.messageContent(
+      messageId,
+    )) as MessageContentRefs | null;
+    if (!refs) return null;
+    const body: MessageBody = { text: null, html: null };
+    await Promise.all(
+      refs.body.map(async (part) => {
+        body[part.kind] =
+          "inline" in part
+            ? part.inline
+            : ((await (await env.BUCKET.get(part.r2Key))?.text()) ?? null);
+      }),
+    );
+    return {
+      body,
+      inline: refs.inline.map(({ r2Key, ...info }) => ({
+        info,
+        read: async () =>
+          (await (await env.BUCKET.get(r2Key))?.arrayBuffer()) ?? null,
+      })),
+    };
+  };
   const moveToFolder = async (selection: MessageSelection, folder: Folder) =>
     (await stub.moveToFolder(selection, folder)) as MessageRef[];
 
@@ -144,24 +177,8 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       (await stub.restore(selection)) as MessageRef[],
     deleteForever: (selection) => stub.deleteForever(selection),
 
-    async getBody(messageId) {
-      if ((await stub.storagePrefix(messageId)) === null) return null;
-      const body: MessageBody = { text: null, html: null };
-      for (const part of await stub.bodyRefs(messageId)) {
-        body[part.kind] =
-          "inline" in part
-            ? part.inline
-            : ((await (await env.BUCKET.get(part.r2Key))?.text()) ?? null);
-      }
-      return body;
-    },
-
-    async inlineAttachments(messageId) {
-      const refs = (await stub.inlineAttachmentRefs(
-        messageId,
-      )) as AttachmentRef[];
-      return refs.map(({ r2Key: _, ...info }) => info);
-    },
+    getBody: async (messageId) => (await getContent(messageId))?.body ?? null,
+    getContent,
 
     async getAttachment(messageId, attachmentId) {
       const ref = await stub.attachmentRef(messageId, attachmentId);

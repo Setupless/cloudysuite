@@ -33,7 +33,7 @@ async function setUp() {
   );
   const access = await checkMailboxAccess(d1, alice, MAILBOX_A);
   if (!access.allowed) throw new Error("expected access");
-  const { env } = createTestEnv();
+  const { env, bucket } = createTestEnv();
   const mailbox = openMailbox(env, access.grant);
 
   const deliver = async (lines: string[]) => {
@@ -56,7 +56,7 @@ async function setUp() {
     }
     return result.messageId;
   };
-  return { mailbox, deliver };
+  return { mailbox, deliver, bucket };
 }
 
 const relatedMail = (type: string, html: string, content = PNG_BASE64) => [
@@ -122,6 +122,73 @@ test("a file that lies about being a picture stays an attachment", async () => {
     expect(body.html).toContain(`<img alt="a">`);
     expect(body.embedded).toEqual([]);
   }
+});
+
+const picturesMail = (pictures: { id: string; bytes: Uint8Array }[]) => [
+  'Content-Type: multipart/related; boundary="b"',
+  "",
+  "--b",
+  "Content-Type: text/html",
+  "",
+  pictures.map(({ id }) => `<img src="cid:${id}@x" alt="${id}">`).join(""),
+  ...pictures.flatMap(({ id, bytes }) => [
+    "--b",
+    "Content-Type: image/png",
+    "Content-Transfer-Encoding: base64",
+    `Content-ID: <${id}@x>`,
+    "Content-Disposition: inline",
+    "",
+    Buffer.from(bytes).toString("base64"),
+  ]),
+  "--b--",
+];
+
+const MiB = 1024 * 1024;
+const png = (size: number) => {
+  const bytes = new Uint8Array(size);
+  bytes.set(Buffer.from(PNG_BASE64, "base64"));
+  return bytes;
+};
+
+test("a picture missing from storage stays an attachment, and the rest still show", async () => {
+  const { mailbox, deliver, bucket } = await setUp();
+  const id = await deliver(
+    picturesMail([
+      { id: "gone", bytes: png(100) },
+      { id: "kept", bytes: png(100) },
+    ]),
+  );
+  const [first] = [...bucket.objects.keys()].filter((key) =>
+    key.endsWith("/attachments/0"),
+  );
+  bucket.objects.delete(first!);
+  const body = await renderBody(mailbox, id, DOMAIN);
+  if (body?.kind !== "html") throw new Error("expected html");
+  expect(body.html).toContain(`<img alt="gone">`);
+  expect(body.html).not.toContain(`<img alt="kept">`);
+  expect(body.embedded).toHaveLength(1);
+});
+
+test("pictures fill 8 MiB in message order, and one that lies takes no room", async () => {
+  const { mailbox, deliver } = await setUp();
+  const id = await deliver(
+    picturesMail([
+      { id: "liar", bytes: new Uint8Array(1 * MiB) },
+      { id: "b", bytes: png(2 * MiB) },
+      { id: "c", bytes: png(2 * MiB) },
+      { id: "d", bytes: png(2 * MiB) },
+      { id: "e", bytes: png(1.5 * MiB) },
+      { id: "f", bytes: png(1 * MiB) },
+      { id: "big", bytes: png(2 * MiB + 1) },
+    ]),
+  );
+  const body = await renderBody(mailbox, id, DOMAIN);
+  if (body?.kind !== "html") throw new Error("expected html");
+  const shown = ["liar", "b", "c", "d", "e", "f", "big"].filter(
+    (name) => !body.html.includes(`<img alt="${name}">`),
+  );
+  expect(shown).toEqual(["b", "c", "d", "e"]);
+  expect(body.embedded).toHaveLength(4);
 });
 
 test("an inline file that could hold script is never embedded", async () => {

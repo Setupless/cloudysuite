@@ -75,9 +75,9 @@ test("the client offers no way to add mail or reach the raw stub", async () => {
     "deleteLabel",
     "getAttachment",
     "getBody",
+    "getContent",
     "getRaw",
     "getThread",
-    "inlineAttachments",
     "listRules",
     "listSenders",
     "listThreads",
@@ -112,6 +112,33 @@ test("bodies read back whether stored inline or in R2", async () => {
   );
   expect((await mailbox.getBody(big.messageId))?.text?.trim()).toBe(longBody);
   expect(await mailbox.getBody(999 as never)).toBeNull();
+});
+
+test("a message with both parts in R2 reads back each part as its own", async () => {
+  const { env } = createTestEnv();
+  const mailbox = openMailbox(env, await grantFor(MAILBOX_A));
+  const text = "t".repeat(1_100_000);
+  const html = `<p>${"h".repeat(1_100_000)}</p>`;
+  const raw = toArrayBuffer(
+    [
+      "From: a@example.org",
+      'Content-Type: multipart/alternative; boundary="b"',
+      "",
+      "--b",
+      "Content-Type: text/plain",
+      "",
+      text,
+      "--b",
+      "Content-Type: text/html",
+      "",
+      html,
+      "--b--",
+    ].join("\r\n"),
+  );
+  const { messageId } = await stored(ingest(env, inbound(raw)));
+  const body = await mailbox.getBody(messageId);
+  expect(body?.text?.trim() === text).toBe(true);
+  expect(body?.html?.trim() === html).toBe(true);
 });
 
 test("an attachment and the original message read back, within their message only", async () => {

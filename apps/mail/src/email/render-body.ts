@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { MailboxClient } from "../client";
+import type { InlineFile, MailboxClient } from "../client";
 import type { AttachmentId, AttachmentInfo, MessageId } from "../types";
 import { referencedContentIds, sanitizeEmailHtml } from "./sanitize";
 
@@ -40,33 +40,46 @@ export type RenderedBody =
   | { kind: "tooLong" };
 
 async function readInlineImages(
-  mailbox: MailboxClient,
-  messageId: MessageId,
+  files: InlineFile[],
   wanted: ReadonlySet<string>,
 ) {
-  const images = new Map<string, string>();
-  const attachmentByContentId = new Map<string, AttachmentInfo>();
-  let total = 0;
-  for (const info of await mailbox.inlineAttachments(messageId)) {
-    const contentId = info.contentId as string;
-    const type = info.mimeType.toLowerCase();
+  const candidates = files.flatMap((file) => {
+    const type = file.info.mimeType.toLowerCase();
     const matchesType = Object.hasOwn(INLINE_IMAGE_SIGNATURES, type)
       ? INLINE_IMAGE_SIGNATURES[type]
       : undefined;
-    if (
-      !wanted.has(contentId) ||
-      !matchesType ||
-      info.size > MAX_INLINE_IMAGE_BYTES ||
-      total + info.size > MAX_INLINE_TOTAL_BYTES
-    ) {
-      continue;
-    }
-    const download = await mailbox.getAttachment(messageId, info.id);
-    if (!download) continue;
-    const bytes = new Uint8Array(
-      await new Response(download.body).arrayBuffer(),
-    );
+    return wanted.has(file.info.contentId as string) &&
+      matchesType &&
+      file.info.size <= MAX_INLINE_IMAGE_BYTES
+      ? [{ file, type, matchesType }]
+      : [];
+  });
+
+  // Start every read the loop below makes if each picture proves valid, so they
+  // run together. When one fails, the loop reads a later picture that then fits,
+  // so it picks the same pictures as reading them one at a time.
+  const early = new Map<InlineFile, Promise<ArrayBuffer | null>>();
+  let planned = 0;
+  for (const { file } of candidates) {
+    if (planned + file.info.size > MAX_INLINE_TOTAL_BYTES) continue;
+    planned += file.info.size;
+    const read = file.read();
+    // The loop can skip a read that started here, and its failure is not unhandled.
+    read.catch(() => {});
+    early.set(file, read);
+  }
+
+  const images = new Map<string, string>();
+  const attachmentByContentId = new Map<string, AttachmentInfo>();
+  let total = 0;
+  for (const { file, type, matchesType } of candidates) {
+    const info = file.info;
+    if (total + info.size > MAX_INLINE_TOTAL_BYTES) continue;
+    const buffer = await (early.get(file) ?? file.read());
+    if (!buffer) continue;
+    const bytes = new Uint8Array(buffer);
     if (!matchesType(bytes)) continue;
+    const contentId = info.contentId as string;
     total += info.size;
     images.set(
       contentId,
@@ -89,8 +102,9 @@ export async function renderBody(
   messageId: MessageId,
   ownDomain: string,
 ): Promise<RenderedBody | null> {
-  const body = await mailbox.getBody(messageId);
-  if (!body) return null;
+  const content = await mailbox.getContent(messageId);
+  if (!content) return null;
+  const { body } = content;
   if (!body.html?.trim()) return textBody(body.text);
   if (body.html.length > MAX_RENDERED_CHARACTERS) {
     return body.text ? textBody(body.text) : { kind: "tooLong" };
@@ -98,8 +112,7 @@ export async function renderBody(
 
   try {
     const { images, attachmentByContentId } = await readInlineImages(
-      mailbox,
-      messageId,
+      content.inline,
       await referencedContentIds(body.html),
     );
     const sanitized = await sanitizeEmailHtml(body.html, images, ownDomain);
