@@ -12,9 +12,10 @@ import { isOwnerExpired, type DeviceOwner } from "./offline-model";
 import { setSavedMailReader } from "./saved-mail";
 import { DEVICE_CLEARED_PATH } from "./sw-policy";
 import { saveMailForOffline } from "./sync";
-import { runWhileVisible } from "./while-visible";
+import { runWhileVisible, type VisibleWork } from "./while-visible";
 
 const REFRESH_SAVED_MAIL_MS = 5 * 60 * 1000;
+const FIRST_SAVE_MAX_WAIT_MS = 5_000;
 
 // For a page started by the service worker with no connection: who this device's mail
 // belongs to, if that is still safe to trust. Past that, the clearing page takes over,
@@ -72,6 +73,29 @@ function followColorScheme(): () => void {
   };
 }
 
+// The first save would otherwise put the page's own requests in a queue behind it. The
+// cap is there because a request that never ends must not hold back the owner check.
+function afterPageLoads(client: QueryClient): Promise<void> {
+  return new Promise((resolve) => {
+    let stopWatching = () => {};
+    const done = () => {
+      clearTimeout(cap);
+      stopWatching();
+      resolve();
+    };
+    const cap = setTimeout(done, FIRST_SAVE_MAX_WAIT_MS);
+    const whenIdle = () => {
+      stopWatching();
+      if (typeof requestIdleCallback === "function") requestIdleCallback(done);
+      else setTimeout(done, 0);
+    };
+    if (client.isFetching() === 0) return whenIdle();
+    stopWatching = client.getQueryCache().subscribe(() => {
+      if (client.isFetching() === 0) whenIdle();
+    });
+  });
+}
+
 export function startDevice(user: SignedIn, client: QueryClient): () => void {
   setSavedMailReader(user.id);
   void registerWorker();
@@ -80,10 +104,12 @@ export function startDevice(user: SignedIn, client: QueryClient): () => void {
     if (isOffline()) return;
     if (await confirmOwner(user)) await saveMailForOffline(user.id);
   };
-  const savedMail = runWhileVisible(
-    () => void refresh(),
-    REFRESH_SAVED_MAIL_MS,
-  );
+  let stopped = false;
+  let savedMail: VisibleWork | null = null;
+  void afterPageLoads(client).then(() => {
+    if (stopped) return;
+    savedMail = runWhileVisible(() => void refresh(), REFRESH_SAVED_MAIL_MS);
+  });
 
   // Hidden, this only marks everything out of date, and Query fetches it on return.
   const reconnect = () => {
@@ -91,7 +117,7 @@ export function startDevice(user: SignedIn, client: QueryClient): () => void {
     void client.invalidateQueries({
       refetchType: isPageHidden() ? "none" : "active",
     });
-    savedMail.runSoon();
+    savedMail?.runSoon();
   };
   addEventListener("online", reconnect);
 
@@ -105,7 +131,8 @@ export function startDevice(user: SignedIn, client: QueryClient): () => void {
   const stopListening = onDeviceCleared(() => location.reload());
   const stopColours = followColorScheme();
   return () => {
-    savedMail.stop();
+    stopped = true;
+    savedMail?.stop();
     removeEventListener("online", reconnect);
     removeEventListener("pageshow", restored);
     stopListening();
