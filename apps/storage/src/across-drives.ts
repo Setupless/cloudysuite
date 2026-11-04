@@ -8,6 +8,7 @@ import {
   drives,
 } from "../../../src/db/schema";
 import type { DriveClient } from "./client";
+import type { DriveSearch } from "./search-query";
 import type { MoveNotice, SearchLine, StarredLine } from "./types";
 
 // Workers allows six open connections at once, and the rest of the request needs some.
@@ -123,13 +124,13 @@ export async function searchDrives(
   database: D1Database,
   me: UserId,
   open: OpenDrive,
-  text: string,
+  search: DriveSearch,
 ): Promise<SearchAnswer> {
   const { answers, incomplete } = await askEach(
     await drivesToAsk(database, me),
     open,
     async (drive, { driveId, name }) => {
-      const found = await drive.search(text, SEARCH_LINES_PER_DRIVE);
+      const found = await drive.search(search, SEARCH_LINES_PER_DRIVE);
       return {
         more: found.more,
         rows: found.lines.map((line): SearchRow => ({

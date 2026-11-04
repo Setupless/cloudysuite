@@ -1,3 +1,4 @@
+import type { UserId } from "@cloudysuite/access";
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
@@ -8,7 +9,8 @@ import {
   type StarredRow,
 } from "./across-drives";
 import { noAccess, openDriveAs, requireStorageUser } from "./access";
-import { type People, peopleOf } from "./people-lookup";
+import { type People, peopleMatching, peopleOf } from "./people-lookup";
+import { parseSearch } from "./search-query";
 import { type ItemId, NO_SUCH_ITEM } from "./types";
 import {
   parseDriveInput,
@@ -17,17 +19,45 @@ import {
   refusal,
 } from "./wire";
 
+// A Drive object binds at most 100 values in a statement.
+const MAX_OWNERS = 50;
+
+export type SearchOutcome =
+  | ({ status: "found"; people: People } & SearchAnswer)
+  | { status: "problem"; problem: string };
+
 export const searchEverything = createServerFn({ method: "GET" })
   .validator(parseSearchInput)
-  .handler(async ({ data }): Promise<SearchAnswer & { people: People }> => {
+  .handler(async ({ data }): Promise<SearchOutcome> => {
     const me = await requireStorageUser(getRequest());
+    const parsed = parseSearch(data.text, data.offsetMinutes);
+    if (!parsed.ok) return { status: "problem", problem: parsed.problem };
+    const { owner, ...narrowing } = parsed.query;
+    let owners: UserId[] | null = null;
+    if (owner?.kind === "me") owners = [me.id];
+    else if (owner) {
+      owners = await peopleMatching(env.DB, owner.words);
+      if (owners.length === 0) {
+        return {
+          status: "problem",
+          problem: `No one here is called "${owner.words}". Try part of their name or email address, or owner:me.`,
+        };
+      }
+      if (owners.length > MAX_OWNERS) {
+        return {
+          status: "problem",
+          problem: `Too many people match owner:${owner.words}. Add more of their name.`,
+        };
+      }
+    }
     const answer = await searchDrives(
       env.DB,
       me.id,
       (driveId) => openDriveAs(me.id, driveId),
-      data.text,
+      { ...narrowing, owners },
     );
     return {
+      status: "found",
       ...answer,
       people: await peopleOf(
         env.DB,

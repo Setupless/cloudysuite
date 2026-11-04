@@ -22,6 +22,7 @@ import {
   getSharedWithMe,
 } from "./sharing-functions";
 import { getStarIds, getStarred, searchEverything } from "./search-functions";
+import { parseSearch } from "./search-query";
 import type { ItemId } from "./types";
 
 const CANNOT_REACH =
@@ -180,7 +181,12 @@ export const sharedQuery = () =>
 export const searchQuery = (text: string) =>
   queryOptions({
     queryKey: storageKeys.search(text),
-    queryFn: () => call(() => searchEverything({ data: { text } })),
+    queryFn: () =>
+      call(() =>
+        searchEverything({
+          data: { text, offsetMinutes: new Date().getTimezoneOffset() },
+        }),
+      ),
     placeholderData: keepPreviousData,
   });
 
@@ -232,7 +238,15 @@ export async function prefetchShared() {
 export async function prefetchSearch(text: string) {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
-  if (text.trim() !== "") await client.prefetchQuery(searchQuery(text));
+  // The server doesn't know the reader's time zone, which a date in the search needs.
+  const parsed = parseSearch(text, 0);
+  if (
+    parsed.ok &&
+    parsed.query.changedAfter === null &&
+    parsed.query.changedBefore === null
+  ) {
+    await client.prefetchQuery(searchQuery(text));
+  }
   return dehydrate(client);
 }
 
