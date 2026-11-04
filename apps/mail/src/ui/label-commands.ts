@@ -2,7 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createLabel, type MailboxEntry, setLabel } from "../functions";
 import type { MailListing } from "../model";
 import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
-import { asMailFailure, call, callAction, mailKeys } from "../queries";
+import {
+  asMailFailure,
+  call,
+  callAction,
+  mailKeys,
+  refreshMailbox,
+} from "../queries";
 import {
   patchLabelInDetail,
   patchLabelInPages,
@@ -62,8 +68,7 @@ export function useLabelCommands(mailboxId: MailboxId, listing: MailListing) {
 
   const refresh = () => {
     if (queryClient.isMutating({ mutationKey }) > 1) return;
-    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
-    void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
+    void refreshMailbox(queryClient, mailboxId);
   };
 
   const toggle = useMutation({

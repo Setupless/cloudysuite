@@ -13,7 +13,12 @@ import { flushSync } from "react-dom";
 import { deleteLabel, updateLabel } from "../functions";
 import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "../labels/store";
 import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
-import { asMailFailure, callAction, mailKeys, rulesQuery } from "../queries";
+import {
+  asMailFailure,
+  callAction,
+  refreshMailbox,
+  rulesQuery,
+} from "../queries";
 import {
   LABEL_COLOURS,
   type LabelColour,
@@ -133,10 +138,7 @@ function LabelRow({
   >(null);
 
   // The labels come from the mailbox list, so only that refresh is waited for.
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
-    return queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
-  };
+  const refresh = () => refreshMailbox(queryClient, mailboxId);
   const attempt = async (
     run: () => Promise<unknown>,
   ): Promise<string | null> => {

@@ -9,7 +9,13 @@ import {
 } from "../functions";
 import { type MailListing, MOVE_DISPLAY, type MoveId } from "../model";
 import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
-import { asMailFailure, call, isRefusal, mailKeys } from "../queries";
+import {
+  asMailFailure,
+  call,
+  isRefusal,
+  mailKeys,
+  refreshMailbox,
+} from "../queries";
 import {
   patchFlagsInDetail,
   patchFlagsInPages,
@@ -74,8 +80,7 @@ export function useThreadCommands(mailboxId: MailboxId, listing: MailListing) {
 
   const refreshUnlessBusy = () => {
     if (queryClient.isMutating({ mutationKey }) > 1) return;
-    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
-    void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
+    void refreshMailbox(queryClient, mailboxId);
   };
 
   const undoMove = useMutation({
