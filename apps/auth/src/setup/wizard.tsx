@@ -1,4 +1,4 @@
-import { Button, Spinner, TextField } from "@cloudysuite/ui";
+import { Button, Spinner, TextField, Working } from "@cloudysuite/ui";
 import {
   type Icon,
   IconAlertTriangle,
@@ -491,15 +491,7 @@ function DomainStage({
           </Radio>
         ))}
       </div>
-      {pending && (
-        <p
-          role="status"
-          className="flex items-center gap-2 text-sm text-secondary"
-        >
-          <Spinner />
-          Looking at this domain's settings…
-        </p>
-      )}
+      {pending && <Working>Looking at this domain's settings…</Working>}
       {zone && scan && (
         <div className="flex flex-col gap-3">
           {scan.externalMx.length > 0 && (

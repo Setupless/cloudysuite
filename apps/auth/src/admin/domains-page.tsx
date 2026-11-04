@@ -3,8 +3,8 @@ import {
   Button,
   Notice,
   Section,
-  Spinner,
   TextField,
+  Working,
 } from "@cloudysuite/ui";
 import {
   IconCheck,
@@ -120,13 +120,9 @@ function Guide({
       </ol>
 
       {!checks && pending === "check" && (
-        <p
-          role="status"
-          className="flex items-center gap-2 rounded bg-sidebar p-3 text-sm text-secondary"
-        >
-          <Spinner />
-          Checking {name}…
-        </p>
+        <div className="rounded bg-sidebar p-3">
+          <Working>Checking {name}…</Working>
+        </div>
       )}
       {checks && (
         <ul className="flex flex-col gap-1.5 rounded bg-sidebar p-3">
