@@ -8,6 +8,9 @@ export type RequestPolicy =
   | { kind: "publicFile" }
   // A page holding someone's mail is never saved. Offline gets the anonymous shell.
   | { kind: "page" }
+  // Any other page load, such as a download. The browser has already sent it as the
+  // navigation preload, and letting it pass would send it a second time.
+  | { kind: "preloaded" }
   | { kind: "network" };
 
 export const SHELL_PATH = "/offline-shell";
@@ -27,8 +30,8 @@ export function policyFor(
   if (url.pathname.startsWith("/assets/")) return { kind: "buildAsset" };
   if (publicFiles.has(url.pathname)) return { kind: "publicFile" };
   if (request.mode !== "navigate") return { kind: "network" };
-  if (url.pathname === SHELL_PATH) return { kind: "network" };
+  if (url.pathname === SHELL_PATH) return { kind: "preloaded" };
   return NEVER_A_PAGE.some((prefix) => url.pathname.startsWith(prefix))
-    ? { kind: "network" }
+    ? { kind: "preloaded" }
     : { kind: "page" };
 }
