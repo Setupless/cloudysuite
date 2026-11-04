@@ -9,7 +9,7 @@ import { sharedQuery } from "../queries";
 import { parseItemId } from "../types";
 import { DetailsPanel, NothingChosenPanel } from "./details-panel";
 import { FileTable } from "./file-table";
-import { Breadcrumb, PageTop, Problem } from "./page-parts";
+import { Breadcrumb, LoadingPage, PageTop, Problem } from "./page-parts";
 import { personOf } from "./people";
 
 function Shared({ me, file }: { me: SignedIn; file: string | undefined }) {
@@ -17,7 +17,7 @@ function Shared({ me, file }: { me: SignedIn; file: string | undefined }) {
   const query = useQuery(sharedQuery());
   const selectedId = file ? parseItemId(file) : null;
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingPage title="Shared with me" />;
   const { rows, people } = query.data;
   const selected = rows.find(
     (row) => row.item.kind === "file" && row.item.id === selectedId,

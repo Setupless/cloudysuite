@@ -351,6 +351,65 @@ export function DropZone({
   );
 }
 
+// Faded in late, so a quick load doesn't flash it.
+export function Loading({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="status"
+      className={`${className ?? ""} transition-opacity delay-300 duration-200 starting:opacity-0`}
+    >
+      <span className="sr-only">Loading…</span>
+      {children}
+    </div>
+  );
+}
+
+export const BONE = "animate-pulse rounded bg-field";
+
+const ROW_WIDTHS = ["w-2/5", "w-1/3", "w-1/2", "w-1/4", "w-2/5", "w-1/3"];
+
+export function LoadingRows() {
+  return (
+    <Loading className="flex flex-col px-4 pt-2">
+      {ROW_WIDTHS.map((width, index) => (
+        <span
+          key={index}
+          aria-hidden
+          className="flex items-center gap-[9px] border-b border-line px-0.5 py-[9px]"
+        >
+          <span className={`size-[18px] flex-none ${BONE}`} />
+          <span className={`h-3 ${width} ${BONE}`} />
+        </span>
+      ))}
+    </Loading>
+  );
+}
+
+// For a page whose title comes with its contents.
+export function LoadingPage({ title }: { title?: string }) {
+  return (
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
+      {title === undefined ? (
+        <div aria-hidden className="px-4 pt-3.5 pb-2.5">
+          <span className={`block h-[26px] w-48 ${BONE}`} />
+        </div>
+      ) : (
+        <>
+          <Breadcrumb trail={[]} current={title} />
+          <PageTop title={title} />
+        </>
+      )}
+      <LoadingRows />
+    </div>
+  );
+}
+
 export function Problem({ message }: { message: string }) {
   return (
     <div className="mx-auto mt-16 flex max-w-sm flex-col items-center gap-3 px-4 text-center">

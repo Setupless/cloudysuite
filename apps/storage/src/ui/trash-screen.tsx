@@ -24,7 +24,13 @@ import {
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { useRestore } from "./item-actions";
-import { Breadcrumb, ConfirmDialog, PageTop, Problem } from "./page-parts";
+import {
+  Breadcrumb,
+  ConfirmDialog,
+  LoadingPage,
+  PageTop,
+  Problem,
+} from "./page-parts";
 
 const COLUMNS =
   "grid grid-cols-[minmax(0,1fr)_60px] items-center gap-2.5 sm:grid-cols-[minmax(0,1fr)_110px_84px_60px]";
@@ -154,7 +160,7 @@ function Trash() {
   const [selected, setSelected] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingPage title="Trash" />;
   const { lines, more } = query.data;
   const chosen = lines.find((line) => keyOf(line) === selected);
   const now = new Date();

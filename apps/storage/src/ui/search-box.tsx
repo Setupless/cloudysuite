@@ -1,4 +1,6 @@
+import { Spinner } from "@cloudysuite/ui";
 import { IconSearch, IconX } from "@tabler/icons-react";
+import { useIsFetching } from "@tanstack/react-query";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +19,7 @@ export function SearchBox() {
   const [text, setText] = useState(inAddress);
   const sent = useRef(inAddress);
   const leftAPage = useRef(false);
+  const searching = useIsFetching({ queryKey: ["storage", "search"] }) > 0;
 
   // The address changing by itself is Back, Forward, or opening a result. Text the person
   // is still typing is newer than what was sent, so it stays.
@@ -62,12 +65,13 @@ export function SearchBox() {
         send(text);
       }}
     >
-      <IconSearch
-        size={16}
-        stroke={1.75}
-        className="flex-none text-secondary"
-        aria-hidden
-      />
+      <span className="flex-none text-secondary">
+        {searching ? (
+          <Spinner size={16} />
+        ) : (
+          <IconSearch size={16} stroke={1.75} aria-hidden />
+        )}
+      </span>
       <input
         ref={input}
         type="text"

@@ -31,6 +31,7 @@ import {
   Breadcrumb,
   DropZone,
   FolderLink,
+  LoadingPage,
   PageActions,
   PageTop,
   Problem,
@@ -90,7 +91,7 @@ function Folder({
   });
 
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!first) return null;
+  if (!first) return <LoadingPage />;
 
   const { place } = first;
   const title =
