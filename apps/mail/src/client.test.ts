@@ -218,6 +218,23 @@ test("trash, then delete for good, removes every object and can repeat", async (
   expect(instanceOf(MAILBOX_A).alarm).toBeNull();
 });
 
+test("mail keeps arriving after a message is deleted for good", async () => {
+  const { env } = createTestEnv();
+  const mailbox = openMailbox(env, await grantFor(MAILBOX_A));
+  const gone = await stored(
+    ingest(env, inbound(eml({ messageId: "gone@x", subject: "Gone" }))),
+  );
+  const selection = { messageIds: [gone.messageId] };
+  await mailbox.moveToTrash(selection);
+  expect(await mailbox.deleteForever(selection)).toBe(1);
+
+  await stored(
+    ingest(env, inbound(eml({ messageId: "next@x", subject: "Next" }))),
+  );
+  const inbox = await mailbox.listThreads({ view: { folder: "inbox" } });
+  expect(inbox.threads.map((thread) => thread.subject)).toEqual(["Next"]);
+});
+
 const readsBack = async (stream: ReadableStream | null, raw: ArrayBuffer) =>
   Buffer.from(await new Response(stream).arrayBuffer()).equals(
     Buffer.from(raw),
