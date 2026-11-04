@@ -1,7 +1,8 @@
-import { Button, Modal } from "@cloudysuite/ui";
+import { Button, HEADER_SEARCH, Modal } from "@cloudysuite/ui";
 import { IconHelp, IconSearch, IconX } from "@tabler/icons-react";
-import { useNavigate } from "@tanstack/react-router";
-import { type RefObject, useState } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useRef, useState } from "react";
 import { MAX_SEARCH_LENGTH } from "../search/query";
 import type { MailboxId } from "../types";
 
@@ -48,19 +49,33 @@ function SearchHelp({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function SearchBox({
+export function SearchBox({ mailboxId }: { mailboxId: MailboxId }) {
+  const { view } = useParams({ strict: false });
+  const { q } = useSearch({ strict: false }) as { q?: string };
+  const inAddress = view === "search" ? (q ?? "") : "";
+  return (
+    <SearchForm
+      key={`${mailboxId} ${inAddress}`}
+      mailboxId={mailboxId}
+      initial={inAddress}
+    />
+  );
+}
+
+function SearchForm({
   mailboxId,
   initial,
-  inputRef,
 }: {
   mailboxId: MailboxId;
   initial: string;
-  inputRef: RefObject<HTMLInputElement | null>;
 }) {
   const navigate = useNavigate();
+  const inputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(initial);
   const [helpOpen, setHelpOpen] = useState(false);
   const tooLong = text.length > MAX_SEARCH_LENGTH;
+
+  useHotkey("/", () => inputRef.current?.focus());
 
   const leaveSearch = () =>
     void navigate({
@@ -69,10 +84,10 @@ export function SearchBox({
     });
 
   return (
-    <div className="flex-none px-3 pt-3">
+    <>
       <form
         role="search"
-        className="flex items-center gap-1 rounded border border-line bg-field pl-2.5 outline-accent has-focus-visible:outline-2"
+        className={HEADER_SEARCH}
         onSubmit={(event) => {
           event.preventDefault();
           const query = text.trim();
@@ -132,13 +147,17 @@ export function SearchBox({
         >
           <IconHelp size={16} stroke={1.75} aria-hidden />
         </button>
+        {tooLong && text !== initial && (
+          <p
+            role="alert"
+            className="absolute inset-x-0 top-full z-10 mt-1 rounded border border-line bg-panel px-2.5 py-1.5 text-xs text-danger shadow-lg"
+          >
+            That search is too long. Keep it under {MAX_SEARCH_LENGTH}{" "}
+            characters.
+          </p>
+        )}
       </form>
-      {tooLong && text !== initial && (
-        <p role="alert" className="px-1 pt-1.5 text-xs text-danger">
-          That search is too long. Keep it under {MAX_SEARCH_LENGTH} characters.
-        </p>
-      )}
       {helpOpen && <SearchHelp onClose={() => setHelpOpen(false)} />}
-    </div>
+    </>
   );
 }

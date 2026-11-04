@@ -53,7 +53,6 @@ import { useThreadCommands } from "./commands";
 import { useLabelCommands } from "./label-commands";
 import { LabelPicker } from "./label-picker";
 import { MailViewContext } from "./mail-view-context";
-import { SearchBox } from "./search-box";
 import { FailureNotice, SkeletonLines } from "./states";
 import { IconButton } from "./thread-actions";
 import { LoadMore, ThreadRows } from "./thread-list";
@@ -184,7 +183,6 @@ function MailView({
     (folders: readonly Folder[]) => movesFor(view, folders),
     [view],
   );
-  const searchInput = useRef<HTMLInputElement>(null);
   const [focusedId, setFocusedId] = useState<ThreadId | null>(openThreadId);
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<ThreadId | null>(
@@ -354,7 +352,6 @@ function MailView({
     hotkeys,
   );
   useHotkey("?", () => setHelpOpen(true), hotkeys);
-  useHotkey("/", () => searchInput.current?.focus(), hotkeys);
   useHotkey(
     "L",
     () => {
@@ -430,12 +427,6 @@ function MailView({
             aria-label={title}
             className={`min-w-0 flex-1 flex-col border-line lg:flex lg:w-[370px] lg:flex-none lg:border-r ${openThreadId === null && !panelSession ? "flex" : "max-lg:hidden"}`}
           >
-            <SearchBox
-              key={searching ? view.search : ""}
-              mailboxId={mailboxId}
-              initial={searching ? view.search : ""}
-              inputRef={searchInput}
-            />
             <header className="flex flex-none items-baseline gap-3 px-4 pt-3.5 pb-2.5">
               <h1 className="min-w-0 flex-1 truncate text-[21px] font-semibold">
                 {title}

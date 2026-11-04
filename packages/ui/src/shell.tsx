@@ -36,6 +36,9 @@ export type AppShellProps = {
 export const NAV_ITEM =
   "flex items-center gap-2.5 rounded px-2.5 py-1.5 text-sm text-text outline-accent hover:bg-field focus-visible:outline-2";
 export const NAV_ITEM_ACTIVE = "bg-selected font-semibold hover:bg-selected";
+// Each app's search form in headerContent, so every app's search looks and sits the same.
+export const HEADER_SEARCH =
+  "relative flex min-w-0 flex-1 items-center gap-2 rounded bg-field pl-2.5 outline-accent has-focus-visible:outline-2 md:max-w-[360px]";
 
 const AVATAR_COLOURS = [
   "bg-avatar-1",

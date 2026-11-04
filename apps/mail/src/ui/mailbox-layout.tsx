@@ -33,6 +33,7 @@ import { DEVICE_CLEARED_PATH } from "../pwa/sw-policy";
 import { mailboxesQuery, REFRESH_MS } from "../queries";
 import type { Folder, MailboxId, ThreadView } from "../types";
 import { LabelIcon } from "./label-chip";
+import { SearchBox } from "./search-box";
 
 const FOLDER_ICONS: Record<Folder, Icon> = {
   inbox: IconInbox,
@@ -232,6 +233,7 @@ function MailboxShell({
       user={user}
       signOutHref={offline ? DEVICE_CLEARED_PATH : undefined}
       navigationLabel={current?.name ?? "Mail"}
+      headerContent={<SearchBox mailboxId={mailboxId} />}
       navigation={
         <MailNavigation
           mailboxId={mailboxId}

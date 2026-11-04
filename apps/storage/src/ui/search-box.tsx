@@ -1,4 +1,4 @@
-import { Spinner } from "@cloudysuite/ui";
+import { HEADER_SEARCH, Spinner } from "@cloudysuite/ui";
 import { IconSearch, IconX } from "@tabler/icons-react";
 import { useIsFetching } from "@tanstack/react-query";
 import { useHotkey } from "@tanstack/react-hotkeys";
@@ -59,7 +59,7 @@ export function SearchBox() {
   return (
     <form
       role="search"
-      className="flex min-w-0 flex-1 items-center gap-2 rounded bg-field pl-2.5 outline-accent has-focus-visible:outline-2 md:max-w-[360px]"
+      className={HEADER_SEARCH}
       onSubmit={(event) => {
         event.preventDefault();
         send(text);
