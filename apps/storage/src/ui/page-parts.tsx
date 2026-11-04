@@ -12,6 +12,7 @@ import {
   Fragment,
   type FormEvent,
   type ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -147,6 +148,13 @@ export function NameDialog({
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  // The box is turned off while saving, which takes the person's place away.
+  useEffect(() => {
+    if (pending || !error) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [pending, error]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -165,6 +173,7 @@ export function NameDialog({
     <Modal title={title} onClose={onClose} busy={pending}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <TextField
+          ref={field}
           label="Name"
           value={name}
           hint={hint}
