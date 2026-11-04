@@ -46,7 +46,6 @@ function MoveNotice({ notice }: { notice: MoveNoticeRow }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
 
-  // On success the note leaves the list, so it only stops spinning if it fails.
   async function dismiss() {
     setPending(true);
     try {
@@ -55,10 +54,15 @@ function MoveNotice({ notice }: { notice: MoveNoticeRow }) {
           data: { driveId: notice.driveId, moveId: notice.moveId },
         }),
       );
-      await client.invalidateQueries({ queryKey: storageKeys.moveNotices });
+      // Without this a failed refetch resolves too, and leaves the note up and spinning.
+      await client.invalidateQueries(
+        { queryKey: storageKeys.moveNotices },
+        { throwOnError: true },
+      );
     } catch (failure) {
-      setPending(false);
       toast({ tone: "danger", message: (failure as Error).message });
+    } finally {
+      setPending(false);
     }
   }
 
