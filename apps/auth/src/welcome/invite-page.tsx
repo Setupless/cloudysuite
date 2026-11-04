@@ -1,7 +1,7 @@
 import { Button, Page, TextField } from "@cloudysuite/ui";
 import { IconCloud, IconLink } from "@tabler/icons-react";
 import type { FormEvent } from "react";
-import { useAction } from "../account/use-action";
+import { leave, useAction } from "../account/use-action";
 import { PASSWORD_HINT } from "../account/password";
 import { authClient } from "../client";
 import { acceptInvite } from "./functions";
@@ -28,7 +28,7 @@ export function InvitePage({
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     const password = String(values.get("password"));
-    return run(async () => {
+    return run("create", async () => {
       const outcome = await acceptInvite({
         data: { token, name: String(values.get("name")), password },
       });
@@ -38,7 +38,7 @@ export function InvitePage({
         password,
       });
       // The account exists either way, so signing in by hand still works.
-      window.location.assign(failure ? "/sign-in" : "/");
+      await leave(failure ? "/sign-in" : "/");
     });
   }
 
@@ -66,7 +66,7 @@ export function InvitePage({
           hint={PASSWORD_HINT}
           required
         />
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" pending={pending !== null}>
           Create my account
         </Button>
       </form>

@@ -34,7 +34,7 @@ import { AdminPage } from "./admin-page";
 import type { DriveToClaim } from "./handover";
 import { handedOverName } from "./handover-text";
 import type { InviteRow, PersonRow } from "./people";
-import { StorageLimitForm } from "./storage-limit-form";
+import { type LimitKey, StorageLimitForm } from "./storage-limit-form";
 
 type PeopleView = {
   youId: UserId;
@@ -81,7 +81,7 @@ function InviteForm({ emailDomains }: { emailDomains: string[] }) {
     const local = String(values.get("local") ?? "").trim();
     const domain = String(values.get("domain") ?? "");
     setResult(null);
-    return run(async () => {
+    return run("invite", async () => {
       const outcome = await inviteMember({
         data: {
           email,
@@ -125,7 +125,7 @@ function InviteForm({ emailDomains }: { emailDomains: string[] }) {
             type="submit"
             variant="action"
             icon={IconUserPlus}
-            disabled={pending}
+            pending={pending !== null}
           >
             Send invite
           </Button>
@@ -139,7 +139,7 @@ function InviteForm({ emailDomains }: { emailDomains: string[] }) {
 
 function InviteItem({ invite }: { invite: InviteRow }) {
   const router = useRouter();
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<"resend" | "cancel">();
   const [delivery, setDelivery] = useState<InviteDelivery | null>(null);
 
   return (
@@ -157,9 +157,10 @@ function InviteItem({ invite }: { invite: InviteRow }) {
         <Button
           variant="quiet"
           icon={IconSend}
-          disabled={pending}
+          pending={pending === "resend"}
+          disabled={pending !== null}
           onClick={() =>
-            run(async () => {
+            run("resend", async () => {
               const outcome = await resendInvite({ data: { id: invite.id } });
               if (!outcome.ok) return outcome.message;
               setDelivery(outcome);
@@ -171,9 +172,10 @@ function InviteItem({ invite }: { invite: InviteRow }) {
         </Button>
         <Button
           variant="danger"
-          disabled={pending}
+          pending={pending === "cancel"}
+          disabled={pending !== null}
           onClick={() =>
-            run(async () => {
+            run("cancel", async () => {
               await cancelInvite({ data: { id: invite.id } });
               await router.invalidate();
             })
@@ -252,16 +254,19 @@ const folderCount = (count: number) =>
 function RecipientField({
   value,
   people,
+  disabled,
   onChange,
 }: {
   value: string;
   people: readonly PersonRow[];
+  disabled: boolean;
   onChange: (id: string) => void;
 }) {
   return (
     <SelectField
       label="Who receives their files"
       value={value}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
     >
       <option value="">Choose someone</option>
@@ -292,7 +297,11 @@ function RemoveDialog({
     others.find((other) => other.id === recipientId)?.name ??
     "the person you choose";
   return (
-    <Modal title={`Remove ${person.name}?`} onClose={onClose}>
+    <Modal
+      title={`Remove ${person.name}?`}
+      busy={pending !== null}
+      onClose={onClose}
+    >
       <p className="text-sm text-secondary">
         {person.name}'s account goes away, and they lose access to every
         mailbox. No mail is deleted: their mailbox stays, and you can give
@@ -303,6 +312,7 @@ function RemoveDialog({
           <RecipientField
             value={recipientId}
             people={others}
+            disabled={pending !== null}
             onChange={setRecipientId}
           />
           <p className="text-sm text-secondary">
@@ -325,20 +335,21 @@ function RemoveDialog({
       )}
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
-        <Button variant="quiet" onClick={onClose}>
+        <Button variant="quiet" disabled={pending !== null} onClick={onClose}>
           Go back
         </Button>
         <Button
           variant="danger"
-          disabled={pending || (needsRecipient && recipientId === "")}
+          pending={pending !== null}
+          disabled={needsRecipient && recipientId === ""}
           onClick={() =>
-            run(async () => {
+            run("remove", async () => {
               const outcome = await removeMember({
                 data: { userId: person.id, recipientId: recipientId || null },
               });
               if (!outcome.ok) return outcome.message;
-              onClose();
               await router.invalidate();
+              onClose();
             })
           }
         >
@@ -357,7 +368,7 @@ function PersonActions({
   others: readonly PersonRow[];
 }) {
   const router = useRouter();
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<ActionKey>();
   const [confirming, setConfirming] = useState<ActionKey | null>(null);
   const [removing, setRemoving] = useState(false);
   const [link, setLink] = useState<string | null>(null);
@@ -394,24 +405,29 @@ function PersonActions({
       {action && (
         <Modal
           title={action.title(person.name)}
+          busy={pending !== null}
           onClose={() => setConfirming(null)}
         >
           <p className="text-sm text-secondary">{action.body(person.name)}</p>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
-            <Button variant="quiet" onClick={() => setConfirming(null)}>
+            <Button
+              variant="quiet"
+              disabled={pending !== null}
+              onClick={() => setConfirming(null)}
+            >
               Go back
             </Button>
             <Button
               variant={action.danger ? "danger" : "action"}
-              disabled={pending}
+              pending={pending === confirming}
               onClick={() =>
-                run(async () => {
+                run(confirming, async () => {
                   const outcome = await action.run(person.id);
                   if (!outcome.ok) return outcome.message;
+                  await router.invalidate();
                   if (outcome.link) setLink(outcome.link);
                   setConfirming(null);
-                  await router.invalidate();
                 })
               }
             >
@@ -451,6 +467,7 @@ function myFilesText({ myFiles }: PersonRow): string {
 
 function MyFilesLimit({ person }: { person: PersonRow }) {
   const router = useRouter();
+  const limit = useAction<LimitKey>();
   const [open, setOpen] = useState(false);
   const limitBytes = person.myFiles?.limitBytes ?? null;
   return (
@@ -462,6 +479,7 @@ function MyFilesLimit({ person }: { person: PersonRow }) {
       {open && (
         <Modal
           title={`My files limit for ${person.name}`}
+          busy={limit.pending !== null}
           onClose={() => setOpen(false)}
         >
           <p className="text-sm text-secondary">
@@ -469,6 +487,7 @@ function MyFilesLimit({ person }: { person: PersonRow }) {
             count only towards the organisation's limit.
           </p>
           <StorageLimitForm
+            action={limit}
             label="Limit for My files, in GB"
             limitBytes={limitBytes}
             onChange={async (next) => {
@@ -476,8 +495,8 @@ function MyFilesLimit({ person }: { person: PersonRow }) {
                 data: { userId: person.id, limitBytes: next },
               });
               if (!outcome.ok) return outcome.message;
-              setOpen(false);
               await router.invalidate();
+              setOpen(false);
               return null;
             }}
           />
@@ -542,15 +561,17 @@ function ClaimItem({
       <RecipientField
         value={recipientId}
         people={people}
+        disabled={pending !== null}
         onChange={setRecipientId}
       />
       {error && <Notice tone="danger">{error}</Notice>}
       <div>
         <Button
           variant="action"
-          disabled={pending || recipientId === ""}
+          pending={pending !== null}
+          disabled={recipientId === ""}
           onClick={() =>
-            run(async () => {
+            run("hand-over", async () => {
               const outcome = await handOverDrive({
                 data: { driveId: drive.id, recipientId },
               });

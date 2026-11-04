@@ -16,7 +16,7 @@ export function PasswordSection() {
     const currentPassword = String(values.get("current"));
     const newPassword = String(values.get("next"));
     setChanged(false);
-    return run(async () => {
+    return run("change", async () => {
       const { error: failure } = await authClient.changePassword({
         currentPassword,
         newPassword,
@@ -59,7 +59,7 @@ export function PasswordSection() {
           required
         />
         <div>
-          <Button type="submit" variant="action" disabled={pending}>
+          <Button type="submit" variant="action" pending={pending !== null}>
             Change password
           </Button>
         </div>

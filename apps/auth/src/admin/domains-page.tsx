@@ -1,4 +1,11 @@
-import { Badge, Button, Notice, Section, TextField } from "@cloudysuite/ui";
+import {
+  Badge,
+  Button,
+  Notice,
+  Section,
+  Spinner,
+  TextField,
+} from "@cloudysuite/ui";
 import {
   IconCheck,
   IconQuestionMark,
@@ -48,13 +55,13 @@ function Guide({
 }: {
   name: string;
   onCancel: () => void;
-  onAdded: () => void;
+  onAdded: () => Promise<void>;
 }) {
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<"check" | "add">();
   const [checks, setChecks] = useState<DomainChecks | null>(null);
 
   const check = () =>
-    run(async () => {
+    run("check", async () => {
       const outcome = await checkEmailDomain({ data: { name } });
       if (!outcome.ok) return outcome.message;
       setChecks(outcome.checks);
@@ -112,6 +119,15 @@ function Guide({
         <li>Wait a few minutes, then select Check again.</li>
       </ol>
 
+      {!checks && pending === "check" && (
+        <p
+          role="status"
+          className="flex items-center gap-2 rounded bg-sidebar p-3 text-sm text-secondary"
+        >
+          <Spinner />
+          Checking {name}…
+        </p>
+      )}
       {checks && (
         <ul className="flex flex-col gap-1.5 rounded bg-sidebar p-3">
           <CheckLine
@@ -131,25 +147,27 @@ function Guide({
         <Button
           variant="quiet"
           icon={IconRefresh}
-          disabled={pending}
+          pending={pending === "check"}
+          disabled={pending !== null}
           onClick={check}
         >
           Check again
         </Button>
         <Button
           variant="action"
-          disabled={pending || !ready}
+          pending={pending === "add"}
+          disabled={pending !== null || !ready}
           onClick={() =>
-            run(async () => {
+            run("add", async () => {
               const outcome = await addDomain({ data: { name } });
               if (!outcome.ok) return outcome.message;
-              onAdded();
+              await onAdded();
             })
           }
         >
           Add {name}
         </Button>
-        <Button variant="quiet" onClick={onCancel}>
+        <Button variant="quiet" disabled={pending === "add"} onClick={onCancel}>
           Cancel
         </Button>
       </div>
@@ -215,9 +233,10 @@ export function DomainsPage({
           key={adding}
           name={adding}
           onCancel={() => setAdding(null)}
-          onAdded={() => {
+          onAdded={async () => {
+            await router.invalidate();
             setAdded(adding);
-            void setAdding(null).then(() => router.invalidate());
+            await setAdding(null);
           }}
         />
       ) : (
