@@ -28,8 +28,16 @@ export function useAction<Key extends string = string>() {
 export type Action<Key extends string> = ReturnType<typeof useAction<Key>>;
 
 // Loads another page. The promise never settles, so an action that awaits it
-// stays pending until the page is gone.
+// stays pending until the page is gone. The back button can restore this page
+// with that action still pending, so a restored page loads again.
 export function leave(href: string): Promise<never> {
+  window.addEventListener(
+    "pageshow",
+    (event) => {
+      if (event.persisted) window.location.reload();
+    },
+    { once: true },
+  );
   window.location.assign(href);
   return new Promise(() => {});
 }

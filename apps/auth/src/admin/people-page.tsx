@@ -466,43 +466,56 @@ function myFilesText({ myFiles }: PersonRow): string {
 }
 
 function MyFilesLimit({ person }: { person: PersonRow }) {
-  const router = useRouter();
-  const limit = useAction<LimitKey>();
   const [open, setOpen] = useState(false);
-  const limitBytes = person.myFiles?.limitBytes ?? null;
   return (
     <div className="flex flex-wrap items-center gap-3">
       <p className="flex-1 text-sm text-secondary">{myFilesText(person)}</p>
       <Button variant="quiet" onClick={() => setOpen(true)}>
-        {limitBytes === null ? "Set limit" : "Change limit"}
+        {(person.myFiles?.limitBytes ?? null) === null
+          ? "Set limit"
+          : "Change limit"}
       </Button>
       {open && (
-        <Modal
-          title={`My files limit for ${person.name}`}
-          busy={limit.pending !== null}
-          onClose={() => setOpen(false)}
-        >
-          <p className="text-sm text-secondary">
-            This limits what {person.name} can keep in My files. Team folders
-            count only towards the organisation's limit.
-          </p>
-          <StorageLimitForm
-            action={limit}
-            label="Limit for My files, in GB"
-            limitBytes={limitBytes}
-            onChange={async (next) => {
-              const outcome = await changeMyFilesLimit({
-                data: { userId: person.id, limitBytes: next },
-              });
-              if (!outcome.ok) return outcome.message;
-              await router.invalidate();
-              setOpen(false);
-              return null;
-            }}
-          />
-        </Modal>
+        <MyFilesLimitDialog person={person} onClose={() => setOpen(false)} />
       )}
     </div>
+  );
+}
+
+function MyFilesLimitDialog({
+  person,
+  onClose,
+}: {
+  person: PersonRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const limit = useAction<LimitKey>();
+  return (
+    <Modal
+      title={`My files limit for ${person.name}`}
+      busy={limit.pending !== null}
+      onClose={onClose}
+    >
+      <p className="text-sm text-secondary">
+        This limits what {person.name} can keep in My files. Team folders count
+        only towards the organisation's limit.
+      </p>
+      <StorageLimitForm
+        action={limit}
+        label="Limit for My files, in GB"
+        limitBytes={person.myFiles?.limitBytes ?? null}
+        onChange={async (next) => {
+          const outcome = await changeMyFilesLimit({
+            data: { userId: person.id, limitBytes: next },
+          });
+          if (!outcome.ok) return outcome.message;
+          await router.invalidate();
+          onClose();
+          return null;
+        }}
+      />
+    </Modal>
   );
 }
 

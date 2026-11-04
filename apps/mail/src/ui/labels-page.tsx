@@ -8,7 +8,8 @@ import {
 } from "@cloudysuite/ui";
 import { IconPlus, IconTag, IconTrash } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { deleteLabel, updateLabel } from "../functions";
 import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "../labels/store";
 import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
@@ -62,12 +63,14 @@ function ColourChoice({
 function ConfirmDelete({
   label,
   ruleCount,
+  failure,
   deleting,
   onCancel,
   onConfirm,
 }: {
   label: LabelSummary;
   ruleCount: number;
+  failure: string | null;
   deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -83,6 +86,7 @@ function ConfirmDelete({
         {ruleCount > 0 &&
           ` ${ruleCount === 1 ? "1 rule adds" : `${ruleCount} rules add`} this label and will stop adding it.`}
       </p>
+      {failure && <Notice tone="danger">{failure}</Notice>}
       <div className="flex justify-end gap-2">
         <Button
           variant="quiet"
@@ -119,28 +123,30 @@ function LabelRow({
     setName(label.name);
     setColour(label.colour);
   }, [label.name, label.colour]);
-  const [confirming, setConfirming] = useState<{ ruleCount: number } | null>(
-    null,
-  );
+  const [confirming, setConfirming] = useState<{
+    ruleCount: number;
+    failure: string | null;
+  } | null>(null);
   // Changing the colour shows at once, so it never waits here.
   const [working, setWorking] = useState<
     "rename" | "checkDelete" | "delete" | null
   >(null);
 
-  const refresh = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes }),
-      queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) }),
-    ]);
-  const attempt = async (run: () => Promise<unknown>) => {
+  // The labels come from the mailbox list, so only that refresh is waited for.
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
+    return queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
+  };
+  const attempt = async (
+    run: () => Promise<unknown>,
+  ): Promise<string | null> => {
     onProblem(null);
     try {
       await callAction(run);
       await refresh();
-      return true;
+      return null;
     } catch (thrown) {
-      onProblem((await asMailFailure(thrown)).message);
-      return false;
+      return (await asMailFailure(thrown)).message;
     }
   };
 
@@ -155,11 +161,14 @@ function LabelRow({
     }
     if (clean === label.name) return;
     setWorking("rename");
-    const saved = await attempt(() =>
+    const failure = await attempt(() =>
       updateLabel({ data: { mailboxId, labelId: label.id, name: clean } }),
     );
     setWorking(null);
-    if (!saved) setName(label.name);
+    if (failure) {
+      onProblem(failure);
+      setName(label.name);
+    }
   };
 
   return (
@@ -186,12 +195,15 @@ function LabelRow({
         value={colour}
         onChange={async (next) => {
           setColour(next);
-          const saved = await attempt(() =>
+          const failure = await attempt(() =>
             updateLabel({
               data: { mailboxId, labelId: label.id, colour: next },
             }),
           );
-          if (!saved) setColour(label.colour);
+          if (failure) {
+            onProblem(failure);
+            setColour(label.colour);
+          }
         }}
       />
       <button
@@ -212,6 +224,7 @@ function LabelRow({
               ruleCount: rules.filter(
                 (rule) => rule.actions.labelId === label.id,
               ).length,
+              failure: null,
             });
           } catch (thrown) {
             onProblem((await asMailFailure(thrown)).message);
@@ -230,15 +243,17 @@ function LabelRow({
         <ConfirmDelete
           label={label}
           ruleCount={confirming.ruleCount}
+          failure={confirming.failure}
           deleting={working === "delete"}
           onCancel={() => setConfirming(null)}
           onConfirm={async () => {
             setWorking("delete");
-            await attempt(() =>
+            setConfirming({ ...confirming, failure: null });
+            const failure = await attempt(() =>
               deleteLabel({ data: { mailboxId, labelId: label.id } }),
             );
             setWorking(null);
-            setConfirming(null);
+            setConfirming(failure ? { ...confirming, failure } : null);
           }}
         />
       )}
@@ -254,6 +269,7 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
   const [colour, setColour] = useState<LabelColour>("accent");
   const [problem, setProblem] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const nameField = useRef<HTMLInputElement>(null);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -268,7 +284,9 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
     }
     setCreating(true);
     if (await createLabel(clean, colour)) setName("");
-    setCreating(false);
+    // The field drops focus while it is disabled, so it can only take it back once enabled.
+    flushSync(() => setCreating(false));
+    nameField.current?.focus();
   };
 
   return (
@@ -284,8 +302,10 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
       >
         <form onSubmit={create} className="flex flex-col gap-3">
           <TextField
+            ref={nameField}
             label="Name"
             value={name}
+            disabled={creating}
             maxLength={MAX_LABEL_NAME_LENGTH}
             onChange={(event) => setName(event.target.value)}
           />

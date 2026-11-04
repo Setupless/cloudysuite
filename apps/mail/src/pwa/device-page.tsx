@@ -1,6 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { Button, NAV_ITEM, Notice, Section } from "@cloudysuite/ui";
+import { Button, NAV_ITEM, Notice, Section, Working } from "@cloudysuite/ui";
 import {
   IconArrowLeft,
   IconBell,
@@ -18,7 +18,6 @@ import {
   unsubscribePush,
 } from "../push/functions";
 import { call } from "../queries";
-import { SkeletonLines } from "../ui/states";
 import { useOffline } from "./connectivity";
 import { DEVICE_CLEARED_PATH } from "./sw-policy";
 import {
@@ -230,12 +229,7 @@ function NotificationsSection() {
           You're offline. You can change notifications when you're back online.
         </p>
       )}
-      {checking && (
-        <div>
-          <SkeletonLines rows={1} />
-          <p className="sr-only">Checking notifications on this device.</p>
-        </div>
-      )}
+      {checking && <Working>Checking notifications on this device…</Working>}
       {!offline && device.data?.kind === "unsupported" && (
         <p className="text-sm text-secondary">
           This browser can't show notifications from Mail.

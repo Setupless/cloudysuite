@@ -1,4 +1,4 @@
-import { Button, Spinner, TextField } from "@cloudysuite/ui";
+import { Button, Spinner, TextField, Working } from "@cloudysuite/ui";
 import {
   type Icon,
   IconAlertTriangle,
@@ -491,15 +491,7 @@ function DomainStage({
           </Radio>
         ))}
       </div>
-      {pending && (
-        <p
-          role="status"
-          className="flex items-center gap-2 text-sm text-secondary"
-        >
-          <Spinner />
-          Looking at this domain's settings…
-        </p>
-      )}
+      {pending && <Working>Looking at this domain's settings…</Working>}
       {zone && scan && (
         <div className="flex flex-col gap-3">
           {scan.externalMx.length > 0 && (
@@ -604,6 +596,9 @@ type StepView =
   | StepResult
   | { state: "working"; was: StepResult | null }
   | { state: "unknown" };
+
+const lastSaid = (view: StepView) =>
+  view.state === "working" ? (view.was ?? view) : view;
 
 type Running =
   | "first-check"
@@ -777,7 +772,9 @@ function StepsStage({
   });
 
   const allDone = STEP_IDS.every((id) => views[id].state === "done");
-  const anyLeft = STEP_IDS.some((id) => views[id].state === "missing");
+  const anyLeft = STEP_IDS.some(
+    (id) => lastSaid(views[id]).state === "missing",
+  );
 
   return (
     <Card>
@@ -807,7 +804,7 @@ function StepsStage({
         ))}
       </ul>
       {error && <ErrorBox error={error} />}
-      {((anyLeft && !allDone) || running === "set-up") && (
+      {anyLeft && (
         <Button
           pending={running === "set-up"}
           disabled={running !== null}
@@ -849,7 +846,7 @@ function StepRow({
   onConfirm: (current: string) => void;
 }) {
   const { title, description } = STEP_TEXT[id];
-  const view = current.state === "working" ? (current.was ?? current) : current;
+  const view = lastSaid(current);
   return (
     <li className="flex gap-3">
       <StepIcon view={current} />

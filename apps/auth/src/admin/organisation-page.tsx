@@ -289,7 +289,11 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
                 Replace key
               </Button>
             )}
-            <Button variant="danger" onClick={() => setRemoving(true)}>
+            <Button
+              variant="danger"
+              disabled={replacing}
+              onClick={() => setRemoving(true)}
+            >
               Remove key
             </Button>
           </div>
