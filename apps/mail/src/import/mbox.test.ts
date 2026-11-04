@@ -192,6 +192,14 @@ test("a final message cut off midway is listed and not stored", async () => {
   );
 });
 
+test("a message we couldn't read is described without direction controls", async () => {
+  const cut = `${SEPARATOR}\nSubject: Invoice\u202e\nFrom: Bank <moc.knab\u202e@evil.example>\n\nThis message sto`;
+  const unreadable = (await itemsOf(cut)).at(-1)!;
+  expect(unreadable.kind === "unreadable" && unreadable.hint).toBe(
+    "“Invoice” from Bank <moc.knab@evil.example>",
+  );
+});
+
 test("a final message cut off in its headers is listed and not stored", async () => {
   const items = await itemsOf(`${SEPARATOR}\nSubject: Cut off\n`);
   expect(items).toEqual([

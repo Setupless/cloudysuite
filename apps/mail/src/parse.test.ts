@@ -100,7 +100,7 @@ test("attachment details from a hostile sender are cleaned", async () => {
       "hi",
       "--b",
       "Content-Type: ../../evil/type",
-      'Content-Disposition: attachment; filename="../../etc/‮passwd\u0007.txt"',
+      'Content-Disposition: attachment; filename="../../etc/\u202epasswd\u200f\u0007.txt"',
       "Content-ID: <  bad id >",
       "",
       "payload",
@@ -115,7 +115,7 @@ test("attachment details from a hostile sender are cleaned", async () => {
     ].join("\r\n"),
   );
   const [hostile, image] = message.attachments;
-  expect(hostile?.filename).toBe(".._.._etc__passwd.txt");
+  expect(hostile?.filename).toBe(".._.._etc__passwd_.txt");
   expect(hostile?.mimeType).toBe("application/octet-stream");
   expect(hostile?.contentId).toBeNull();
   expect(hostile?.inline).toBe(false);
@@ -243,6 +243,41 @@ test("control characters do not reach a subject, a name, or a snippet", async ()
   expect(message.subject).toBe("one two three");
   expect(message.from?.name).toBe("Eve E");
   expect(snippetOf("b\u0000o\u001fdy\n\nnext")).toBe("b o dy next");
+});
+
+test("a sender cannot reorder the letters of a name, a subject, or an address", async () => {
+  const headers =
+    "From: Sup\u202eport\u2066 <moc.lapyap\u202e@evil.example>\r\n" +
+    "Reply-To: <a\u200b@evil.example>\r\n" +
+    "To: <me\u2067@x.org>\r\n" +
+    "Subject: \u202eInvoice\u200f\r\n";
+  const parsed = await parse(`${headers}\r\nhi`);
+  let deep = "deep";
+  for (let index = PARSE_LIMITS.maxNestingDepth + 5; index > 0; index -= 1) {
+    deep = `--b${index}\r\nContent-Type: multipart/mixed; boundary=b${index + 1}\r\n\r\n${deep}\r\n--b${index}--`;
+  }
+  const fallback = await parse(
+    `${headers}Content-Type: multipart/mixed; boundary=b1\r\n\r\n${deep}`,
+  );
+  expect(fallback.status).toBe("failed");
+  for (const message of [parsed, fallback]) {
+    expect(message.from).toEqual({
+      name: "Support",
+      address: "moc.lapyap\ufffd@evil.example",
+    });
+    expect(message.replyTo).toEqual([
+      { name: "", address: "a\ufffd@evil.example" },
+    ]);
+    expect(message.to).toEqual([{ name: "", address: "me\ufffd@x.org" }]);
+    expect(message.subject).toBe("Invoice");
+  }
+});
+
+test("names keep the joiners that some scripts and emoji are spelled with", async () => {
+  const name =
+    "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 \u{1f469}\u200d\u{1f4bb}";
+  const message = await parse(`From: "${name}" <a@x.org>\r\n\r\nhi`);
+  expect(message.from?.name).toBe(name);
 });
 
 test("the number of addresses kept per field is limited", async () => {
