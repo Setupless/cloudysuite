@@ -1,7 +1,7 @@
 // Runs after `vite build`. A service worker that lists a missing file fails its whole
 // install, which a passing build would not reveal, and the page that sign-out passes
 // through must link a stylesheet that exists.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const CLIENT = "dist/client";
@@ -14,6 +14,7 @@ for (const file of [
   "device-cleared.html",
   "device-cleared.js",
   "manifest.webmanifest",
+  "_headers",
 ]) {
   if (!exists(file)) errors.push(`${file}: the build did not write it`);
 }
@@ -54,6 +55,17 @@ if (errors.length === 0) {
     errors.push(
       "manifest.webmanifest: its theme colour was not read from the theme",
     );
+  }
+
+  if (!read("_headers").includes("/assets/*")) {
+    errors.push("_headers: does not cover /assets/*");
+  }
+  // _headers tells browsers to keep /assets for a year, so a file there without a
+  // content hash in its name would never update.
+  for (const file of readdirSync(join(CLIENT, "assets"))) {
+    if (!/-[\w-]{8}\.\w+$/.test(file)) {
+      errors.push(`assets/${file}: its name has no content hash`);
+    }
   }
 }
 
