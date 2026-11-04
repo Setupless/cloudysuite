@@ -109,11 +109,11 @@ export function Button({
   const size = variant.startsWith("toolbar") ? 16 : 18;
   return (
     <button
+      {...props}
       type={type}
       className={buttonClass(variant)}
       disabled={disabled || pending}
       aria-busy={pending || undefined}
-      {...props}
     >
       {pending && ButtonIcon && <Spinner size={size} />}
       {!pending && ButtonIcon && (
