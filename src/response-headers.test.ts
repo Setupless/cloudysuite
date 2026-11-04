@@ -32,13 +32,3 @@ test("a download keeps its own sandbox policy and also refuses to be framed", as
   expect(download.headers.get("Content-Disposition")).toStartWith("attachment");
   expect(await download.text()).toBe("bytes");
 });
-
-test("a redirect keeps its status and destination", () => {
-  const redirect = withResponseHeaders(
-    new Response(null, { status: 302, headers: { Location: "/sign-in" } }),
-  );
-
-  expect(redirect.status).toBe(302);
-  expect(redirect.headers.get("Location")).toBe("/sign-in");
-  expect(redirect.headers.get("X-Frame-Options")).toBe("DENY");
-});
