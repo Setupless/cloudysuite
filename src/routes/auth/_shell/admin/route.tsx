@@ -1,8 +1,8 @@
-import { requireAdmin } from "@cloudysuite/auth/session";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Only routing. Each admin server function checks the role on the server.
 export const Route = createFileRoute("/auth/_shell/admin")({
-  beforeLoad: async ({ location }) => {
-    await requireAdmin(location);
+  beforeLoad: ({ context }) => {
+    if (context.user.role !== "admin") throw redirect({ href: "/" });
   },
 });

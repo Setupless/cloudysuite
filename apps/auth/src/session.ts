@@ -4,7 +4,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { APPS, type AppId } from "../../../src/routing";
 import { getActiveSession, type SessionUser } from "./auth";
 import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
-import { parsePath, parsePlace } from "./place";
+import { parsePlace } from "./place";
 import { getAuth, getViewer } from "./server";
 
 export type { SessionUser };
@@ -43,20 +43,6 @@ export function requireUser(
   location: { publicHref: string },
 ): Promise<SignedIn> {
   return requireUserOnServer({ data: { app, path: location.publicHref } });
-}
-
-const requireAdminOnServer = createServerFn({ method: "GET" })
-  .validator(parsePath)
-  .handler(async ({ data }): Promise<SignedIn> => {
-    const signedIn = await readSignedIn({ app: "auth", path: data.path });
-    if (signedIn.role !== "admin") throw redirect({ href: "/" });
-    return signedIn;
-  });
-
-export function requireAdmin(location: {
-  publicHref: string;
-}): Promise<SignedIn> {
-  return requireAdminOnServer({ data: { path: location.publicHref } });
 }
 
 export const prepareSignIn = createServerFn({ method: "GET" })
