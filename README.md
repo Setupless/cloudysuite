@@ -450,6 +450,7 @@ These limits come from the Cloudflare docs and shape the product:
 - One Worker serves every app and routes by hostname, because the Deploy button does not deploy several Workers from one repository together.
 - Each mailbox and each drive is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, and drive access.
 - The rule that every mailbox or drive query checks the signed-in user's access lives in one place, because several people can share one.
+- The Worker uses Smart Placement, because one page load makes several D1 queries one after another, and running the Worker near the database saves a long trip on each.
 
 ### Repository layout
 
