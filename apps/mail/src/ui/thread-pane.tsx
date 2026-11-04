@@ -6,7 +6,11 @@ import {
   IconCornerUpLeftDouble,
 } from "@tabler/icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useCompose } from "../compose/ui/compose-context";
 import { ComposeEditor } from "../compose/ui/editor";
@@ -19,6 +23,7 @@ import {
 } from "../model";
 import { isOffline } from "../pwa/saved-mail";
 import {
+  bodyQuery,
   isRefusal,
   mailKeys,
   REFRESH_MS,
@@ -28,7 +33,9 @@ import {
 import {
   labelsOnThread,
   liveFolders,
+  type MailboxId,
   type MessageId,
+  type ThreadDetail,
   type ThreadId,
 } from "../types";
 import { useMailView } from "./mail-view-context";
@@ -41,6 +48,21 @@ import {
   ReadButton,
   StarButton,
 } from "./thread-actions";
+
+const startsOpen = (isLatest: boolean, unreadWhenFirstSeen: boolean) =>
+  isLatest || unreadWhenFirstSeen;
+
+export function prefetchOpenBodies(
+  queryClient: QueryClient,
+  mailboxId: MailboxId,
+  detail: ThreadDetail,
+) {
+  detail.messages.forEach((message, index) => {
+    if (startsOpen(index === detail.messages.length - 1, !message.read)) {
+      void queryClient.prefetchQuery(bodyQuery(mailboxId, message.id));
+    }
+  });
+}
 
 function BackToList() {
   const { mailboxId, view } = useMailView();
@@ -282,7 +304,7 @@ function ThreadView({ threadId }: { threadId: ThreadId }) {
         const isLatest = index === detail.messages.length - 1;
         const open =
           overrides.get(message.id) ??
-          (isLatest || firstSeen.current.get(message.id) === true);
+          startsOpen(isLatest, firstSeen.current.get(message.id) === true);
         return (
           <MessageCard
             key={message.id}
