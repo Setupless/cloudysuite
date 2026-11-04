@@ -863,7 +863,7 @@ function EditorForm({
   };
 
   const discard = async () => {
-    if (working) return;
+    if (working || discarding.current) return;
     setWorking("discard");
     setConfirmingDiscard({ failure: null });
     discarding.current = true;
