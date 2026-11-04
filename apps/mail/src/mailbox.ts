@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { MailboxId, UserId } from "@cloudysuite/access";
 import { runDueSends } from "./compose/job";
+import { SendJobStore } from "./compose/job-store";
 import {
   type AddAttachmentResult,
   OutgoingStore,
@@ -63,6 +64,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #labels: LabelStore;
   readonly #rules: RuleStore;
   readonly #outgoing: OutgoingStore;
+  readonly #sends: SendJobStore;
   readonly #spam: SpamStore;
   readonly #push: PushStore;
 
@@ -79,6 +81,7 @@ export class Mailbox extends DurableObject<Env> {
     this.#rules = new RuleStore(db);
     this.#labels = new LabelStore(db, this.#rules);
     this.#outgoing = new OutgoingStore(db, this.#store);
+    this.#sends = new SendJobStore(db, this.#store);
     this.#spam = new SpamStore(db);
     this.#push = new PushStore(db);
   }
@@ -309,7 +312,7 @@ export class Mailbox extends DurableObject<Env> {
   // mailbox open starts it again, as with imports.
   async listOutgoing(viewerId: string): Promise<OutgoingSummary[]> {
     if (
-      this.#outgoing.nextDueAt() !== null &&
+      this.#sends.nextDueAt() !== null &&
       (await this.ctx.storage.getAlarm()) === null
     ) {
       await this.#scheduleNextWakeUp();
@@ -388,7 +391,7 @@ export class Mailbox extends DurableObject<Env> {
     const due = [
       this.#store.nextDeletionAt(),
       this.#imports.nextRunAt(),
-      this.#outgoing.nextDueAt(),
+      this.#sends.nextDueAt(),
       this.#push.nextRunAt(),
     ].filter((time) => time !== null);
     return due.length > 0
@@ -412,7 +415,7 @@ export class Mailbox extends DurableObject<Env> {
   async #runSends(): Promise<void> {
     try {
       await runDueSends(
-        this.#outgoing,
+        this.#sends,
         this.env.BUCKET,
         this.env.EMAIL,
         this.env.DB,
