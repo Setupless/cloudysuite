@@ -1,4 +1,5 @@
 import { decodeWords } from "postal-mime";
+import { singleLine } from "../parse";
 import { MAX_MESSAGE_BYTES } from "../types";
 import type { UnreadableReason } from "./types";
 
@@ -129,11 +130,11 @@ function describe(head: Uint8Array): string {
   };
   const subject = read("Subject");
   const from = read("From");
-  return [subject && `“${subject}”`, from && `from ${from}`]
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\p{Cc}+/gu, " ")
-    .slice(0, HINT_LENGTH);
+  return singleLine(
+    [subject && `“${subject}”`, from && `from ${from}`]
+      .filter(Boolean)
+      .join(" "),
+  ).slice(0, HINT_LENGTH);
 }
 
 function hasHeaderEnd(bytes: Uint8Array): boolean {

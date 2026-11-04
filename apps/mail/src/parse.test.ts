@@ -100,7 +100,7 @@ test("attachment details from a hostile sender are cleaned", async () => {
       "hi",
       "--b",
       "Content-Type: ../../evil/type",
-      'Content-Disposition: attachment; filename="../../etc/‮passwd\u0007.txt"',
+      'Content-Disposition: attachment; filename="../../etc/\u202epasswd\u200f\u0007.txt"',
       "Content-ID: <  bad id >",
       "",
       "payload",
@@ -115,7 +115,7 @@ test("attachment details from a hostile sender are cleaned", async () => {
     ].join("\r\n"),
   );
   const [hostile, image] = message.attachments;
-  expect(hostile?.filename).toBe(".._.._etc__passwd.txt");
+  expect(hostile?.filename).toBe(".._.._etc__passwd_.txt");
   expect(hostile?.mimeType).toBe("application/octet-stream");
   expect(hostile?.contentId).toBeNull();
   expect(hostile?.inline).toBe(false);

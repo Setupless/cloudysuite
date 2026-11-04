@@ -60,12 +60,13 @@ export type ParsedMessage = {
 // Direction controls could reorder the letters of a forged sender, or of the
 // address shown after a name. Other format characters stay, because some scripts
 // and emoji are spelled with them.
-const DIRECTION_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+const DIRECTION_CONTROLS = "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069";
+const DIRECTION_CONTROL = new RegExp(`[${DIRECTION_CONTROLS}]`, "gu");
 
 // A subject or name shows on one line, and a later reply copies it into a header.
-const singleLine = (value: string) =>
+export const singleLine = (value: string) =>
   value
-    .replace(DIRECTION_CONTROLS, "")
+    .replace(DIRECTION_CONTROL, "")
     .replace(/\p{Cc}+/gu, " ")
     .trim();
 
@@ -99,7 +100,7 @@ function parseDate(value: string | null | undefined): number | null {
 }
 
 const STRIPPED_FROM_FILENAME = /[\p{Cc}"']/gu;
-const UNSAFE_FILENAME = /[‪-‮⁦-⁩/\\]/gu;
+const UNSAFE_FILENAME = new RegExp(`[${DIRECTION_CONTROLS}/\\\\]`, "gu");
 
 export function cleanFileName(filename: string | null): string | null {
   if (!filename) return null;
