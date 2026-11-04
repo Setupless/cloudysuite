@@ -26,7 +26,7 @@ import { createTeamFolder, type Directory } from "../functions";
 import { call, directoryQuery, refreshStorage } from "../queries";
 import { formatBytes } from "./format";
 import { StorageMeter } from "./storage-meter";
-import { NameDialog } from "./page-parts";
+import { FolderLink, NameDialog, useFolderPrefetch } from "./page-parts";
 import { SearchBox } from "./search-box";
 import { teamColour } from "./team-colour";
 import { UploadTray } from "./upload-tray";
@@ -54,6 +54,7 @@ function Navigation({
   const { driveId } = useParams({ strict: false });
   const isHome = ["", "/storage"].includes(pathname.replace(/\/$/, ""));
   const isMyFiles = useInMyFiles(directory);
+  const prefetchMyFiles = useFolderPrefetch(directory?.myDriveId ?? null, null);
   // Inside a drive that isn't on the person's list, they got there through a share.
   const isShared =
     pathname.endsWith("/shared") ||
@@ -71,7 +72,11 @@ function Navigation({
         <IconHome size={18} stroke={1.75} aria-hidden />
         Home
       </Link>
-      <Link to="/storage/my-files" className={itemClass(isMyFiles)}>
+      <Link
+        to="/storage/my-files"
+        className={itemClass(isMyFiles)}
+        {...prefetchMyFiles}
+      >
         <IconUserCircle size={18} stroke={1.75} aria-hidden />
         My files
       </Link>
@@ -90,10 +95,10 @@ function Navigation({
         Team folders
       </h3>
       {directory?.teamFolders.map((folder) => (
-        <Link
+        <FolderLink
           key={folder.id}
-          to="/storage/drive/$driveId"
-          params={{ driveId: folder.id }}
+          driveId={folder.id}
+          folderId={null}
           className={itemClass(driveId === folder.id)}
         >
           <span
@@ -101,7 +106,7 @@ function Navigation({
             aria-hidden
           />
           <span className="min-w-0 truncate">{folder.name}</span>
-        </Link>
+        </FolderLink>
       ))}
       <button
         type="button"

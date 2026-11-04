@@ -6,6 +6,7 @@ import {
   IconTrashX,
   IconUpload,
 } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type DragEvent,
@@ -16,12 +17,39 @@ import {
   useRef,
   useState,
 } from "react";
+import { folderQuery } from "../queries";
 import type { ItemId } from "../types";
 import type { Destination } from "./upload-queue";
 import { destinationName } from "./upload-queue";
 import { focusDetails } from "./details-focus";
 import { MoveNotices } from "./move-notices";
 import { useUploads } from "./uploads-context";
+
+// A pointer passing over a list on its way elsewhere doesn't stop this long.
+const HOVER_PREFETCH_MS = 120;
+
+export function useFolderPrefetch(
+  driveId: DriveId | null,
+  folderId: ItemId | null,
+) {
+  const client = useQueryClient();
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const prefetch = () => {
+    clearTimeout(timer.current);
+    if (driveId !== null) {
+      void client.prefetchInfiniteQuery(folderQuery(driveId, folderId));
+    }
+  };
+  return {
+    onPointerEnter: () => {
+      timer.current = setTimeout(prefetch, HOVER_PREFETCH_MS);
+    },
+    onPointerLeave: () => clearTimeout(timer.current),
+    onPointerDown: prefetch,
+    onFocus: prefetch,
+  };
+}
 
 export function FolderLink({
   driveId,
@@ -36,12 +64,14 @@ export function FolderLink({
   className?: string;
   children: ReactNode;
 }) {
+  const prefetch = useFolderPrefetch(driveId, folderId);
   return folderId === null ? (
     <Link
       to="/storage/drive/$driveId"
       params={{ driveId }}
       search={{ file }}
       className={className}
+      {...prefetch}
     >
       {children}
     </Link>
@@ -51,6 +81,7 @@ export function FolderLink({
       params={{ driveId, folderId }}
       search={{ file }}
       className={className}
+      {...prefetch}
     >
       {children}
     </Link>
