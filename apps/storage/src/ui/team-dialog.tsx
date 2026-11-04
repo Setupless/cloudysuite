@@ -17,7 +17,7 @@ import {
   leaveTeamFolder,
   removeTeamMember,
 } from "../sharing-functions";
-import { accessQuery, call, storageKeys } from "../queries";
+import { accessQuery, call, refreshStorage } from "../queries";
 import { ACCESS_LABELS } from "./access-labels";
 import { LEVEL_SELECT, PeoplePicker } from "./people-picker";
 
@@ -56,7 +56,7 @@ export function TeamDialog({
   const canManage = data?.myRole === "manager";
   const lines = data?.lines ?? [];
 
-  const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
+  const refresh = () => refreshStorage(client);
   async function run(action: Running, change: () => Promise<unknown>) {
     setRunning(action);
     setError(null);

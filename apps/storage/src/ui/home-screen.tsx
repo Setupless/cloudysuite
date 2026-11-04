@@ -14,7 +14,7 @@ import {
   type RecentFile,
   type TeamFolderCard,
 } from "../functions";
-import { call, directoryQuery, recentQuery, storageKeys } from "../queries";
+import { call, directoryQuery, recentQuery, refreshStorage } from "../queries";
 import { FilePreview } from "./file-visuals";
 import { folderSummary, formatChanged } from "./format";
 import { MailAttachments } from "./mail-attachments";
@@ -118,7 +118,7 @@ function Home({ mailHref }: { mailHref: string | undefined }) {
             await call(() =>
               createFolder({ data: { driveId, parentId: null, name } }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             await navigate({
               to: "/storage/drive/$driveId",
               params: { driveId },

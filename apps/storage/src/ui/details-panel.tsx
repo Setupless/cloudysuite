@@ -18,7 +18,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { accessQuery, call, storageKeys } from "../queries";
+import { accessQuery, call, refreshStorage } from "../queries";
 import { deleteTeamFolder, renameTeamFolder } from "../sharing-functions";
 import type { DriveItem, FileItem, FolderItem, ItemId } from "../types";
 import { ACCESS_LABELS } from "./access-labels";
@@ -229,7 +229,7 @@ function TeamActions({ team, me }: { team: TeamRoot; me: SignedIn }) {
             await call(() =>
               renameTeamFolder({ data: { driveId, name: next } }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
           }}
           onClose={() => setDialog(null)}
         />
@@ -242,7 +242,7 @@ function TeamActions({ team, me }: { team: TeamRoot; me: SignedIn }) {
           onConfirm={async () => {
             await call(() => deleteTeamFolder({ data: { driveId } }));
             await navigate({ to: "/storage" });
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             toast({ message: `${name} is deleted.` });
           }}
           onClose={() => setDialog(null)}

@@ -13,7 +13,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { deleteItemForever, emptyTrash, type TrashLine } from "../functions";
-import { call, storageKeys, trashQuery } from "../queries";
+import { call, refreshStorage, trashQuery } from "../queries";
 import { TRASH_DAYS } from "../types";
 import { NothingChosenPanel, PANEL } from "./details-panel";
 import {
@@ -143,7 +143,7 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
                 data: { driveId: drive.id, itemId: entry.id },
               }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             onGone();
           }}
           onClose={() => setConfirming(false)}
@@ -261,7 +261,7 @@ function Trash() {
           onConfirm={async () => {
             await call(() => emptyTrash());
             setSelected(null);
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
           }}
           onClose={() => setConfirmingEmpty(false)}
         />

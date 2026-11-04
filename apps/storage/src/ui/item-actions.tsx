@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { moveItem, renameItem, restoreItem, trashItem } from "../functions";
-import { call, storageKeys } from "../queries";
+import { call, refreshStorage } from "../queries";
 import type { DriveItem, ItemId } from "../types";
 import { MoveDialog } from "./move-dialog";
 import { NameDialog } from "./page-parts";
@@ -23,7 +23,7 @@ export function useRestore() {
       const result = await call(() =>
         restoreItem({ data: { driveId, itemId } }),
       );
-      await client.invalidateQueries({ queryKey: storageKeys.all });
+      await refreshStorage(client);
       const renamed =
         result.item.name === name
           ? ""
@@ -59,7 +59,7 @@ export function ItemActions({
   const [dialog, setDialog] = useState<"rename" | "move" | null>(null);
   const [trashing, setTrashing] = useState(false);
 
-  const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
+  const refresh = () => refreshStorage(client);
   const stopChoosingFile = () =>
     navigate({
       to: ".",

@@ -10,9 +10,9 @@ import { useEffect, useState } from "react";
 import { ensureMyFiles } from "../functions";
 import {
   call,
+  refreshStorage,
   retryUnlessRefused,
   StorageFailure,
-  storageKeys,
 } from "../queries";
 import { sendFile } from "./upload-client";
 import { UploadQueue } from "./upload-queue";
@@ -54,7 +54,7 @@ export function StorageRoot({ children }: { children: ReactNode }) {
         ensureMyFiles: () => call(() => ensureMyFiles()),
         sendFile,
         onFileSent: () => {
-          void client.invalidateQueries({ queryKey: storageKeys.all });
+          void refreshStorage(client);
         },
       }),
   );

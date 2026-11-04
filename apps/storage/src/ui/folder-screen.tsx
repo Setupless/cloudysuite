@@ -22,7 +22,7 @@ import {
   directoryQuery,
   fileQuery,
   folderQuery,
-  storageKeys,
+  refreshStorage,
 } from "../queries";
 import { type ItemId, parseItemId } from "../types";
 import { DetailsPanel, type PanelSubject } from "./details-panel";
@@ -58,7 +58,7 @@ export function useCreateFolderIn(driveId: DriveId, parentId: ItemId | null) {
     await call(() =>
       createFolderOnServer({ data: { driveId, parentId, name } }),
     );
-    await client.invalidateQueries({ queryKey: storageKeys.all });
+    await refreshStorage(client);
   };
 }
 
@@ -302,7 +302,7 @@ export function MyFilesScreen({ me }: { me: SignedIn }) {
                   data: { driveId, parentId: null, name },
                 }),
               );
-              await client.invalidateQueries({ queryKey: storageKeys.all });
+              await refreshStorage(client);
             }}
           />
         </PageTop>

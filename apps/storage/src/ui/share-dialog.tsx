@@ -17,7 +17,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { setEveryone, shareItem, unshareItem } from "../sharing-functions";
-import { accessQuery, call, storageKeys } from "../queries";
+import { accessQuery, call, refreshStorage } from "../queries";
 import type { DriveItem } from "../types";
 import { LEVEL_SELECT, PeoplePicker } from "./people-picker";
 
@@ -106,7 +106,7 @@ export function ShareDialog({
   const [linkShown, setLinkShown] = useState<string | null>(null);
   const [running, setRunning] = useState<Running>(null);
 
-  const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
+  const refresh = () => refreshStorage(client);
   async function run(action: Running, change: () => Promise<unknown>) {
     setRunning(action);
     setError(null);

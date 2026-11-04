@@ -3,7 +3,7 @@ import { IconCheck } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { saveAttachmentFromMail } from "../mail-attachment-functions";
 import type { MailAttachmentRow } from "../mail-attachments";
-import { call, mailAttachmentsQuery, storageKeys } from "../queries";
+import { call, mailAttachmentsQuery, refreshStorage } from "../queries";
 import { FileIcon } from "./file-visuals";
 import { dayInSentence } from "./format";
 
@@ -17,7 +17,7 @@ function AttachmentRow({ row }: { row: MailAttachmentRow }) {
           data: { mailboxId, messageId, attachmentId },
         }),
       ),
-    onSuccess: () => client.invalidateQueries({ queryKey: storageKeys.all }),
+    onSuccess: () => refreshStorage(client),
   });
   const isSaved = row.saved || save.isSuccess;
   return (
