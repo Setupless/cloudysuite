@@ -1,8 +1,12 @@
 import type { DriveId } from "@cloudysuite/access";
 import { Button, useToast } from "@cloudysuite/ui";
 import { IconFolderSymlink, IconPencil, IconTrash } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { moveItem, renameItem, restoreItem, trashItem } from "../functions";
 import { call, refreshStorage } from "../queries";
@@ -54,10 +58,15 @@ export function ItemActions({
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const router = useRouter();
   const toast = useToast();
   const restore = useRestore();
   const [dialog, setDialog] = useState<"rename" | "move" | null>(null);
-  const [trashing, setTrashing] = useState(false);
+  // Kept by the query client, not this panel, so picking another file and coming back
+  // still shows it running.
+  const trashKey = ["trash", driveId, item.id];
+  const trashing = useIsMutating({ mutationKey: trashKey }) > 0;
+  const trash = useMutation({ mutationKey: trashKey, mutationFn: moveToTrash });
 
   const refresh = () => refreshStorage(client);
   const stopChoosingFile = () =>
@@ -80,14 +89,24 @@ export function ItemActions({
             params: { driveId: target, folderId },
           });
 
+  // The person may have gone on to something else while it was saving.
+  const stillShown = () =>
+    item.kind === "folder"
+      ? router.state.matches.some(
+          (match) =>
+            "folderId" in match.params && match.params.folderId === item.id,
+        )
+      : router.state.location.search.file === item.id;
+
   async function moveToTrash() {
-    setTrashing(true);
     try {
       await call(() => trashItem({ data: { driveId, itemId: item.id } }));
       // Off the page first, or the folder being looked at reports itself missing.
-      await (item.kind === "folder"
-        ? openFolder(driveId, item.parentId)
-        : stopChoosingFile());
+      if (stillShown()) {
+        await (item.kind === "folder"
+          ? openFolder(driveId, item.parentId)
+          : stopChoosingFile());
+      }
       await refresh();
       toast({
         message: `"${item.name}" moved to Trash.`,
@@ -98,8 +117,6 @@ export function ItemActions({
       });
     } catch (failure) {
       toast({ tone: "danger", message: (failure as Error).message });
-    } finally {
-      setTrashing(false);
     }
   }
 
@@ -125,7 +142,7 @@ export function ItemActions({
         variant="toolbar"
         icon={IconTrash}
         pending={trashing}
-        onClick={() => void moveToTrash()}
+        onClick={() => trash.mutate()}
       >
         Delete
       </Button>

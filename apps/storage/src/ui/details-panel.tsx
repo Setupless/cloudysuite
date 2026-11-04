@@ -334,6 +334,7 @@ export function DetailsPanel({
             </a>
             {subject.canEdit && (
               <ItemActions
+                key={`${subject.driveId}/${subject.file.id}`}
                 driveId={subject.driveId}
                 item={subject.file}
                 shared={subject.shared}
@@ -348,6 +349,7 @@ export function DetailsPanel({
             <div className="flex flex-wrap gap-1.5">
               <ShareButton driveId={subject.driveId} item={subject.folder} />
               <ItemActions
+                key={`${subject.driveId}/${subject.folder.id}`}
                 driveId={subject.driveId}
                 item={subject.folder}
                 shared={subject.shared}
