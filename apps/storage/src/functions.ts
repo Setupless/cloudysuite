@@ -188,13 +188,46 @@ export const getFolder = createServerFn({ method: "GET" })
   .handler(async ({ data }): Promise<FolderPage> => {
     const me = await requireStorageUser(getRequest());
     const drive = await openDriveAs(me.id, data.driveId);
+    const db = drizzle(env.DB);
+    const member =
+      drive.role === null
+        ? null
+        : {
+            role: drive.role,
+            details: db.batch([
+              db
+                .select({
+                  id: drives.id,
+                  kind: drives.kind,
+                  name: drives.name,
+                  colour: drives.colour,
+                  changedAt: drives.changedAt,
+                })
+                .from(drives)
+                .where(eq(drives.id, data.driveId)),
+              db
+                .select({ userId: driveAccess.userId })
+                .from(driveAccess)
+                .where(
+                  and(
+                    eq(driveAccess.driveId, data.driveId),
+                    eq(driveAccess.role, "manager"),
+                  ),
+                )
+                .orderBy(asc(driveAccess.createdAt))
+                .limit(1),
+            ]),
+          };
+    // Marks a failure as handled, so the listing's error still wins and this one surfaces
+    // where it's awaited.
+    member?.details.catch(() => {});
     const listing = await drive.list(data.folderId, data.cursor);
     if (!listing) throw gone(drive, NO_SUCH_FOLDER);
     const itemPeople = [
       ...listing.items.map((item) => item.createdBy),
       ...(listing.folder ? [listing.folder.createdBy] : []),
     ];
-    if (drive.role === null) {
+    if (!member) {
       return {
         ...listing,
         place: { kind: "shared" },
@@ -202,30 +235,7 @@ export const getFolder = createServerFn({ method: "GET" })
       };
     }
 
-    const db = drizzle(env.DB);
-    const [[row], managers] = await db.batch([
-      db
-        .select({
-          id: drives.id,
-          kind: drives.kind,
-          name: drives.name,
-          colour: drives.colour,
-          changedAt: drives.changedAt,
-        })
-        .from(drives)
-        .where(eq(drives.id, data.driveId)),
-      db
-        .select({ userId: driveAccess.userId })
-        .from(driveAccess)
-        .where(
-          and(
-            eq(driveAccess.driveId, data.driveId),
-            eq(driveAccess.role, "manager"),
-          ),
-        )
-        .orderBy(asc(driveAccess.createdAt))
-        .limit(1),
-    ]);
+    const [[row], managers] = await member.details;
     if (!row) throw refusal(404, NO_SUCH_FOLDER);
     const driveCreatedBy = managers[0]?.userId ?? null;
     return {
@@ -234,7 +244,7 @@ export const getFolder = createServerFn({ method: "GET" })
         kind: "drive",
         drive: { ...row, changedAt: row.changedAt.getTime() },
         driveCreatedBy,
-        role: drive.role,
+        role: member.role,
       },
       people: await peopleOf(env.DB, [
         ...itemPeople,
@@ -353,8 +363,12 @@ export const moveItem = createServerFn({ method: "POST" })
   .validator(parseMoveInput)
   .handler(async ({ data }): Promise<"moved" | "finishing"> => {
     const me = await requireStorageUser(getRequest());
+    const opening = openDriveAs(me.id, data.toDriveId);
+    // Marks a failure as handled, so the first drive's error still wins and this one
+    // surfaces where it's awaited.
+    opening.catch(() => {});
     const from = await openDriveAs(me.id, data.driveId);
-    const to = await openDriveAs(me.id, data.toDriveId);
+    const to = await opening;
     const item = await from.item(data.itemId);
     if (!item) throw gone(from, NO_SUCH_ITEM);
     const result = await from.move(data.itemId, to, data.toParentId);
