@@ -43,6 +43,8 @@ import type {
 import { MAX_ITEMS_ACROSS_DRIVES, TRASH_MS } from "./types";
 
 export const UPLOAD_EXPIRY_MS = 3 * 24 * 60 * 60 * 1000;
+// R2 drops an unfinished upload 7 days after it began, however much is sent since.
+export const UPLOAD_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 export const USAGE_RETRY_MS = 60_000;
 export const SHARE_INDEX_RETRY_MS = 60_000;
 export const NOTICE_INDEX_RETRY_MS = 60_000;
@@ -657,12 +659,18 @@ export class DriveStore {
       found.createdBy,
     );
     if (!row) return null;
-    this.#db.exec(
-      "UPDATE uploads SET touched_at = ? WHERE id = ?",
-      now,
-      row.id,
-    );
+    this.#touchUpload(row.id, now);
     return this.#uploadView(row);
+  }
+
+  // Never past the upload's lifetime, so coming back now and then can't keep it forever.
+  #touchUpload(id: string, now: number): void {
+    this.#db.exec(
+      "UPDATE uploads SET touched_at = min(?, created_at + ?) WHERE id = ?",
+      now,
+      UPLOAD_LIFETIME_MS - UPLOAD_EXPIRY_MS,
+      id,
+    );
   }
 
   // Two tabs can race here. The loser's upload is returned as "lost", for its caller to
@@ -763,7 +771,7 @@ export class DriveStore {
         partNumber,
         etag,
       );
-      this.#db.exec("UPDATE uploads SET touched_at = ? WHERE id = ?", now, id);
+      this.#touchUpload(id, now);
     });
   }
 

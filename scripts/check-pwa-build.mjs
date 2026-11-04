@@ -57,8 +57,23 @@ if (errors.length === 0) {
     );
   }
 
-  if (!read("_headers").includes("/assets/*")) {
+  const rules = new Map(
+    read("_headers")
+      .split(/\n(?=\S)/)
+      .map((block) => [block.split("\n")[0].trim(), block]),
+  );
+  if (!rules.has("/assets/*")) {
     errors.push("_headers: does not cover /assets/*");
+  }
+  // Static files skip the Worker, so only _headers stops another site framing them.
+  for (const file of readdirSync(CLIENT).filter((f) => f.endsWith(".html"))) {
+    const rule = rules.get(`/${file.replace(/\.html$/, "")}`) ?? "";
+    if (
+      !rule.includes("frame-ancestors 'none'") ||
+      !rule.includes("X-Frame-Options: DENY")
+    ) {
+      errors.push(`_headers: ${file} can be framed by another site`);
+    }
   }
   // _headers tells browsers to keep /assets for a year, so a file there without a
   // content hash in its name would never update.

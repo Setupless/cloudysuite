@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import { checkDriveAccess, type UserId } from "@cloudysuite/access";
 import { PART_BYTES, readUpTo } from "@cloudysuite/transfer";
 import { parseItemName } from "./names";
@@ -12,6 +12,8 @@ let kit: Kit;
 beforeEach(async () => {
   kit = await createStorageTest();
 });
+
+afterEach(() => setSystemTime());
 
 const named = (raw: string) => {
   const parsed = parseItemName(raw);
@@ -373,6 +375,36 @@ test("an upload untouched for 3 days is aborted and removed", async () => {
   const again = await started(details({ size: bytes.length }));
   expect(again.id).not.toBe(view.id);
   expect(again.storedParts).toEqual([]);
+});
+
+test("coming back to an upload can't keep it past 7 days from its start", async () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const startedAt = Date.now();
+  setSystemTime(new Date(startedAt));
+  const bytes = new Uint8Array(3 * PART_BYTES);
+  const view = await started(details({ size: bytes.length }));
+  for (const [day, part] of [
+    [2, 1],
+    [4, 2],
+    [6, 3],
+  ] as const) {
+    setSystemTime(new Date(startedAt + day * DAY));
+    expect((await started(details({ size: bytes.length }))).id).toBe(view.id);
+    const sentPart = await kit.drive.uploads.putPart(
+      view.id,
+      part,
+      partBody(bytes.subarray((part - 1) * PART_BYTES, part * PART_BYTES)),
+    );
+    expect(sentPart.ok).toBe(true);
+  }
+
+  setSystemTime(new Date(startedAt + 7 * DAY));
+  await kit.instance().object.alarm();
+  expect(kit.bucket.uploads.size).toBe(0);
+  expect(await kit.drive.uploads.complete(view.id)).toMatchObject({
+    ok: false,
+    status: 409,
+  });
 });
 
 test("removing a stopped upload also clears a file a crash left in R2, and no kept file", async () => {

@@ -8,7 +8,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { safeFileName } from "@cloudysuite/transfer";
 import { linkify } from "../email/linkify";
 import type { RenderedBody } from "../email/render-body";
@@ -27,13 +27,9 @@ import type {
   MessageId,
 } from "../types";
 import { EmailFrame } from "./email-frame";
-import {
-  displayName,
-  formatAddress,
-  formatFullDate,
-  formatSize,
-} from "./format";
+import { displayName, formatFullDate, formatSize } from "./format";
 import { useMailView } from "./mail-view-context";
+import { FullAddress, isolatedList } from "./people";
 import { FailureNotice, ThreadDate } from "./states";
 
 const originalUrl = (mailboxId: MailboxId, messageId: MessageId) =>
@@ -248,7 +244,11 @@ function senderChecks(results: AuthResults): string {
     .join(", ");
 }
 
-const peopleLine = (people: Address[]) => people.map(formatAddress).join(", ");
+const peopleLine = (people: Address[]) =>
+  people.length > 0 &&
+  isolatedList(
+    people.map((person, index) => <FullAddress key={index} person={person} />),
+  );
 
 function MessageDetails({
   message,
@@ -257,8 +257,11 @@ function MessageDetails({
   message: MessageDetail;
   mailboxId: MailboxId;
 }) {
-  const rows: [string, string][] = [
-    ["From", message.from ? formatAddress(message.from) : "Unknown sender"],
+  const rows: [string, ReactNode][] = [
+    [
+      "From",
+      message.from ? <FullAddress person={message.from} /> : "Unknown sender",
+    ],
     ["Reply to", peopleLine(message.replyTo)],
     ["To", peopleLine(message.to)],
     ["Cc", peopleLine(message.cc)],
@@ -383,11 +386,11 @@ export function MessageCard({
         </button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm">
-            <span className="font-semibold">{sender.name}</span>
+            <bdi className="font-semibold">{sender.name}</bdi>
             {sender.email && sender.email !== sender.name && (
-              <span className="ml-1.5 text-xs text-secondary">
+              <bdi className="ml-1.5 text-xs text-secondary">
                 {sender.email}
-              </span>
+              </bdi>
             )}
           </p>
           <button
@@ -398,7 +401,9 @@ export function MessageCard({
           >
             <span className="truncate">
               To{" "}
-              {message.to.map(displayName).join(", ") || "undisclosed people"}
+              {message.to.length > 0
+                ? isolatedList(message.to.map(displayName))
+                : "undisclosed people"}
             </span>
             <IconChevronDown
               size={14}

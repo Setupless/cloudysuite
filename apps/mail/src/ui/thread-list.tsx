@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { listingSearchParams, viewParam } from "../model";
 import { threadQuery } from "../queries";
 import type { ThreadId, ThreadSummary } from "../types";
-import { displayName, sendersLine } from "./format";
+import { displayName, senderNames } from "./format";
 import { useMailView } from "./mail-view-context";
+import { isolatedList } from "./people";
 import { ThreadDate } from "./states";
 import { RowLabels, useLabels } from "./label-chip";
 import { prefetchOpenBodies } from "./thread-pane";
@@ -92,7 +93,9 @@ function ThreadRow({
             <span
               className={`min-w-0 flex-1 truncate text-sm ${unread ? "font-semibold" : ""}`}
             >
-              {sendersLine(thread.senders)}
+              {thread.senders.length > 0
+                ? isolatedList(senderNames(thread.senders))
+                : "Unknown sender"}
               {thread.messageCount > 1 && (
                 <span className="ml-1.5 text-xs font-normal text-secondary">
                   {thread.messageCount}

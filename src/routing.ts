@@ -27,6 +27,10 @@ export type Gate =
   | { action: "refuse"; app: ToggleableApp }
   | { action: "notFound" };
 
+// `.localhost` never resolves publicly, so only a local dev server sees it.
+export const isLocalHost = (hostname: string) =>
+  hostname === "localhost" || hostname.endsWith(".localhost");
+
 export function isAppId(label: string): label is AppId {
   return Object.hasOwn(APPS, label);
 }

@@ -1,13 +1,10 @@
-import { APPS, type AppId } from "../../../src/routing";
+import { APPS, type AppId, isLocalHost } from "../../../src/routing";
 
 export type AppOrigins = Readonly<Record<AppId, string>>;
 
-const isLocal = (domain: string) =>
-  domain === "localhost" || domain.endsWith(".localhost");
-
-// A real deployment is always https on the default port. `.localhost` never
-// resolves publicly, so only local dev servers reach this branch, and they
-// differ in scheme and port: portless, vite dev, and wrangler dev.
+// A real deployment is always https on the default port. Only local dev servers
+// reach this branch, and they differ in scheme and port: portless, vite dev, and
+// wrangler dev.
 function localBase(request: Request): { protocol: string; port: string } {
   const url = new URL(request.url);
   const forwarded = request.headers.get("x-forwarded-proto");
@@ -24,7 +21,7 @@ export function appOrigins(
   primaryDomain: string,
   request: Request,
 ): AppOrigins {
-  const { protocol, port } = isLocal(primaryDomain)
+  const { protocol, port } = isLocalHost(primaryDomain)
     ? localBase(request)
     : { protocol: "https:", port: "" };
   const originOf = (app: AppId) => {
