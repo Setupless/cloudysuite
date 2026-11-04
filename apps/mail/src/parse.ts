@@ -57,8 +57,22 @@ export type ParsedMessage = {
   attachments: ParsedAttachment[];
 };
 
+// Direction controls could reorder the letters of a forged sender, or of the
+// address shown after a name. Other format characters stay, because some scripts
+// and emoji are spelled with them.
+const DIRECTION_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
 // A subject or name shows on one line, and a later reply copies it into a header.
-const singleLine = (value: string) => value.replace(/\p{Cc}+/gu, " ").trim();
+const singleLine = (value: string) =>
+  value
+    .replace(DIRECTION_CONTROLS, "")
+    .replace(/\p{Cc}+/gu, " ")
+    .trim();
+
+// Shown as a visible mark, not removed, so that a hidden character cannot turn a
+// lookalike into an exact copy of another address.
+const cleanAddress = (address: string) =>
+  address.replace(/[\p{Cc}\p{Cf}]/gu, "\ufffd");
 
 function flatten(addresses: ParsedAddress[] | undefined): Address[] {
   const flat: Address[] = [];
@@ -67,7 +81,7 @@ function flatten(addresses: ParsedAddress[] | undefined): Address[] {
       if (person.address) {
         flat.push({
           name: singleLine(person.name ?? ""),
-          address: person.address,
+          address: cleanAddress(person.address),
         });
       }
     }
