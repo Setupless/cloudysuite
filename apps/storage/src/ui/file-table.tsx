@@ -1,13 +1,13 @@
 import type { DriveId } from "@cloudysuite/access";
 import { Avatar, useHydrated } from "@cloudysuite/ui";
 import { IconFolder } from "@tabler/icons-react";
-import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { People } from "../functions";
 import type { DriveItem, FileItem, FolderItem, ItemId } from "../types";
 import { focusDetailsOnNextFile } from "./details-focus";
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
+import { FolderLink } from "./page-parts";
 import { personOf } from "./people";
 import { StarButton } from "./star-button";
 
@@ -72,11 +72,7 @@ function FolderRow({
   changed: string;
 }) {
   return (
-    <Link
-      to="/storage/drive/$driveId/$folderId"
-      params={{ driveId, folderId: folder.id }}
-      className={ROW}
-    >
+    <FolderLink driveId={driveId} folderId={folder.id} className={ROW}>
       <Cells
         icon={
           <span className="flex-none text-accent">
@@ -88,7 +84,7 @@ function FolderRow({
         changed={changed}
         size={itemCount(folder.contains)}
       />
-    </Link>
+    </FolderLink>
   );
 }
 
