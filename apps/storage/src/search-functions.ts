@@ -8,7 +8,8 @@ import {
   type StarredRow,
 } from "./across-drives";
 import { noAccess, openDriveAs, requireStorageUser } from "./access";
-import { type People, peopleOf } from "./people-lookup";
+import { ownersFor, type People, peopleOf } from "./people-lookup";
+import { parseSearch } from "./search-query";
 import { type ItemId, NO_SUCH_ITEM } from "./types";
 import {
   parseDriveInput,
@@ -17,17 +18,29 @@ import {
   refusal,
 } from "./wire";
 
+export type SearchOutcome =
+  | ({ status: "found"; people: People } & SearchAnswer)
+  | { status: "problem"; problem: string };
+
 export const searchEverything = createServerFn({ method: "GET" })
   .validator(parseSearchInput)
-  .handler(async ({ data }): Promise<SearchAnswer & { people: People }> => {
+  .handler(async ({ data }): Promise<SearchOutcome> => {
     const me = await requireStorageUser(getRequest());
+    const parsed = parseSearch(data.text, data.timeZone);
+    if (!parsed.ok) return { status: "problem", problem: parsed.problem };
+    const { owner, ...narrowing } = parsed.query;
+    const owners = owner && (await ownersFor(env.DB, me.id, owner));
+    if (owners && !Array.isArray(owners)) {
+      return { status: "problem", problem: owners.problem };
+    }
     const answer = await searchDrives(
       env.DB,
       me.id,
       (driveId) => openDriveAs(me.id, driveId),
-      data.text,
+      { ...narrowing, owners },
     );
     return {
+      status: "found",
       ...answer,
       people: await peopleOf(
         env.DB,

@@ -6,6 +6,7 @@ import { moveReceiver } from "./client";
 import { MIGRATIONS } from "./migrations";
 import { type MoveDelivery, movedBytes, type ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
+import type { DriveSearch } from "./search-query";
 import { SearchStore } from "./search-store";
 import { StarStore } from "./star-store";
 import {
@@ -427,8 +428,8 @@ export class Drive extends DurableObject<Env> {
     return this.#store.sharedWith(actor, limit);
   }
 
-  search(actor: Actor, text: string, limit: number): SearchResult {
-    return this.#search.search(actor, text, limit);
+  search(actor: Actor, search: DriveSearch, limit: number): SearchResult {
+    return this.#search.search(actor, search, limit);
   }
 
   async setStar(input: {

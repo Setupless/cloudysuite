@@ -7,7 +7,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { AttachmentId, MessageId } from "@cloudysuite/mail/client";
-import { MAX_SEARCH_LENGTH } from "./search-text";
+import { MAX_SEARCH_LENGTH } from "./search-query";
 import { type ItemId, parseItemId } from "./types";
 
 // Everything a browser sends to a Storage function passes through these.
@@ -212,11 +212,32 @@ export function parseStarInput(raw: unknown) {
   return { ...parseItemInput(raw), on };
 }
 
-// Any text is a fair thing to search for. Only its length is limited, by cutting it.
+// The reader's IANA time zone. No zone's name comes close to this.
+const MAX_TIME_ZONE_LENGTH = 64;
+
+// A browser on a badly set up machine, or one that knows a zone newer than the Worker's,
+// can't name a zone that works here. Reading its dates in UTC moves them a few hours,
+// which is better than refusing every search.
+function usableTimeZone(raw: unknown): string {
+  if (typeof raw !== "string" || raw.length > MAX_TIME_ZONE_LENGTH)
+    return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: raw });
+    return raw;
+  } catch {
+    return "UTC";
+  }
+}
+
+// Any text is a fair thing to search for. It's cut one past the limit, so an enormous
+// string never crosses to a Drive object and the parser still sees it was too long.
 export function parseSearchInput(raw: unknown) {
-  const { text } = record(raw);
+  const { text, timeZone } = record(raw);
   if (typeof text !== "string") throw badRequest();
-  return { text: text.slice(0, MAX_SEARCH_LENGTH) };
+  return {
+    text: text.slice(0, MAX_SEARCH_LENGTH + 1),
+    timeZone: usableTimeZone(timeZone),
+  };
 }
 
 export const parseDriveInput = (raw: unknown) => ({

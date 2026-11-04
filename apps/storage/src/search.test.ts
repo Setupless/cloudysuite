@@ -13,7 +13,11 @@ import type { DriveClient } from "./client";
 import { MIGRATIONS } from "./migrations";
 import { parseItemName } from "./names";
 import { searchDrives, starredAcrossDrives } from "./across-drives";
+import { fileTypeOf } from "./file-types";
+import { ownersFor, peopleMatching } from "./people-lookup";
+import { type DriveSearch, parseSearch } from "./search-query";
 import { SearchStore } from "./search-store";
+import { parseSearchInput } from "./wire";
 import { DriveStore } from "./store";
 import {
   ALICE,
@@ -56,12 +60,13 @@ async function upload(
   name: string,
   parentId: ItemId | null = null,
   drive: DriveClient = kit.drive,
+  mimeType = "image/png",
 ): Promise<FileItem> {
   const started = await drive.uploads.start({
     parentId,
     name,
     size: BYTES.length,
-    mimeType: "image/png",
+    mimeType,
     fingerprint: "print",
   });
   if (!started.ok) throw new Error(started.message);
@@ -77,8 +82,19 @@ const addToDrive = (role: string, userId: UserId = BOB, driveId = DRIVE_A) =>
     [driveId, userId, role],
   );
 
+const searchFor = (
+  text: string,
+  owners: UserId[] | null = null,
+): DriveSearch => {
+  const parsed = parseSearch(text, "UTC");
+  if (!parsed.ok) throw new Error(parsed.problem);
+  return { ...parsed.query, owners };
+};
+
 const names = async (drive: DriveClient, text: string) =>
-  (await drive.search(text, 50)).lines.map((line) => line.item.name).sort();
+  (await drive.search(searchFor(text), 50)).lines
+    .map((line) => line.item.name)
+    .sort();
 
 const opener = (userId: UserId) => async (driveId: DriveId) =>
   kit.open(await kit.grantFor(userId, driveId));
@@ -112,7 +128,7 @@ afterEach(() => {
 });
 
 test("someone on the drive finds anything in it, with its whole location", async () => {
-  const { lines } = await kit.drive.search("report", 50);
+  const { lines } = await kit.drive.search(searchFor("report"), 50);
   expect(lines.map((line) => line.item.name).sort()).toEqual([
     "brief report.png",
     "hero report.png",
@@ -127,7 +143,7 @@ test("someone on the drive finds anything in it, with its whole location", async
 
 test("a share holder finds only what's under their share, and sees no folder above it", async () => {
   await kit.drive.sharePeople(launch.id, [BOB], "view");
-  const { lines } = await bob.search("report", 50);
+  const { lines } = await bob.search(searchFor("report"), 50);
   expect(lines.map((line) => line.item.name).sort()).toEqual([
     "brief report.png",
     "hero report.png",
@@ -144,10 +160,23 @@ test("a share holder finds only what's under their share, and sees no folder abo
 
 test("a share's own item shows no parent, so its location holds nothing", async () => {
   await kit.drive.sharePeople(launch.id, [BOB], "view");
-  const { lines } = await bob.search("spring", 50);
+  const { lines } = await bob.search(searchFor("spring"), 50);
   expect(lines).toHaveLength(1);
   expect(lines[0]?.item.parentId).toBeNull();
   expect(lines[0]?.location).toEqual([]);
+});
+
+test("a share holder's filters find only what's under their share", async () => {
+  await kit.drive.sharePeople(board.id, [BOB], "view");
+  await bob.setStar(salaries.id, true);
+  await kit.drive.unshare(board.id, BOB);
+  await kit.drive.sharePeople(launch.id, [BOB], "view");
+  await bob.setStar(brief.id, true);
+  expect(await names(bob, "type:image report")).toEqual([
+    "brief report.png",
+    "hero report.png",
+  ]);
+  expect(await names(bob, "is:starred")).toEqual(["brief report.png"]);
 });
 
 test("a sibling's name can't be found through a share on the folder beside it", async () => {
@@ -170,7 +199,7 @@ test("moving something out of a shared folder stops it being found through the s
   await kit.drive.sharePeople(launch.id, [BOB], "view");
   await kit.drive.move(assets.id, kit.drive, board.id);
   expect(await names(bob, "hero")).toEqual([]);
-  const { lines } = await kit.drive.search("hero", 50);
+  const { lines } = await kit.drive.search(searchFor("hero"), 50);
   expect(lines[0]?.location).toEqual([
     "Marketing plans",
     "Board papers",
@@ -183,7 +212,7 @@ test("a share with everyone isn't searchable, nor named above a person's own sha
   expect(await names(bob, "report")).toEqual([]);
   expect((await bob.opened(brief.id))?.item.name).toBe("brief report.png");
   await kit.drive.sharePeople(launch.id, [BOB], "view");
-  const { lines } = await bob.search("brief", 50);
+  const { lines } = await bob.search(searchFor("brief"), 50);
   expect(lines[0]?.location).toEqual(["Spring launch"]);
   expect(await names(bob, "salaries")).toEqual([]);
 });
@@ -225,7 +254,7 @@ test("a rename shows at once: the old name stops matching and the new one starts
   expect(await names(kit.drive, "brief")).toEqual([]);
   expect(await names(kit.drive, "quarterly")).toEqual(["Quarterly plan.png"]);
   await kit.drive.rename(launch.id, named("Autumn launch"));
-  const { lines } = await kit.drive.search("quarterly", 50);
+  const { lines } = await kit.drive.search(searchFor("quarterly"), 50);
   expect(lines[0]?.location).toEqual(["Marketing plans", "Autumn launch"]);
 });
 
@@ -290,11 +319,14 @@ test("no text reaches the index as syntax, and none can cause an error", async (
     "x".repeat(10_000),
   ];
   for (const text of hostile) {
-    await expect(kit.drive.search(text, 50)).resolves.toBeDefined();
-    await expect(bob.search(text, 50)).resolves.toBeDefined();
+    const parsed = parseSearch(text, "UTC");
+    if (!parsed.ok) continue;
+    const search = { ...parsed.query, owners: null };
+    await expect(kit.drive.search(search, 50)).resolves.toBeDefined();
+    await expect(bob.search(search, 50)).resolves.toBeDefined();
   }
-  expect(await names(kit.drive, '"')).toEqual([]);
-  expect(await names(kit.drive, "*")).toEqual([]);
+  expect(parseSearch('"', "UTC").ok).toBe(false);
+  expect(parseSearch("*", "UTC").ok).toBe(false);
   expect(await names(kit.drive, "report*")).toHaveLength(3);
   expect(await names(kit.drive, "name:report")).toEqual([]);
   expect(
@@ -350,15 +382,15 @@ test("rows from before search existed are found, and stay in step afterwards", (
   const actor = { userId: ALICE, role: "manager" as const };
   const found = (text: string) =>
     search
-      .search(actor, text, 50)
+      .search(actor, searchFor(text), 50)
       .lines.map((line) => line.item.name)
       .sort();
   expect(found("old")).toEqual(["Old Résumés", "Old invoice.txt"]);
   expect(found("resumes")).toEqual(["Old Résumés"]);
   expect(found("bin")).toEqual([]);
-  expect(search.search(actor, "invoice", 50).lines[0]?.location).toEqual([
-    "Old Résumés",
-  ]);
+  expect(
+    search.search(actor, searchFor("invoice"), 50).lines[0]?.location,
+  ).toEqual(["Old Résumés"]);
   store.rename({
     actor,
     driveId: DRIVE_A,
@@ -371,17 +403,17 @@ test("rows from before search existed are found, and stay in step afterwards", (
 });
 
 test("a person's whole limit says there is more", async () => {
-  const { lines, more } = await kit.drive.search("report", 2);
+  const { lines, more } = await kit.drive.search(searchFor("report"), 2);
   expect(lines).toHaveLength(2);
   expect(more).toBe(true);
-  expect((await kit.drive.search("report", 3)).more).toBe(false);
+  expect((await kit.drive.search(searchFor("report"), 3)).more).toBe(false);
 });
 
 test("moving to another drive moves what search finds", async () => {
   await kit.drive.move(launch.id, kit.driveB, null);
   expect(await names(kit.drive, "hero")).toEqual([]);
   expect(await names(kit.driveB, "hero")).toEqual(["hero report.png"]);
-  const { lines } = await kit.driveB.search("hero", 50);
+  const { lines } = await kit.driveB.search(searchFor("hero"), 50);
   expect(lines[0]?.location).toEqual(["Spring launch", "Assets"]);
 });
 
@@ -389,7 +421,12 @@ test("searching everything names only drives the person is on", async () => {
   await upload("finance report.png", null, kit.driveB);
   addToDrive("viewer", BOB, DRIVE_B);
   await kit.drive.sharePeople(launch.id, [BOB], "view");
-  const answer = await searchDrives(kit.d1, BOB, opener(BOB), "report");
+  const answer = await searchDrives(
+    kit.d1,
+    BOB,
+    opener(BOB),
+    searchFor("report"),
+  );
   expect(answer.incomplete).toBe(false);
   const rows = Object.fromEntries(
     answer.rows.map((row) => [row.item.name, row.driveName]),
@@ -411,7 +448,7 @@ test("searching everything doesn't open a drive shared only with everyone", asyn
       asked.push(driveId);
       return opener(BOB)(driveId);
     },
-    "report",
+    searchFor("report"),
   );
   expect(asked).toEqual([]);
   expect(answer.rows).toEqual([]);
@@ -426,7 +463,7 @@ test("one drive failing leaves the others' results and says so", async () => {
       if (driveId === DRIVE_B) throw new Error("The object is unavailable");
       return opener(ALICE)(driveId);
     },
-    "report",
+    searchFor("report"),
   );
   expect(answer.incomplete).toBe(true);
   expect(answer.rows.map((row) => row.item.name).sort()).toEqual([
@@ -467,7 +504,7 @@ test("a drive that never answers leaves the others' results and says so", async 
   await upload("finance report.png", null, kit.driveB);
   jest.useFakeTimers();
   const { answer, afterMs } = await waited(
-    searchDrives(kit.d1, ALICE, stuckOn(DRIVE_B), "report"),
+    searchDrives(kit.d1, ALICE, stuckOn(DRIVE_B), searchFor("report")),
   );
   expect(afterMs).toBe(DEADLINE_MS);
   expect(answer.incomplete).toBe(true);
@@ -515,22 +552,22 @@ test("an answer that arrives after 5 seconds changes nothing", async () => {
         if (driveId === DRIVE_B) {
           return {
             ...client,
-            search: async (text: string, limit: number) => {
+            search: async (search: DriveSearch, limit: number) => {
               await after(6_000);
-              return { ...(await client.search(text, limit)), more: true };
+              return { ...(await client.search(search, limit)), more: true };
             },
           };
         }
         if (!slow.has(driveId)) return client;
         return {
           ...client,
-          search: async (text: string, limit: number) => {
+          search: async (search: DriveSearch, limit: number) => {
             await after(4_000);
-            return client.search(text, limit);
+            return client.search(search, limit);
           },
         };
       },
-      "report",
+      searchFor("report"),
     ),
   );
   expect(afterMs).toBe(DEADLINE_MS);
@@ -564,7 +601,7 @@ test("a refusal part way through isn't a failure", async () => {
       if (driveId === DRIVE_B) throw new Response(null, { status: 403 });
       return opener(ALICE)(driveId);
     },
-    "report",
+    searchFor("report"),
   );
   expect(answer.incomplete).toBe(false);
   expect(answer.rows).toHaveLength(3);
@@ -588,17 +625,17 @@ test("a whole page of many drives never asks more than a few at once", async () 
       const client = await opener(ALICE)(driveId);
       return {
         ...client,
-        search: async (text: string, limit: number) => {
+        search: async (search: DriveSearch, limit: number) => {
           open += 1;
           most = Math.max(most, open);
           await new Promise((resolve) => setTimeout(resolve, 1));
-          const found = await client.search(text, limit);
+          const found = await client.search(search, limit);
           open -= 1;
           return found;
         },
       };
     },
-    "report",
+    searchFor("report"),
   );
   expect(answer.rows).toHaveLength(3);
   expect(most).toBeGreaterThan(1);
@@ -709,9 +746,9 @@ test("a star on something opened from a share with everyone finds its way to the
   ]);
   expect(await starsOf(BOB)).toEqual(["brief report.png"]);
   // It doesn't make the drive searchable, or put it in Shared with me.
-  expect((await searchDrives(kit.d1, BOB, opener(BOB), "report")).rows).toEqual(
-    [],
-  );
+  expect(
+    (await searchDrives(kit.d1, BOB, opener(BOB), searchFor("report"))).rows,
+  ).toEqual([]);
   expect(await bob.sharedWith(50)).toEqual([]);
 
   await bob.setStar(brief.id, false);
@@ -777,7 +814,7 @@ test("one drive failing leaves the other stars and says so", async () => {
 });
 
 const foundIn = async (drive: DriveClient, text: string) =>
-  (await drive.search(text, 50)).lines.map((line) => line.item.name);
+  (await drive.search(searchFor(text), 50)).lines.map((line) => line.item.name);
 
 test("rows arriving from another drive aren't found until they unlock", async () => {
   await upload("Zebra.png");
@@ -846,4 +883,247 @@ test("a move the other drive refuses keeps its star and what search finds", asyn
   );
   expect(await foundIn(kit.drive, "yak")).toEqual(["Yak.png"]);
   expect(await kit.drive.starIds()).toEqual([file.id]);
+});
+
+test("a quoted phrase needs its words in that order, and its last word may be cut short", async () => {
+  expect(await names(kit.drive, '"spring launch"')).toEqual(["Spring launch"]);
+  expect(await names(kit.drive, '"spring lau"')).toEqual(["Spring launch"]);
+  expect(await names(kit.drive, '"launch spring"')).toEqual([]);
+  expect(await names(kit.drive, "launch spring")).toEqual(["Spring launch"]);
+});
+
+test("type: alone lists every match, and folders are a type", async () => {
+  expect(await names(kit.drive, "type:folder")).toEqual([
+    "Assets",
+    "Board papers",
+    "Marketing plans",
+    "Spring launch",
+  ]);
+  expect(await names(kit.drive, "type:image report")).toEqual([
+    "brief report.png",
+    "hero report.png",
+    "salaries report.png",
+  ]);
+  expect(await names(kit.drive, "type:pdf")).toEqual([]);
+  expect(await names(kit.drive, "TYPE:Folder spring")).toEqual([
+    "Spring launch",
+  ]);
+});
+
+test("type: finds exactly what shows that kind of icon", async () => {
+  const cases: [string, string][] = [
+    ["notes.TXT", "image/png"],
+    ["scan", "application/pdf"],
+    ["scan.PDF", "application/octet-stream"],
+    ["budget.xlsx", "text/plain"],
+    ["budget.csv", "text/csv"],
+    ["readme", "text/plain"],
+    ["clip.mov", "application/octet-stream"],
+    ["clip", "video/mp4"],
+    ["song.flac", "audio/flac"],
+    ["deck.pptx", "application/zip"],
+    ["archive.zip", "application/zip"],
+    ["photo.pdf.zip", "image/png"],
+    ["pdf", "application/octet-stream"],
+    ["Photo", "IMAGE/JPEG"],
+  ];
+  for (const [name, mimeType] of cases) {
+    await upload(name, null, kit.drive, mimeType);
+  }
+  const types = [
+    "pdf",
+    "image",
+    "document",
+    "spreadsheet",
+    "presentation",
+    "video",
+    "audio",
+  ] as const;
+  const found = async (type: string) =>
+    (await names(kit.drive, `type:${type}`)).filter(
+      (name) => !name.endsWith("report.png"),
+    );
+  for (const type of types) {
+    const expected = cases
+      .filter(([name, mimeType]) => fileTypeOf({ name, mimeType }) === type)
+      .map(([name]) => name);
+    expect({ type, found: await found(type) }).toEqual({
+      type,
+      found: expected.sort(),
+    });
+  }
+  expect(await found("pdf")).toEqual(["scan", "scan.PDF"]);
+  expect(await found("document")).toEqual(["notes.TXT", "readme"]);
+  expect(await found("image")).toEqual(["Photo", "photo.pdf.zip"]);
+});
+
+test("is:starred finds only what this person starred", async () => {
+  await addToDrive("viewer");
+  const viewer = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  await kit.drive.setStar(brief.id, true);
+  await viewer.setStar(hero.id, true);
+  expect(await names(kit.drive, "is:starred")).toEqual(["brief report.png"]);
+  expect(await names(viewer, "is:starred report")).toEqual(["hero report.png"]);
+});
+
+test("owner: finds what the named people added", async () => {
+  await addToDrive("editor");
+  const editor = kit.open(await kit.grantFor(BOB, DRIVE_A));
+  const bobs = await upload("bob report.png", null, editor);
+  const byBob = await kit.drive.search(searchFor("report", [BOB]), 50);
+  expect(byBob.lines.map((line) => line.item.id)).toEqual([bobs.id]);
+  expect(
+    (await kit.drive.search(searchFor("report", [ALICE, CAROL]), 50)).lines,
+  ).toHaveLength(3);
+});
+
+test("owner: words are matched against names and addresses like names are", async () => {
+  const ZOE = "user-zoe" as UserId;
+  kit.directory.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
+    ZOE,
+    "Zoë Ångström",
+    "z.angstrom@example.com",
+  ]);
+  expect(await peopleMatching(kit.d1, "zoe")).toEqual([ZOE]);
+  expect(await peopleMatching(kit.d1, "ANGSTROM zo")).toEqual([ZOE]);
+  expect(await peopleMatching(kit.d1, "z.angstrom@example.com")).toEqual([ZOE]);
+  expect(await peopleMatching(kit.d1, "lee")).toEqual([BOB]);
+  expect(await peopleMatching(kit.d1, "tone")).toEqual([]);
+  expect((await peopleMatching(kit.d1, "example")).sort()).toEqual(
+    [ALICE, BOB, CAROL, ZOE].sort(),
+  );
+});
+
+test("owner: means the searcher for me, and says so when no one or too many match", async () => {
+  const ownerOf = (text: string) => {
+    const parsed = parseSearch(text, "UTC");
+    if (!parsed.ok || !parsed.query.owner) throw new Error(text);
+    return parsed.query.owner;
+  };
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:me"))).toEqual([BOB]);
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:nobody"))).toEqual({
+    problem:
+      'No one here is called "nobody". Try part of their name or email address, or owner:me.',
+  });
+  const long = "q".repeat(60);
+  expect(await ownersFor(kit.d1, BOB, ownerOf(`owner:${long}`))).toEqual({
+    problem: `No one here is called "${"q".repeat(40)}…". Try part of their name or email address, or owner:me.`,
+  });
+  for (let n = 0; n < 51; n += 1) {
+    kit.directory.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
+      `user-sam-${n}`,
+      `Sam ${n}`,
+      `sam${n}@example.com`,
+    ]);
+  }
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:sam"))).toEqual({
+    problem: "Too many people match owner:sam. Add more of their name.",
+  });
+});
+
+test("after: and before: are the reader's own days", async () => {
+  setSystemTime(new Date("2026-03-01T12:00:00Z"));
+  await upload("march report.png");
+  setSystemTime(new Date("2026-03-02T02:00:00Z"));
+  await upload("late march report.png");
+  setSystemTime();
+  const on = (text: string, timeZone: string) => {
+    const parsed = parseSearch(text, timeZone);
+    if (!parsed.ok) throw new Error(parsed.problem);
+    return kit.drive
+      .search({ ...parsed.query, owners: null }, 50)
+      .then((found) => found.lines.map((line) => line.item.name).sort());
+  };
+  expect(await on("after:2026-03-01 before:2026-03-02", "UTC")).toEqual([
+    "march report.png",
+  ]);
+  // New York is five hours west of UTC in March, so 02:00 UTC on the 2nd is still the 1st.
+  expect(
+    await on("after:2026-03-01 before:2026-03-02", "America/New_York"),
+  ).toEqual(["late march report.png", "march report.png"]);
+  expect(await on("after:2026/3/2 before:2026-03-03", "UTC")).toEqual([
+    "late march report.png",
+  ]);
+});
+
+test("a date on the other side of a change of clocks starts at its own midnight", async () => {
+  const at = async (iso: string, name: string) => {
+    setSystemTime(new Date(iso));
+    await upload(name);
+  };
+  // Sydney is 11 hours ahead in November and 10 in June. Its clocks go forward at
+  // 02:00 on 4 October, after that day's midnight.
+  await at("2026-05-31T13:30:00Z", "sydney may 31.png");
+  await at("2026-05-31T14:30:00Z", "sydney june 1.png");
+  await at("2026-10-03T13:30:00Z", "sydney october 3.png");
+  await at("2026-10-03T14:30:00Z", "sydney october 4.png");
+  // Santiago's clocks jump from midnight to 01:00 on 6 September 2026.
+  await at("2026-09-06T03:30:00Z", "santiago sep 5.png");
+  await at("2026-09-06T04:30:00Z", "santiago sep 6.png");
+  setSystemTime(new Date("2026-11-05T00:00:00Z"));
+  const on = (text: string, timeZone: string) => {
+    const parsed = parseSearch(text, timeZone);
+    if (!parsed.ok) throw new Error(parsed.problem);
+    return kit.drive
+      .search({ ...parsed.query, owners: null }, 50)
+      .then((found) => found.lines.map((line) => line.item.name).sort());
+  };
+  expect(
+    await on("sydney after:2026-06-01 before:2026-06-02", "Australia/Sydney"),
+  ).toEqual(["sydney june 1.png"]);
+  expect(await on("sydney before:2026-06-01", "Australia/Sydney")).toEqual([
+    "sydney may 31.png",
+  ]);
+  expect(await on("sydney after:2026-10-04", "Australia/Sydney")).toEqual([
+    "sydney october 4.png",
+  ]);
+  expect(await on("santiago after:2026-09-06", "America/Santiago")).toEqual([
+    "santiago sep 6.png",
+  ]);
+  expect(await on("santiago before:2026-09-06", "America/Santiago")).toEqual([
+    "santiago sep 5.png",
+  ]);
+});
+
+test("a known operator with a value it can't use says so plainly", () => {
+  const problem = (text: string) => {
+    const parsed = parseSearch(text, "UTC");
+    return parsed.ok ? null : parsed.problem;
+  };
+  expect(problem("type:spaceship")).toContain("type:folder");
+  expect(problem("is:unread")).toBe(
+    "We can search is:starred, but not is:unread.",
+  );
+  expect(problem("after:2026-02-30")).toContain("2026-03-31");
+  expect(problem("before:soon")).toContain("2026-03-31");
+  expect(problem("owner:!!")).toContain("owner:me");
+  expect(problem("a ".repeat(17))).toContain("16");
+  expect(problem("x".repeat(201))).toContain("too long");
+  expect(problem("")).toBe("Type a word from the name of a file or folder.");
+  expect(problem("type: is: owner:")).toBeNull();
+});
+
+test("an operator nobody knows, or one with no value, is just words", async () => {
+  await upload("name report.png");
+  await upload("type of thing.png");
+  expect(await names(kit.drive, "name:report")).toEqual(["name report.png"]);
+  expect(await names(kit.drive, "type:")).toEqual(["type of thing.png"]);
+});
+
+test("a browser that can't name a usable time zone still searches, in UTC", () => {
+  for (const timeZone of [
+    undefined,
+    "Etc/Unknown",
+    "Foo/Bar",
+    5,
+    "x".repeat(65),
+  ]) {
+    expect(parseSearchInput({ text: "report", timeZone })).toEqual({
+      text: "report",
+      timeZone: "UTC",
+    });
+  }
+  expect(
+    parseSearchInput({ text: "report", timeZone: "Australia/Sydney" }).timeZone,
+  ).toBe("Australia/Sydney");
 });

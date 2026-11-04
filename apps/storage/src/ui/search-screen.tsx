@@ -9,7 +9,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { SearchRow } from "../across-drives";
 import { searchQuery } from "../queries";
-import { searchWords } from "../search-text";
+import { parseSearch } from "../search-query";
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import {
@@ -117,24 +117,22 @@ function ResultRow({ row, changed }: { row: SearchRow; changed: string }) {
   );
 }
 
+const Hint = ({ children }: { children: ReactNode }) => (
+  <p className="px-4 text-sm text-secondary">{children}</p>
+);
+
 function Results({ text }: { text: string }) {
-  const query = useQuery({
-    ...searchQuery(text),
-    enabled: searchWords(text).length > 0,
-  });
+  // Only whether it parses: the server reads it again with the reader's time zone.
+  const parsed = parseSearch(text, "UTC");
+  const query = useQuery({ ...searchQuery(text), enabled: parsed.ok });
   // The server knows neither the reader's time zone nor their language.
   const hydrated = useHydrated();
   const now = new Date();
 
-  if (searchWords(text).length === 0) {
-    return (
-      <p className="px-4 text-sm text-secondary">
-        Type a word from the name of a file or folder.
-      </p>
-    );
-  }
+  if (!parsed.ok) return <Hint>{parsed.problem}</Hint>;
   if (query.isError) return <Problem message={query.error.message} />;
   if (!query.data) return <LoadingRows />;
+  if (query.data.status === "problem") return <Hint>{query.data.problem}</Hint>;
   const { rows, more, incomplete } = query.data;
 
   return (
@@ -148,10 +146,10 @@ function Results({ text }: { text: string }) {
       )}
       {rows.length === 0 ? (
         !incomplete && (
-          <p className="px-4 text-sm text-secondary">
-            Nothing is called that. Check the spelling, or try fewer words.
-            Search looks at names, not what's inside files.
-          </p>
+          <Hint>
+            Nothing matched your search. Check the spelling, or take something
+            out of it. Search looks at names, not what's inside files.
+          </Hint>
         )
       ) : (
         <div>

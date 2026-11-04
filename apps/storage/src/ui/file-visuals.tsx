@@ -4,53 +4,29 @@ import {
   IconFileSpreadsheet,
   IconFileText,
   IconFileTypePdf,
+  IconMovie,
+  IconMusic,
   IconPhoto,
   IconPresentationAnalytics,
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import { useState } from "react";
+import { type FileType, fileTypeOf } from "../file-types";
 import { canPreview, type FileItem } from "../types";
 
-const EXTENSION_ICONS: Record<string, Icon> = {
+const TYPE_ICONS: Record<FileType, Icon> = {
   pdf: IconFileTypePdf,
-  csv: IconFileSpreadsheet,
-  numbers: IconFileSpreadsheet,
-  ods: IconFileSpreadsheet,
-  xls: IconFileSpreadsheet,
-  xlsx: IconFileSpreadsheet,
-  key: IconPresentationAnalytics,
-  odp: IconPresentationAnalytics,
-  ppt: IconPresentationAnalytics,
-  pptx: IconPresentationAnalytics,
-  doc: IconFileText,
-  docx: IconFileText,
-  md: IconFileText,
-  odt: IconFileText,
-  pages: IconFileText,
-  rtf: IconFileText,
-  txt: IconFileText,
-  avif: IconPhoto,
-  gif: IconPhoto,
-  heic: IconPhoto,
-  jpeg: IconPhoto,
-  jpg: IconPhoto,
-  png: IconPhoto,
-  svg: IconPhoto,
-  tif: IconPhoto,
-  tiff: IconPhoto,
-  webp: IconPhoto,
+  image: IconPhoto,
+  document: IconFileText,
+  spreadsheet: IconFileSpreadsheet,
+  presentation: IconPresentationAnalytics,
+  video: IconMovie,
+  audio: IconMusic,
 };
 
 function fileIcon(file: Pick<FileItem, "name" | "mimeType">): Icon {
-  const extension = file.name.split(".").at(-1)?.toLowerCase() ?? "";
-  const byExtension = Object.hasOwn(EXTENSION_ICONS, extension)
-    ? EXTENSION_ICONS[extension]
-    : undefined;
-  if (byExtension) return byExtension;
-  if (file.mimeType === "application/pdf") return IconFileTypePdf;
-  if (file.mimeType.startsWith("image/")) return IconPhoto;
-  if (file.mimeType.startsWith("text/")) return IconFileText;
-  return IconFile;
+  const type = fileTypeOf(file);
+  return type === null ? IconFile : TYPE_ICONS[type];
 }
 
 export function FileIcon({
