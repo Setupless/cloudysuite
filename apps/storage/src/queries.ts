@@ -184,7 +184,10 @@ export const searchQuery = (text: string) =>
     queryFn: () =>
       call(() =>
         searchEverything({
-          data: { text, offsetMinutes: new Date().getTimezoneOffset() },
+          data: {
+            text,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
         }),
       ),
     placeholderData: keepPreviousData,
@@ -239,7 +242,7 @@ export async function prefetchSearch(text: string) {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   // The server doesn't know the reader's time zone, which a date in the search needs.
-  const parsed = parseSearch(text, 0);
+  const parsed = parseSearch(text, "UTC");
   if (
     parsed.ok &&
     parsed.query.changedAfter === null &&

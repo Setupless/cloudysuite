@@ -7,7 +7,7 @@ export const MAX_SEARCH_LENGTH = 200;
 const MAX_WORDS = 16;
 
 export type ItemType = FileType | "folder";
-const ITEM_TYPES: readonly ItemType[] = ["folder", ...FILE_TYPES];
+export const ITEM_TYPES: readonly ItemType[] = ["folder", ...FILE_TYPES];
 
 // A term holds words of letters, numbers, and marks joined by single spaces, so it can't
 // close the quotes it goes inside or spell an FTS5 operator. A quoted phrase is one term.
@@ -41,10 +41,23 @@ export const wordsOf = (text: string): string[] =>
     .split(/[^\p{L}\p{N}\p{M}\p{Co}]+/u)
     .filter((word) => /[\p{L}\p{N}\p{Co}]/u.test(word));
 
-const shown = (value: string) =>
+export const shown = (value: string) =>
   value.length > 40 ? `${value.slice(0, 40)}…` : value;
 
-function dayStart(value: string, offsetMinutes: number): number | null {
+// How far ahead of UTC the clocks in a zone are at an instant, in milliseconds.
+function offsetAt(zone: Intl.DateTimeFormat, at: number): number {
+  const name = zone
+    .formatToParts(at)
+    .find((part) => part.type === "timeZoneName")?.value;
+  const match = /^GMT(?:([+-])(\d\d):(\d\d)(?::(\d\d))?)?$/.exec(name ?? "");
+  if (!match) throw new Error(`Unexpected time zone offset ${name}`);
+  const [, sign, hours = "0", minutes = "0", seconds = "0"] = match;
+  const ms =
+    ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+  return sign === "-" ? -ms : ms;
+}
+
+function dayStart(value: string, timeZone: string): number | null {
   const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(value);
   if (!match) return null;
   const [year, month, day] = match.slice(1).map(Number) as [
@@ -56,16 +69,28 @@ function dayStart(value: string, offsetMinutes: number): number | null {
   const utc = new Date(0);
   utc.setUTCFullYear(year, month - 1, day);
   if (utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
-  return utc.getTime() + offsetMinutes * 60_000;
+  const zone = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+  });
+  const midnight = utc.getTime();
+  // The offset at UTC midnight can be the one from before the clocks changed, so the
+  // offset at the first guess decides. When the clocks jump past midnight, that lands
+  // on the day before, and the day starts at the jump instead.
+  const early = midnight - offsetAt(zone, midnight);
+  const start = midnight - offsetAt(zone, early);
+  return start + offsetAt(zone, start) < midnight ? early : start;
 }
 
-const TYPE_LIST = ITEM_TYPES.map((type) => `type:${type}`).join(", ");
+const TYPE_CHOICES = `${ITEM_TYPES.slice(0, -1)
+  .map((type) => `type:${type}`)
+  .join(", ")}, or type:${ITEM_TYPES.at(-1)}`;
 
 // Anything that isn't a known operator with a usable value becomes plain words, and a
 // known operator with an unusable value gets a plain message. So no input can reach FTS5
-// as syntax. `offsetMinutes` is the reader's Date.getTimezoneOffset, which makes `before:`
-// and `after:` mean their own days.
-export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
+// as syntax. `timeZone` is the reader's IANA zone, which makes `before:` and `after:`
+// mean their own days.
+export function parseSearch(text: string, timeZone: string): ParsedSearch {
   if (text.length > MAX_SEARCH_LENGTH) {
     return {
       ok: false,
@@ -80,10 +105,8 @@ export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
     changedAfter: null,
     changedBefore: null,
   };
-  let wordCount = 0;
   const addWords = (words: string, asPhrase: boolean) => {
     const found = wordsOf(words);
-    wordCount += found.length;
     if (found.length === 0) return;
     const terms = asPhrase ? [found.join(" ")] : found;
     query.terms.push(...(terms as SearchTerm[]));
@@ -103,7 +126,7 @@ export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
       if (!type) {
         return {
           ok: false,
-          problem: `We can't search for type:${shown(value)}. Try ${TYPE_LIST}.`,
+          problem: `We can't search for type:${shown(value)}. Try ${TYPE_CHOICES}.`,
         };
       }
       query.type = type;
@@ -127,7 +150,7 @@ export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
         };
       }
     } else if ((operator === "before" || operator === "after") && value) {
-      const day = dayStart(value, offsetMinutes);
+      const day = dayStart(value, timeZone);
       if (day === null) {
         return {
           ok: false,
@@ -141,7 +164,7 @@ export function parseSearch(text: string, offsetMinutes: number): ParsedSearch {
     }
   }
 
-  if (wordCount > MAX_WORDS) {
+  if (query.terms.length > MAX_WORDS) {
     return {
       ok: false,
       problem: `That search has too many words. Use up to ${MAX_WORDS}.`,

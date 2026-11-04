@@ -147,7 +147,6 @@ export class SearchStore {
   }
 
   search(actor: Actor, search: DriveSearch, limit: number): SearchResult {
-    if (search.owners?.length === 0) return { lines: [], more: false };
     const ids = this.#matches(actor, search, limit + 1);
     return {
       lines: ids

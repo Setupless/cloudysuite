@@ -4,7 +4,7 @@ import { useIsFetching } from "@tanstack/react-query";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { MAX_SEARCH_LENGTH } from "../search-query";
+import { ITEM_TYPES, MAX_SEARCH_LENGTH } from "../search-query";
 
 const AFTER_TYPING_MS = 250;
 
@@ -36,9 +36,8 @@ function SearchHelp({ onClose }: { onClose: () => void }) {
       </dl>
       <p className="text-sm text-secondary">
         You can combine these, and a result must match all of them. The kinds
-        are folder, image, pdf, document, spreadsheet, presentation, video, and
-        audio. Search looks at names, not what's inside files, and Trash is left
-        out.
+        are {ITEM_TYPES.slice(0, -1).join(", ")}, and {ITEM_TYPES.at(-1)}.
+        Search looks at names, not what's inside files, and Trash is left out.
       </p>
       <div className="flex justify-end">
         <Button variant="quiet" autoFocus onClick={onClose}>

@@ -123,7 +123,7 @@ const Hint = ({ children }: { children: ReactNode }) => (
 
 function Results({ text }: { text: string }) {
   // Only whether it parses: the server reads it again with the reader's time zone.
-  const parsed = parseSearch(text, 0);
+  const parsed = parseSearch(text, "UTC");
   const query = useQuery({ ...searchQuery(text), enabled: parsed.ok });
   // The server knows neither the reader's time zone nor their language.
   const hydrated = useHydrated();
@@ -146,10 +146,10 @@ function Results({ text }: { text: string }) {
       )}
       {rows.length === 0 ? (
         !incomplete && (
-          <p className="px-4 text-sm text-secondary">
-            Nothing matches that. Check the spelling, or try fewer words. Search
-            looks at names, not what's inside files.
-          </p>
+          <Hint>
+            Nothing matched your search. Check the spelling, or take something
+            out of it. Search looks at names, not what's inside files.
+          </Hint>
         )
       ) : (
         <div>

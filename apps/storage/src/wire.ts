@@ -212,23 +212,23 @@ export function parseStarInput(raw: unknown) {
   return { ...parseItemInput(raw), on };
 }
 
-// The reader's Date.getTimezoneOffset, in minutes. No place is more than 14 hours
-// from UTC.
-const MAX_OFFSET_MINUTES = 14 * 60;
+// The reader's IANA time zone. No zone's name comes close to this.
+const MAX_TIME_ZONE_LENGTH = 64;
 
 // Any text is a fair thing to search for. It's cut one past the limit, so an enormous
 // string never crosses to a Drive object and the parser still sees it was too long.
 export function parseSearchInput(raw: unknown) {
-  const { text, offsetMinutes } = record(raw);
+  const { text, timeZone } = record(raw);
   if (typeof text !== "string") throw badRequest();
-  if (
-    typeof offsetMinutes !== "number" ||
-    !Number.isSafeInteger(offsetMinutes) ||
-    Math.abs(offsetMinutes) > MAX_OFFSET_MINUTES
-  ) {
+  if (typeof timeZone !== "string" || timeZone.length > MAX_TIME_ZONE_LENGTH) {
     throw badRequest();
   }
-  return { text: text.slice(0, MAX_SEARCH_LENGTH + 1), offsetMinutes };
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+  } catch {
+    throw badRequest();
+  }
+  return { text: text.slice(0, MAX_SEARCH_LENGTH + 1), timeZone };
 }
 
 export const parseDriveInput = (raw: unknown) => ({

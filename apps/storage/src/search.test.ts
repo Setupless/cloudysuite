@@ -14,7 +14,7 @@ import { MIGRATIONS } from "./migrations";
 import { parseItemName } from "./names";
 import { searchDrives, starredAcrossDrives } from "./across-drives";
 import { fileTypeOf } from "./file-types";
-import { peopleMatching } from "./people-lookup";
+import { ownersFor, peopleMatching } from "./people-lookup";
 import { type DriveSearch, parseSearch } from "./search-query";
 import { SearchStore } from "./search-store";
 import { DriveStore } from "./store";
@@ -85,7 +85,7 @@ const searchFor = (
   text: string,
   owners: UserId[] | null = null,
 ): DriveSearch => {
-  const parsed = parseSearch(text, 0);
+  const parsed = parseSearch(text, "UTC");
   if (!parsed.ok) throw new Error(parsed.problem);
   return { ...parsed.query, owners };
 };
@@ -163,6 +163,19 @@ test("a share's own item shows no parent, so its location holds nothing", async 
   expect(lines).toHaveLength(1);
   expect(lines[0]?.item.parentId).toBeNull();
   expect(lines[0]?.location).toEqual([]);
+});
+
+test("a share holder's filters find only what's under their share", async () => {
+  await kit.drive.sharePeople(board.id, [BOB], "view");
+  await bob.setStar(salaries.id, true);
+  await kit.drive.unshare(board.id, BOB);
+  await kit.drive.sharePeople(launch.id, [BOB], "view");
+  await bob.setStar(brief.id, true);
+  expect(await names(bob, "type:image report")).toEqual([
+    "brief report.png",
+    "hero report.png",
+  ]);
+  expect(await names(bob, "is:starred")).toEqual(["brief report.png"]);
 });
 
 test("a sibling's name can't be found through a share on the folder beside it", async () => {
@@ -305,14 +318,14 @@ test("no text reaches the index as syntax, and none can cause an error", async (
     "x".repeat(10_000),
   ];
   for (const text of hostile) {
-    const parsed = parseSearch(text, 0);
+    const parsed = parseSearch(text, "UTC");
     if (!parsed.ok) continue;
     const search = { ...parsed.query, owners: null };
     await expect(kit.drive.search(search, 50)).resolves.toBeDefined();
     await expect(bob.search(search, 50)).resolves.toBeDefined();
   }
-  expect(parseSearch('"', 0).ok).toBe(false);
-  expect(parseSearch("*", 0).ok).toBe(false);
+  expect(parseSearch('"', "UTC").ok).toBe(false);
+  expect(parseSearch("*", "UTC").ok).toBe(false);
   expect(await names(kit.drive, "report*")).toHaveLength(3);
   expect(await names(kit.drive, "name:report")).toEqual([]);
   expect(
@@ -925,19 +938,22 @@ test("type: finds exactly what shows that kind of icon", async () => {
     "video",
     "audio",
   ] as const;
+  const found = async (type: string) =>
+    (await names(kit.drive, `type:${type}`)).filter(
+      (name) => !name.endsWith("report.png"),
+    );
   for (const type of types) {
     const expected = cases
       .filter(([name, mimeType]) => fileTypeOf({ name, mimeType }) === type)
       .map(([name]) => name);
-    const found = (await names(kit.drive, `type:${type}`)).filter(
-      (name) => !name.endsWith("report.png"),
-    );
-    expect({ type, found }).toEqual({ type, found: expected.sort() });
+    expect({ type, found: await found(type) }).toEqual({
+      type,
+      found: expected.sort(),
+    });
   }
-  expect(fileTypeOf({ name: "photo.pdf.zip", mimeType: "image/png" })).toBe(
-    "image",
-  );
-  expect(fileTypeOf({ name: "pdf", mimeType: "x/y" })).toBeNull();
+  expect(await found("pdf")).toEqual(["scan", "scan.PDF"]);
+  expect(await found("document")).toEqual(["notes.TXT", "readme"]);
+  expect(await found("image")).toEqual(["Photo", "photo.pdf.zip"]);
 });
 
 test("is:starred finds only what this person starred", async () => {
@@ -958,10 +974,6 @@ test("owner: finds what the named people added", async () => {
   expect(
     (await kit.drive.search(searchFor("report", [ALICE, CAROL]), 50)).lines,
   ).toHaveLength(3);
-  expect(await kit.drive.search(searchFor("report", []), 50)).toEqual({
-    lines: [],
-    more: false,
-  });
 });
 
 test("owner: words are matched against names and addresses like names are", async () => {
@@ -981,35 +993,100 @@ test("owner: words are matched against names and addresses like names are", asyn
   );
 });
 
+test("owner: means the searcher for me, and says so when no one or too many match", async () => {
+  const ownerOf = (text: string) => {
+    const parsed = parseSearch(text, "UTC");
+    if (!parsed.ok || !parsed.query.owner) throw new Error(text);
+    return parsed.query.owner;
+  };
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:me"))).toEqual([BOB]);
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:nobody"))).toEqual({
+    problem:
+      'No one here is called "nobody". Try part of their name or email address, or owner:me.',
+  });
+  const long = "q".repeat(60);
+  expect(await ownersFor(kit.d1, BOB, ownerOf(`owner:${long}`))).toEqual({
+    problem: `No one here is called "${"q".repeat(40)}…". Try part of their name or email address, or owner:me.`,
+  });
+  for (let n = 0; n < 51; n += 1) {
+    kit.directory.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
+      `user-sam-${n}`,
+      `Sam ${n}`,
+      `sam${n}@example.com`,
+    ]);
+  }
+  expect(await ownersFor(kit.d1, BOB, ownerOf("owner:sam"))).toEqual({
+    problem: "Too many people match owner:sam. Add more of their name.",
+  });
+});
+
 test("after: and before: are the reader's own days", async () => {
   setSystemTime(new Date("2026-03-01T12:00:00Z"));
   await upload("march report.png");
   setSystemTime(new Date("2026-03-02T02:00:00Z"));
   await upload("late march report.png");
   setSystemTime();
-  const on = (text: string, offsetMinutes: number) => {
-    const parsed = parseSearch(text, offsetMinutes);
+  const on = (text: string, timeZone: string) => {
+    const parsed = parseSearch(text, timeZone);
     if (!parsed.ok) throw new Error(parsed.problem);
     return kit.drive
       .search({ ...parsed.query, owners: null }, 50)
       .then((found) => found.lines.map((line) => line.item.name).sort());
   };
-  expect(await on("after:2026-03-01 before:2026-03-02", 0)).toEqual([
+  expect(await on("after:2026-03-01 before:2026-03-02", "UTC")).toEqual([
     "march report.png",
   ]);
-  // Five hours west of UTC, 02:00 UTC on the 2nd is still the 1st.
-  expect(await on("after:2026-03-01 before:2026-03-02", 300)).toEqual([
+  // New York is five hours west of UTC in March, so 02:00 UTC on the 2nd is still the 1st.
+  expect(
+    await on("after:2026-03-01 before:2026-03-02", "America/New_York"),
+  ).toEqual(["late march report.png", "march report.png"]);
+  expect(await on("after:2026/3/2 before:2026-03-03", "UTC")).toEqual([
     "late march report.png",
-    "march report.png",
   ]);
-  expect(await on("after:2026/3/2 before:2026-03-03", 0)).toEqual([
-    "late march report.png",
+});
+
+test("a date on the other side of a change of clocks starts at its own midnight", async () => {
+  const at = async (iso: string, name: string) => {
+    setSystemTime(new Date(iso));
+    await upload(name);
+  };
+  // Sydney is 11 hours ahead in November and 10 in June. Its clocks go forward at
+  // 02:00 on 4 October, after that day's midnight.
+  await at("2026-05-31T13:30:00Z", "sydney may 31.png");
+  await at("2026-05-31T14:30:00Z", "sydney june 1.png");
+  await at("2026-10-03T13:30:00Z", "sydney october 3.png");
+  await at("2026-10-03T14:30:00Z", "sydney october 4.png");
+  // Santiago's clocks jump from midnight to 01:00 on 6 September 2026.
+  await at("2026-09-06T03:30:00Z", "santiago sep 5.png");
+  await at("2026-09-06T04:30:00Z", "santiago sep 6.png");
+  setSystemTime(new Date("2026-11-05T00:00:00Z"));
+  const on = (text: string, timeZone: string) => {
+    const parsed = parseSearch(text, timeZone);
+    if (!parsed.ok) throw new Error(parsed.problem);
+    return kit.drive
+      .search({ ...parsed.query, owners: null }, 50)
+      .then((found) => found.lines.map((line) => line.item.name).sort());
+  };
+  expect(
+    await on("sydney after:2026-06-01 before:2026-06-02", "Australia/Sydney"),
+  ).toEqual(["sydney june 1.png"]);
+  expect(await on("sydney before:2026-06-01", "Australia/Sydney")).toEqual([
+    "sydney may 31.png",
+  ]);
+  expect(await on("sydney after:2026-10-04", "Australia/Sydney")).toEqual([
+    "sydney october 4.png",
+  ]);
+  expect(await on("santiago after:2026-09-06", "America/Santiago")).toEqual([
+    "santiago sep 6.png",
+  ]);
+  expect(await on("santiago before:2026-09-06", "America/Santiago")).toEqual([
+    "santiago sep 5.png",
   ]);
 });
 
 test("a known operator with a value it can't use says so plainly", () => {
   const problem = (text: string) => {
-    const parsed = parseSearch(text, 0);
+    const parsed = parseSearch(text, "UTC");
     return parsed.ok ? null : parsed.problem;
   };
   expect(problem("type:spaceship")).toContain("type:folder");
@@ -1030,10 +1107,4 @@ test("an operator nobody knows, or one with no value, is just words", async () =
   await upload("type of thing.png");
   expect(await names(kit.drive, "name:report")).toEqual(["name report.png"]);
   expect(await names(kit.drive, "type:")).toEqual(["type of thing.png"]);
-  const parsed = parseSearch("owner:me is:starred", 0);
-  expect(parsed.ok && parsed.query).toMatchObject({
-    owner: { kind: "me" },
-    starred: true,
-    terms: [],
-  });
 });
