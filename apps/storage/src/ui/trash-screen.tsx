@@ -8,6 +8,8 @@ import {
 import {
   type DehydratedState,
   HydrationBoundary,
+  useIsMutating,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -64,8 +66,17 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
   const restore = useRestore();
   const hydrated = useHydrated();
   const [confirming, setConfirming] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const { entry, drive } = line;
+  // Kept by the query client, not this panel, so choosing it again while it runs still
+  // shows it running.
+  const restoreKey = ["restore", drive.id, entry.id];
+  const restoring = useIsMutating({ mutationKey: restoreKey }) > 0;
+  const restoreThis = useMutation({
+    mutationKey: restoreKey,
+    mutationFn: async () => {
+      if (await restore(drive.id, entry.id, entry.name)) onGone();
+    },
+  });
   const when = (timestamp: number) =>
     hydrated ? formatChanged(timestamp, new Date()) : " ";
   const facts: [string, string][] = [
@@ -94,11 +105,7 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
             variant="toolbar"
             icon={IconRestore}
             pending={restoring}
-            onClick={async () => {
-              setRestoring(true);
-              if (await restore(drive.id, entry.id, entry.name)) onGone();
-              else setRestoring(false);
-            }}
+            onClick={() => restoreThis.mutate()}
           >
             Restore
           </Button>
@@ -248,7 +255,10 @@ function Trash() {
         <Panel
           key={keyOf(chosen)}
           line={chosen}
-          onGone={() => setSelected(null)}
+          onGone={() => {
+            const gone = keyOf(chosen);
+            setSelected((current) => (current === gone ? null : current));
+          }}
         />
       ) : (
         <NothingChosenPanel message="Choose something to see its details." />
