@@ -69,3 +69,50 @@ test("a call to an app that is off is refused and refuses to be framed", async (
   );
   expectUnframeableAndUnstored(response);
 });
+
+test.each([
+  [
+    "GET",
+    "http://auth.example.com/sign-in?returnTo=x",
+    "https://auth.example.com/sign-in?returnTo=x",
+  ],
+  [
+    "POST",
+    "http://mail.example.com/_serverFn/abc",
+    "https://mail.example.com/_serverFn/abc",
+  ],
+  ["GET", "http://auth.example.com:8080/", "https://auth.example.com/"],
+  [
+    "GET",
+    "http://localhost.attacker.example/",
+    "https://localhost.attacker.example/",
+  ],
+])(
+  "%s %s moves to the same address over https",
+  async (method, address, secure) => {
+    const response = await workerWith()(address, { method });
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get("Location")).toBe(secure);
+  },
+);
+
+test("an https page is pinned to https", async () => {
+  const response = await workerWith()("https://mail.example.com/");
+
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("page");
+  expect(response.headers.get("Strict-Transport-Security")).toBe(
+    "max-age=31536000",
+  );
+});
+
+test.each([
+  "http://auth.cloudysuite.localhost:8787/",
+  "http://localhost:8787/setup",
+])("a local dev server at %s is neither moved nor pinned", async (address) => {
+  const response = await workerWith()(address);
+
+  expect(response.status).toBe(404);
+  expect(response.headers.has("Strict-Transport-Security")).toBe(false);
+});
