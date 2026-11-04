@@ -19,6 +19,7 @@ import {
   NOTICE_INDEX_RETRY_MS,
   type PartPlan,
   SHARE_INDEX_RETRY_MS,
+  type StoredFile,
   USAGE_RETRY_MS,
 } from "./store";
 import type {
@@ -103,8 +104,8 @@ export class Drive extends DurableObject<Env> {
     return this.#store.recent(actor, limit);
   }
 
-  r2KeyOf(actor: Actor, id: ItemId): string | null {
-    return this.#store.r2KeyOf(actor, id);
+  storedFile(actor: Actor, id: ItemId): StoredFile | null {
+    return this.#store.storedFile(actor, id);
   }
 
   mayAddTo(actor: Actor, parentId: ItemId | null): boolean {

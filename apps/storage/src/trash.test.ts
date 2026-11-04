@@ -164,6 +164,7 @@ test("deleting a folder takes its contents, shows one line, and restores as one 
   expect(usage()).toEqual({ bytes: 10, files: 0 });
   expect(await kit.drive.list(inner.id, null)).toBeNull();
   expect((await downloadResponse(kit.drive, deep.id)).status).toBe(404);
+  expect((await previewResponse(kit.drive, deep.id)).status).toBe(404);
   expect(await kit.drive.trashEntries(10)).toMatchObject([
     { name: "Docs", kind: "folder", size: 10, contains: 3 },
   ]);

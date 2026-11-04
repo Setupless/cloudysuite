@@ -226,7 +226,7 @@ test("saving copies the same bytes into My files and counts towards its usage", 
   );
   const download = await client.download(item!.id);
   expect(
-    new Uint8Array(await new Response(download!.body).arrayBuffer()),
+    new Uint8Array(await new Response(await download!.read()).arrayBuffer()),
   ).toEqual(bytes);
   expect(fixture.myDrive()).toMatchObject({
     used_bytes: bytes.byteLength,
@@ -246,9 +246,9 @@ test("a large attachment is saved in parts and arrives whole", async () => {
     await fixture.grantFor(ALICE, fixture.myDrive()!.id as never),
   );
   const download = await client.download(item!.id);
-  expect(Bun.hash(await new Response(download!.body).arrayBuffer())).toBe(
-    Bun.hash(bytes),
-  );
+  expect(
+    Bun.hash(await new Response(await download!.read()).arrayBuffer()),
+  ).toBe(Bun.hash(bytes));
 });
 
 test("saving twice stores one file", async () => {

@@ -16,8 +16,9 @@ export async function downloadResponse(
   itemId: ItemId,
 ): Promise<Response> {
   const download = await drive.download(itemId);
-  if (!download) return notFound();
-  return new Response(download.body, {
+  const body = await download?.read();
+  if (!download || !body) return notFound();
+  return new Response(body, {
     headers: downloadHeaders(
       download.file.name,
       download.file.mimeType,
@@ -34,17 +35,18 @@ export async function previewResponse(
   drive: DriveClient,
   itemId: ItemId,
 ): Promise<Response> {
-  const file = await drive.file(itemId);
-  if (!file) return notFound();
+  const download = await drive.download(itemId);
+  if (!download) return notFound();
+  const { file } = download;
   if (!canPreview(file)) {
     return plainText(
       415,
       "This file can't be shown here. Download it to open it.",
     );
   }
-  const download = await drive.download(itemId);
-  if (!download) return notFound();
-  return new Response(download.body, {
+  const body = await download.read();
+  if (!body) return notFound();
+  return new Response(body, {
     headers: {
       "Content-Type": file.mimeType,
       "Content-Length": String(file.size),

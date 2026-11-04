@@ -8,7 +8,7 @@ import {
 } from "@cloudysuite/access";
 import type { MoveDelivery, ReceiveResult } from "./moves";
 import type { ParsedName } from "./names";
-import type { Actor } from "./store";
+import type { Actor, StoredFile } from "./store";
 import { driveStub } from "./stub";
 import type {
   CloseResult,
@@ -33,7 +33,11 @@ import type {
 } from "./types";
 import { createDriveUploads, type DriveUploads } from "./uploads";
 
-export type FileDownload = { file: FileItem; body: ReadableStream };
+// The bytes are read only when asked for, so a refusal based on the file costs no R2 read.
+export type FileDownload = {
+  file: FileItem;
+  read(): Promise<ReadableStream | null>;
+};
 
 export type DriveClient = {
   driveId: DriveId;
@@ -159,10 +163,13 @@ export function openDrive(env: Env, grant: DriveGrant): DriveClient {
     emptyTrash: () => stub.emptyTrash(actor),
 
     async download(id) {
-      const found = await file(id);
-      const key = found && (await stub.r2KeyOf(actor, id));
-      const object = key ? await env.BUCKET.get(key) : null;
-      return found && object ? { file: found, body: object.body } : null;
+      const stored = (await stub.storedFile(actor, id)) as StoredFile | null;
+      return (
+        stored && {
+          file: stored.file,
+          read: async () => (await env.BUCKET.get(stored.r2Key))?.body ?? null,
+        }
+      );
     },
 
     sharePeople: async (id, people, level) =>
