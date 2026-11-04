@@ -1,4 +1,4 @@
-import { Button, Modal, Notice } from "@cloudysuite/ui";
+import { Button, Modal, Notice, Spinner } from "@cloudysuite/ui";
 import {
   IconArrowLeft,
   IconChevronDown,
@@ -121,6 +121,10 @@ type Loaded = {
 
 const EMPTY: Loaded = { draft: null, quoteHtml: null, notice: null };
 
+// What the person asked the editor to do. Only one runs at a time.
+type EditorWork = "send" | "close" | "copy" | "discard";
+type SaveState = "unsaved" | "saving" | "saved";
+
 // What decides whether a save holds anything new. The address it goes out from and leaving
 // out the quote choose among what's there, so they aren't new words.
 const wordsOf = ({ to, cc, bcc, subject, html }: DraftContent) =>
@@ -236,12 +240,7 @@ function AttachmentList({
           key={`${name}-${index}`}
           className="flex max-w-full items-center gap-2 rounded border border-line px-2.5 py-1 text-sm text-secondary"
         >
-          <IconPaperclip
-            size={14}
-            stroke={1.75}
-            className="flex-none"
-            aria-hidden
-          />
+          <Spinner size={14} />
           <span className="min-w-0 truncate">{name}</span>
           <span className="flex-none text-xs">Uploading…</span>
         </li>
@@ -291,10 +290,10 @@ function EditorForm({
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const [leftOutNotice, setLeftOutNotice] = useState<string | null>(null);
   const [notThreaded, setNotThreaded] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [working, setWorking] = useState<EditorWork | null>(null);
   const [locked, setLocked] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("unsaved");
 
   const body = useRef<HTMLDivElement>(null);
   // The last save runs as the form unmounts, when the editor element has already gone.
@@ -545,7 +544,7 @@ function EditorForm({
           const adds = addsSomething(content);
           const onServer = revision.current > 0;
           if (!adds) {
-            setSaved(false);
+            setSaveState("unsaved");
             await forgetHere();
           }
           if (adds ? !changed : !(leaving && onServer)) return;
@@ -559,6 +558,7 @@ function EditorForm({
           }
           // Files uploaded while this is on its way aren't in what the server answers with.
           const had = attachmentsNow.current;
+          if (adds) setSaveState("saving");
           try {
             const result = await callAction(() =>
               saveDraft({
@@ -610,7 +610,7 @@ function EditorForm({
                 lockedNow.current = false;
                 setLocked(false);
                 setProblem(null);
-                setSaved(true);
+                setSaveState("saved");
                 moveSession(session.editor, result.id);
                 setAttachments(result.files);
                 await noteLeftOut(had, content, result.holds, result.changed);
@@ -620,7 +620,7 @@ function EditorForm({
                   lockedNow.current = true;
                   dirty.current = true;
                   setLocked(true);
-                  setSaved(false);
+                  setSaveState("unsaved");
                   await keepHere(content);
                 }
                 return;
@@ -629,7 +629,7 @@ function EditorForm({
             await forgetHere();
             adoptRevision(result.revision);
             agreed.current = wordsOf(content);
-            setSaved(true);
+            setSaveState("saved");
             if (!onServer) adoptCarried(result.carried);
             await noteLeftOut(had, content, result.holds);
           } catch (error) {
@@ -660,6 +660,7 @@ function EditorForm({
         })
         .finally(() => {
           if (changed) savesUnderWay.current -= 1;
+          setSaveState((state) => (state === "saving" ? "unsaved" : state));
         });
       return saving.current;
     },
@@ -717,7 +718,7 @@ function EditorForm({
     if (body.current) lastHtml.current = body.current.innerHTML;
     void getReadyToKeepNow(userId).catch(() => {});
     dirty.current = true;
-    setSaved(false);
+    setSaveState("unsaved");
     clearTimeout(timer.current);
     timer.current = setTimeout(
       () => void flush(),
@@ -818,6 +819,16 @@ function EditorForm({
   }, [flush]);
 
   const closeEditor = async () => {
+    if (working) return;
+    setWorking("close");
+    try {
+      await keepAndClose();
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const keepAndClose = async () => {
     const lockedBefore = lockedNow.current;
     const leftOutBefore = leftOutFound.current;
     const movedBefore = movedFound.current;
@@ -848,6 +859,7 @@ function EditorForm({
   };
 
   const discard = async () => {
+    setWorking("discard");
     discarding.current = true;
     clearTimeout(timer.current);
     dirty.current = false;
@@ -878,6 +890,7 @@ function EditorForm({
       });
     } catch (error) {
       discarding.current = false;
+      setWorking(null);
       if (outlasting) {
         refreshList();
         toast({ tone: "danger", message: DISCARD_UNFINISHED });
@@ -889,6 +902,15 @@ function EditorForm({
   };
 
   const saveAsNewDraft = async () => {
+    setWorking("copy");
+    try {
+      await saveCopy();
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const saveCopy = async () => {
     const movedBefore = movedFound.current;
     const failedBefore = failedSaveCount.current;
     dirty.current = true;
@@ -910,7 +932,7 @@ function EditorForm({
   };
 
   const send = async () => {
-    if (sending || uploading.length > 0) {
+    if (working || uploading.length > 0) {
       if (uploading.length > 0)
         setProblem("Wait for your files to finish uploading.");
       return;
@@ -920,7 +942,7 @@ function EditorForm({
       return;
     }
     setProblem(null);
-    setSending(true);
+    setWorking("send");
     // Anything typed while a save runs isn't a reason to stop: Send reads the fields again.
     const stoppedBySaving = async (aim: SaveAim) => {
       const leftOutBefore = leftOutFound.current;
@@ -928,14 +950,14 @@ function EditorForm({
       dirty.current = true;
       await flush(false, aim);
       if (saveFailed.current) {
-        setSending(false);
+        setWorking(null);
         setProblem(
           `We couldn't send this, because the latest version wouldn't save. ${lastSaveError.current}`,
         );
         return true;
       }
       if (lockedNow.current || leftOutFound.current !== leftOutBefore) {
-        setSending(false);
+        setWorking(null);
         return true;
       }
       return false;
@@ -979,7 +1001,7 @@ function EditorForm({
     } catch (error) {
       sendingNow.current = false;
       dirty.current = true;
-      setSending(false);
+      setWorking(null);
       setProblem((error as Error).message);
       void flush();
     }
@@ -1170,9 +1192,13 @@ function EditorForm({
           aria-label="Close and keep as a draft"
           title="Close and keep as a draft"
           onClick={() => void closeEditor()}
-          className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field focus-visible:outline-2"
+          disabled={working !== null}
+          aria-busy={working === "close" || undefined}
+          className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress"
         >
-          {isPanel ? (
+          {working === "close" ? (
+            <Spinner />
+          ) : isPanel ? (
             <>
               <IconArrowLeft
                 size={20}
@@ -1195,11 +1221,13 @@ function EditorForm({
           {title}
         </h2>
         <span role="status" className="flex-none text-xs text-secondary">
-          {saved
-            ? "Saved"
-            : (offline || locked) && dirty.current
-              ? "Kept on this device"
-              : ""}
+          {saveState === "saving"
+            ? "Saving…"
+            : saveState === "saved"
+              ? "Saved"
+              : (offline || locked) && dirty.current
+                ? "Kept on this device"
+                : ""}
         </span>
       </header>
 
@@ -1215,9 +1243,12 @@ function EditorForm({
             <button
               type="button"
               onClick={() => void saveAsNewDraft()}
-              className="cursor-pointer font-medium underline outline-accent focus-visible:outline-2"
+              disabled={working !== null}
+              aria-busy={working === "copy" || undefined}
+              className="inline-flex cursor-pointer items-center gap-1 font-medium underline outline-accent focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress"
             >
               Save as a new draft
+              {working === "copy" && <Spinner size={14} />}
             </button>
           </Notice>
         )}
@@ -1339,10 +1370,11 @@ function EditorForm({
         <Button
           variant="action"
           icon={IconSend}
-          disabled={sending || locked}
+          pending={working === "send"}
+          disabled={locked || working !== null}
           onClick={() => void send()}
         >
-          {sending ? "Sending…" : "Send"}
+          Send
         </Button>
         <input
           ref={fileInput}
@@ -1384,7 +1416,8 @@ function EditorForm({
               setConfirmingDiscard(true);
             }
           }}
-          className="flex size-9 cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2"
+          disabled={working !== null}
+          className="flex size-9 cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2 disabled:cursor-default disabled:opacity-60"
         >
           <IconTrash size={18} stroke={1.75} aria-hidden />
         </button>
@@ -1393,6 +1426,7 @@ function EditorForm({
         <Modal
           title="Discard this draft?"
           onClose={() => setConfirmingDiscard(false)}
+          busy={working === "discard"}
         >
           <p className="text-sm text-secondary">
             You can't get it back after this.
@@ -1401,11 +1435,16 @@ function EditorForm({
             <Button
               variant="quiet"
               autoFocus
+              disabled={working === "discard"}
               onClick={() => setConfirmingDiscard(false)}
             >
               Keep it
             </Button>
-            <Button variant="danger" onClick={() => void discard()}>
+            <Button
+              variant="danger"
+              pending={working === "discard"}
+              onClick={() => void discard()}
+            >
               Discard
             </Button>
           </div>
