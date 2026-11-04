@@ -81,6 +81,7 @@ export function createTestEnv(database?: D1Database) {
         sql: { exec: instance.db.exec },
         transactionSync: instance.db.transaction,
         setAlarm: async (at: number) => {
+          if (at <= 0) throw new Error("setAlarm() needs a time above 0");
           instance.alarm = at;
         },
         deleteAlarm: async () => {
