@@ -10,7 +10,7 @@ import { starredQuery } from "../queries";
 import { parseItemId } from "../types";
 import { DetailsPanel, NothingChosenPanel } from "./details-panel";
 import { FileTable } from "./file-table";
-import { Breadcrumb, PageTop, Problem } from "./page-parts";
+import { Breadcrumb, LoadingPage, PageTop, Problem } from "./page-parts";
 import { personOf } from "./people";
 
 function Starred({ me, file }: { me: SignedIn; file: string | undefined }) {
@@ -18,7 +18,7 @@ function Starred({ me, file }: { me: SignedIn; file: string | undefined }) {
   const query = useQuery(starredQuery());
   const selectedId = file ? parseItemId(file) : null;
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingPage title="Starred" />;
   const { rows, incomplete, people } = query.data;
   const selected = rows.find(
     (row) => row.item.kind === "file" && row.item.id === selectedId,

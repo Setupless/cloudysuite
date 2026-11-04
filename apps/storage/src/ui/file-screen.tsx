@@ -11,7 +11,7 @@ import { fileQuery } from "../queries";
 import { type ItemId, parseItemId } from "../types";
 import { DetailsPanel } from "./details-panel";
 import { FileTable } from "./file-table";
-import { Breadcrumb, PageTop, Problem } from "./page-parts";
+import { Breadcrumb, LoadingPage, PageTop, Problem } from "./page-parts";
 import { personOf } from "./people";
 
 const CANNOT_OPEN =
@@ -54,7 +54,7 @@ function File({
   if (query.isError || query.data === null) {
     return <Problem message={query.error?.message ?? CANNOT_OPEN} />;
   }
-  if (!opened || showFolder) return null;
+  if (!opened || showFolder) return <LoadingPage />;
   return (
     <div className="flex min-h-[calc(100dvh-52px)] max-[899px]:flex-col">
       <div className="min-w-0 flex-1 pb-4">

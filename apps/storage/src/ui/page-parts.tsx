@@ -12,6 +12,7 @@ import {
   Fragment,
   type FormEvent,
   type ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -147,6 +148,13 @@ export function NameDialog({
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  // The box is turned off while saving, which takes the person's place away.
+  useEffect(() => {
+    if (pending || !error) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [pending, error]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -162,21 +170,23 @@ export function NameDialog({
   }
 
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} busy={pending}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <TextField
+          ref={field}
           label="Name"
           value={name}
           hint={hint}
           autoFocus
+          disabled={pending}
           onChange={(event) => setName(event.target.value)}
         />
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="flex justify-end gap-2">
-          <Button variant="toolbar" onClick={onClose}>
+          <Button variant="toolbar" disabled={pending} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="toolbarAction" disabled={pending}>
+          <Button type="submit" variant="toolbarAction" pending={pending}>
             {submitLabel}
           </Button>
         </div>
@@ -201,17 +211,17 @@ export function ConfirmDialog({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} busy={pending}>
       <p className="text-sm text-secondary">{body}</p>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
-        <Button variant="toolbar" onClick={onClose}>
+        <Button variant="toolbar" disabled={pending} onClick={onClose}>
           Cancel
         </Button>
         <Button
           variant="danger"
           icon={IconTrashX}
-          disabled={pending}
+          pending={pending}
           onClick={() => {
             setPending(true);
             setError(null);
@@ -346,6 +356,65 @@ export function DropZone({
         </div>
       )}
       {children}
+    </div>
+  );
+}
+
+// Faded in late, so a quick load doesn't flash it.
+export function Loading({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="status"
+      className={`${className ?? ""} transition-opacity delay-300 duration-200 starting:opacity-0`}
+    >
+      <span className="sr-only">Loading…</span>
+      {children}
+    </div>
+  );
+}
+
+export const BONE = "animate-pulse rounded bg-field";
+
+const ROW_WIDTHS = ["w-2/5", "w-1/3", "w-1/2", "w-1/4", "w-2/5", "w-1/3"];
+
+export function LoadingRows() {
+  return (
+    <Loading className="flex flex-col px-4 pt-2">
+      {ROW_WIDTHS.map((width, index) => (
+        <span
+          key={index}
+          aria-hidden
+          className="flex items-center gap-[9px] border-b border-line px-0.5 py-[9px]"
+        >
+          <span className={`size-[18px] flex-none ${BONE}`} />
+          <span className={`h-3 ${width} ${BONE}`} />
+        </span>
+      ))}
+    </Loading>
+  );
+}
+
+// For a page whose title comes with its contents.
+export function LoadingPage({ title }: { title?: string }) {
+  return (
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
+      {title === undefined ? (
+        <div aria-hidden className="px-4 pt-3.5 pb-2.5">
+          <span className={`block h-[26px] w-48 ${BONE}`} />
+        </div>
+      ) : (
+        <>
+          <Breadcrumb trail={[]} current={title} />
+          <PageTop title={title} />
+        </>
+      )}
+      <LoadingRows />
     </div>
   );
 }

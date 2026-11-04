@@ -1,9 +1,9 @@
-import { buttonClass } from "@cloudysuite/ui";
+import { Button } from "@cloudysuite/ui";
 import { IconCheck } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { saveAttachmentFromMail } from "../mail-attachment-functions";
 import type { MailAttachmentRow } from "../mail-attachments";
-import { call, mailAttachmentsQuery, storageKeys } from "../queries";
+import { call, mailAttachmentsQuery, refreshStorage } from "../queries";
 import { FileIcon } from "./file-visuals";
 import { dayInSentence } from "./format";
 
@@ -17,7 +17,7 @@ function AttachmentRow({ row }: { row: MailAttachmentRow }) {
           data: { mailboxId, messageId, attachmentId },
         }),
       ),
-    onSuccess: () => client.invalidateQueries({ queryKey: storageKeys.all }),
+    onSuccess: () => refreshStorage(client),
   });
   const isSaved = row.saved || save.isSuccess;
   return (
@@ -38,14 +38,15 @@ function AttachmentRow({ row }: { row: MailAttachmentRow }) {
             Saved to My files
           </span>
         ) : (
-          <button
-            type="button"
-            className={`flex-none ${buttonClass("toolbar")}`}
-            disabled={save.isPending}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? "Saving…" : "Save to Storage"}
-          </button>
+          <div className="flex-none">
+            <Button
+              variant="toolbar"
+              pending={save.isPending}
+              onClick={() => save.mutate()}
+            >
+              Save to Storage
+            </Button>
+          </div>
         )}
       </div>
       {save.isError && (

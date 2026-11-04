@@ -1,7 +1,15 @@
-import { Button, Modal, Notice, Section, TextField } from "@cloudysuite/ui";
+import {
+  Button,
+  Modal,
+  Notice,
+  Section,
+  Spinner,
+  TextField,
+} from "@cloudysuite/ui";
 import { IconPlus, IconTag, IconTrash } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { deleteLabel, updateLabel } from "../functions";
 import { cleanLabelName, MAX_LABEL_NAME_LENGTH } from "../labels/store";
 import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
@@ -55,26 +63,40 @@ function ColourChoice({
 function ConfirmDelete({
   label,
   ruleCount,
+  failure,
+  deleting,
   onCancel,
   onConfirm,
 }: {
   label: LabelSummary;
   ruleCount: number;
+  failure: string | null;
+  deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <Modal title={`Delete the label "${label.name}"?`} onClose={onCancel}>
+    <Modal
+      title={`Delete the label "${label.name}"?`}
+      onClose={onCancel}
+      busy={deleting}
+    >
       <p className="text-sm text-secondary">
         The mail stays where it is and only loses this label.
         {ruleCount > 0 &&
           ` ${ruleCount === 1 ? "1 rule adds" : `${ruleCount} rules add`} this label and will stop adding it.`}
       </p>
+      {failure && <Notice tone="danger">{failure}</Notice>}
       <div className="flex justify-end gap-2">
-        <Button variant="quiet" autoFocus onClick={onCancel}>
+        <Button
+          variant="quiet"
+          autoFocus
+          disabled={deleting}
+          onClick={onCancel}
+        >
           Keep it
         </Button>
-        <Button variant="danger" onClick={onConfirm}>
+        <Button variant="danger" pending={deleting} onClick={onConfirm}>
           Delete label
         </Button>
       </div>
@@ -101,23 +123,30 @@ function LabelRow({
     setName(label.name);
     setColour(label.colour);
   }, [label.name, label.colour]);
-  const [confirming, setConfirming] = useState<{ ruleCount: number } | null>(
-    null,
-  );
+  const [confirming, setConfirming] = useState<{
+    ruleCount: number;
+    failure: string | null;
+  } | null>(null);
+  // Changing the colour shows at once, so it never waits here.
+  const [working, setWorking] = useState<
+    "rename" | "checkDelete" | "delete" | null
+  >(null);
 
+  // The labels come from the mailbox list, so only that refresh is waited for.
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
     void queryClient.invalidateQueries({ queryKey: mailKeys.all(mailboxId) });
+    return queryClient.invalidateQueries({ queryKey: mailKeys.mailboxes });
   };
-  const attempt = async (run: () => Promise<unknown>) => {
+  const attempt = async (
+    run: () => Promise<unknown>,
+  ): Promise<string | null> => {
     onProblem(null);
     try {
       await callAction(run);
-      refresh();
-      return true;
+      await refresh();
+      return null;
     } catch (thrown) {
-      onProblem((await asMailFailure(thrown)).message);
-      return false;
+      return (await asMailFailure(thrown)).message;
     }
   };
 
@@ -131,10 +160,15 @@ function LabelRow({
       return;
     }
     if (clean === label.name) return;
-    const saved = await attempt(() =>
+    setWorking("rename");
+    const failure = await attempt(() =>
       updateLabel({ data: { mailboxId, labelId: label.id, name: clean } }),
     );
-    if (!saved) setName(label.name);
+    setWorking(null);
+    if (failure) {
+      onProblem(failure);
+      setName(label.name);
+    }
   };
 
   return (
@@ -151,26 +185,37 @@ function LabelRow({
         }}
         className="min-w-40 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-sm text-text outline-accent hover:border-line focus-visible:outline-2"
       />
+      {working === "rename" && (
+        <span className="flex text-secondary">
+          <Spinner size={16} />
+        </span>
+      )}
       <ColourChoice
         legend={`Colour of the label ${label.name}`}
         value={colour}
         onChange={async (next) => {
           setColour(next);
-          const saved = await attempt(() =>
+          const failure = await attempt(() =>
             updateLabel({
               data: { mailboxId, labelId: label.id, colour: next },
             }),
           );
-          if (!saved) setColour(label.colour);
+          if (failure) {
+            onProblem(failure);
+            setColour(label.colour);
+          }
         }}
       />
       <button
         type="button"
         aria-label={`Delete the label ${label.name}`}
         title="Delete label"
+        disabled={working !== null}
+        aria-busy={working === "checkDelete" || undefined}
         onClick={async () => {
           onProblem(isOffline() ? OFFLINE_ACTION_REFUSED : null);
           if (isOffline()) return;
+          setWorking("checkDelete");
           try {
             const { rules } = await queryClient.fetchQuery(
               rulesQuery(mailboxId),
@@ -179,25 +224,36 @@ function LabelRow({
               ruleCount: rules.filter(
                 (rule) => rule.actions.labelId === label.id,
               ).length,
+              failure: null,
             });
           } catch (thrown) {
             onProblem((await asMailFailure(thrown)).message);
           }
+          setWorking(null);
         }}
-        className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2"
+        className="flex size-8 flex-none cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field hover:text-danger focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress"
       >
-        <IconTrash size={18} stroke={1.75} aria-hidden />
+        {working === "checkDelete" ? (
+          <Spinner />
+        ) : (
+          <IconTrash size={18} stroke={1.75} aria-hidden />
+        )}
       </button>
       {confirming && (
         <ConfirmDelete
           label={label}
           ruleCount={confirming.ruleCount}
+          failure={confirming.failure}
+          deleting={working === "delete"}
           onCancel={() => setConfirming(null)}
-          onConfirm={() => {
-            setConfirming(null);
-            void attempt(() =>
+          onConfirm={async () => {
+            setWorking("delete");
+            setConfirming({ ...confirming, failure: null });
+            const failure = await attempt(() =>
               deleteLabel({ data: { mailboxId, labelId: label.id } }),
             );
+            setWorking(null);
+            setConfirming(failure ? { ...confirming, failure } : null);
           }}
         />
       )}
@@ -212,9 +268,12 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
   const [name, setName] = useState("");
   const [colour, setColour] = useState<LabelColour>("accent");
   const [problem, setProblem] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const nameField = useRef<HTMLInputElement>(null);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
+    if (creating) return;
     setProblem(null);
     const clean = cleanLabelName(name);
     if (clean === null) {
@@ -223,7 +282,11 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
       );
       return;
     }
+    setCreating(true);
     if (await createLabel(clean, colour)) setName("");
+    // The field drops focus while it is disabled, so it can only take it back once enabled.
+    flushSync(() => setCreating(false));
+    nameField.current?.focus();
   };
 
   return (
@@ -239,14 +302,21 @@ export function LabelsPage({ mailboxId: rawId }: { mailboxId: string }) {
       >
         <form onSubmit={create} className="flex flex-col gap-3">
           <TextField
+            ref={nameField}
             label="Name"
             value={name}
+            disabled={creating}
             maxLength={MAX_LABEL_NAME_LENGTH}
             onChange={(event) => setName(event.target.value)}
           />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ColourChoice legend="Colour" value={colour} onChange={setColour} />
-            <Button type="submit" variant="action" icon={IconPlus}>
+            <Button
+              type="submit"
+              variant="action"
+              icon={IconPlus}
+              pending={creating}
+            >
               Create label
             </Button>
           </div>

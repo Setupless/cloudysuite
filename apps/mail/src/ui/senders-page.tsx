@@ -6,7 +6,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   asMailFailure,
   call,
@@ -31,11 +32,13 @@ function SenderRows({
   entries,
   empty,
   canEdit,
+  removing,
   onRemove,
 }: {
   entries: SenderEntry[];
   empty: string;
   canEdit: boolean;
+  removing: string | null;
   onRemove: (pattern: string) => void;
 }) {
   if (entries.length === 0) {
@@ -55,6 +58,8 @@ function SenderRows({
             <IconButton
               icon={IconX}
               label={`Remove ${pattern}`}
+              pending={removing === pattern}
+              disabled={removing !== null}
               onClick={() => onRemove(pattern)}
             />
           )}
@@ -73,16 +78,24 @@ function AddSender({
 }) {
   const [value, setValue] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const [adding, setAdding] = useState<SenderList | null>(null);
+  const field = useRef<HTMLInputElement>(null);
 
   const submit = async (list: SenderList) => {
+    if (adding) return;
     const pattern = parseSenderPattern(value);
     if (pattern === null) {
       setProblem(BAD_SENDER_PATTERN);
       return;
     }
+    setAdding(list);
     const failure = await onAdd(pattern, list);
-    setProblem(failure);
-    if (failure === null) setValue("");
+    flushSync(() => {
+      setAdding(null);
+      setProblem(failure);
+      if (failure === null) setValue("");
+    });
+    field.current?.focus();
   };
 
   return (
@@ -98,7 +111,9 @@ function AddSender({
         placeholder="name@example.com or example.com"
         autoComplete="off"
         spellCheck={false}
+        ref={field}
         value={value}
+        disabled={adding !== null}
         onChange={(event) => setValue(event.target.value)}
       />
       {problem && <Notice tone="danger">{problem}</Notice>}
@@ -113,14 +128,16 @@ function AddSender({
           variant="action"
           icon={IconBan}
           type="submit"
-          disabled={full || value.trim() === ""}
+          pending={adding === "block"}
+          disabled={full || value.trim() === "" || adding !== null}
         >
           Block
         </Button>
         <Button
           variant="quiet"
           icon={IconCheck}
-          disabled={full || value.trim() === ""}
+          pending={adding === "allow"}
+          disabled={full || value.trim() === "" || adding !== null}
           onClick={() => void submit("allow")}
         >
           Allow
@@ -137,6 +154,7 @@ function Senders({ mailboxId }: { mailboxId: MailboxId }) {
   const canEdit =
     mailboxes.data?.find((entry) => entry.id === mailboxId)?.role === "manager";
   const [problem, setProblem] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: mailKeys.senders(mailboxId) });
@@ -154,12 +172,14 @@ function Senders({ mailboxId }: { mailboxId: MailboxId }) {
 
   const remove = async (pattern: string) => {
     setProblem(null);
+    setRemoving(pattern);
     try {
       await call(() => removeSender({ data: { mailboxId, pattern } }));
     } catch (thrown) {
       setProblem((await asMailFailure(thrown)).message);
     }
     await refresh();
+    setRemoving(null);
   };
 
   const entries = senders.data ?? [];
@@ -186,6 +206,7 @@ function Senders({ mailboxId }: { mailboxId: MailboxId }) {
             entries={entries.filter((entry) => entry.list === "block")}
             empty="No one is blocked."
             canEdit={canEdit}
+            removing={removing}
             onRemove={(pattern) => void remove(pattern)}
           />
         </Section>
@@ -197,6 +218,7 @@ function Senders({ mailboxId }: { mailboxId: MailboxId }) {
             entries={entries.filter((entry) => entry.list === "allow")}
             empty="No one is on the allowed list."
             canEdit={canEdit}
+            removing={removing}
             onRemove={(pattern) => void remove(pattern)}
           />
         </Section>

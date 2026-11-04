@@ -8,7 +8,7 @@ import {
 } from "@cloudysuite/ui";
 import { IconKey, IconPlus } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { authClient } from "../client";
 import { removalRefusal } from "../sign-in-methods";
 import type { AccountView, PasskeySummary } from "./functions";
@@ -17,9 +17,12 @@ import { explainFailure, useAction } from "./use-action";
 export function AddPasskeyForm({
   onAdded,
   buttonLabel = "Add a passkey",
+  after,
 }: {
   onAdded: () => void | Promise<void>;
   buttonLabel?: string;
+  // Rendered below the form, told whether the form is busy.
+  after?: (busy: boolean) => ReactNode;
 }) {
   const { pending, error, run } = useAction();
 
@@ -27,7 +30,7 @@ export function AddPasskeyForm({
     event.preventDefault();
     const form = event.currentTarget;
     const name = String(new FormData(form).get("name")).trim();
-    return run(async () => {
+    return run("add", async () => {
       // A name passed here would become the account name in the device's
       // passkey picker, so people would see "Work laptop" instead of their email.
       const { data, error: failure } = await authClient.passkey.addPasskey();
@@ -49,26 +52,29 @@ export function AddPasskeyForm({
   }
 
   return (
-    <form className="flex flex-col gap-3" onSubmit={submit}>
-      <TextField
-        label="Name for this passkey"
-        name="name"
-        required
-        maxLength={60}
-        placeholder="Work laptop"
-      />
-      <div>
-        <Button
-          type="submit"
-          variant="action"
-          icon={IconPlus}
-          disabled={pending}
-        >
-          {buttonLabel}
-        </Button>
-      </div>
-      {error && <Notice tone="danger">{error}</Notice>}
-    </form>
+    <>
+      <form className="flex flex-col gap-3" onSubmit={submit}>
+        <TextField
+          label="Name for this passkey"
+          name="name"
+          required
+          maxLength={60}
+          placeholder="Work laptop"
+        />
+        <div>
+          <Button
+            type="submit"
+            variant="action"
+            icon={IconPlus}
+            pending={pending !== null}
+          >
+            {buttonLabel}
+          </Button>
+        </div>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </form>
+      {after?.(pending !== null)}
+    </>
   );
 }
 
@@ -90,7 +96,7 @@ function PasskeyRow({
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<"view" | "rename" | "remove">("view");
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<"rename" | "remove">();
   const refusal = removalRefusal(
     account.methods,
     "passkey",
@@ -101,7 +107,7 @@ function PasskeyRow({
   function rename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const next = String(new FormData(event.currentTarget).get("name")).trim();
-    return run(async () => {
+    return run("rename", async () => {
       const { error: failure } = await authClient.passkey.updatePasskey({
         id: passkey.id,
         name: next,
@@ -109,13 +115,13 @@ function PasskeyRow({
       if (failure) {
         return explainFailure(failure, "We couldn't rename that passkey.");
       }
-      setMode("view");
       await router.invalidate();
+      setMode("view");
     });
   }
 
   function remove() {
-    return run(async () => {
+    return run("remove", async () => {
       const { error: failure } = await authClient.passkey.deletePasskey({
         id: passkey.id,
       });
@@ -139,10 +145,18 @@ function PasskeyRow({
             autoFocus
           />
           <div className="flex gap-2">
-            <Button type="submit" variant="action" disabled={pending}>
+            <Button
+              type="submit"
+              variant="action"
+              pending={pending === "rename"}
+            >
               Save name
             </Button>
-            <Button variant="quiet" onClick={() => setMode("view")}>
+            <Button
+              variant="quiet"
+              disabled={pending !== null}
+              onClick={() => setMode("view")}
+            >
               Keep the old name
             </Button>
           </div>
@@ -176,17 +190,29 @@ function PasskeyRow({
       )}
       {error && mode !== "remove" && <Notice tone="danger">{error}</Notice>}
       {mode === "remove" && (
-        <Modal title={`Remove ${name}?`} onClose={() => setMode("view")}>
+        <Modal
+          title={`Remove ${name}?`}
+          busy={pending === "remove"}
+          onClose={() => setMode("view")}
+        >
           <p className="text-sm text-secondary">
             You won't be able to sign in with this passkey any more. You can add
             it again later.
           </p>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
-            <Button variant="quiet" onClick={() => setMode("view")}>
+            <Button
+              variant="quiet"
+              disabled={pending !== null}
+              onClick={() => setMode("view")}
+            >
               Keep it
             </Button>
-            <Button variant="danger" disabled={pending} onClick={remove}>
+            <Button
+              variant="danger"
+              pending={pending === "remove"}
+              onClick={remove}
+            >
               Remove passkey
             </Button>
           </div>
@@ -227,8 +253,8 @@ export function PasskeysSection({ account }: { account: AccountView }) {
       )}
       <AddPasskeyForm
         onAdded={async () => {
-          setAdded(true);
           await router.invalidate();
+          setAdded(true);
         }}
       />
     </Section>

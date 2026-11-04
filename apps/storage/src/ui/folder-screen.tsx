@@ -22,7 +22,7 @@ import {
   directoryQuery,
   fileQuery,
   folderQuery,
-  storageKeys,
+  refreshStorage,
 } from "../queries";
 import { type ItemId, parseItemId } from "../types";
 import { DetailsPanel, type PanelSubject } from "./details-panel";
@@ -31,6 +31,7 @@ import {
   Breadcrumb,
   DropZone,
   FolderLink,
+  LoadingPage,
   PageActions,
   PageTop,
   Problem,
@@ -57,7 +58,7 @@ export function useCreateFolderIn(driveId: DriveId, parentId: ItemId | null) {
     await call(() =>
       createFolderOnServer({ data: { driveId, parentId, name } }),
     );
-    await client.invalidateQueries({ queryKey: storageKeys.all });
+    await refreshStorage(client);
   };
 }
 
@@ -90,7 +91,7 @@ function Folder({
   });
 
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!first) return null;
+  if (!first) return <LoadingPage />;
 
   const { place } = first;
   const title =
@@ -214,7 +215,7 @@ function Folder({
           <div className="mt-3 flex justify-center">
             <Button
               variant="quiet"
-              disabled={query.isFetchingNextPage}
+              pending={query.isFetchingNextPage}
               onClick={() => void query.fetchNextPage()}
             >
               Show more
@@ -301,7 +302,7 @@ export function MyFilesScreen({ me }: { me: SignedIn }) {
                   data: { driveId, parentId: null, name },
                 }),
               );
-              await client.invalidateQueries({ queryKey: storageKeys.all });
+              await refreshStorage(client);
             }}
           />
         </PageTop>

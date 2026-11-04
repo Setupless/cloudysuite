@@ -8,12 +8,14 @@ import {
 import {
   type DehydratedState,
   HydrationBoundary,
+  useIsMutating,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { deleteItemForever, emptyTrash, type TrashLine } from "../functions";
-import { call, storageKeys, trashQuery } from "../queries";
+import { call, refreshStorage, trashQuery } from "../queries";
 import { TRASH_DAYS } from "../types";
 import { NothingChosenPanel, PANEL } from "./details-panel";
 import {
@@ -24,7 +26,13 @@ import {
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { useRestore } from "./item-actions";
-import { Breadcrumb, ConfirmDialog, PageTop, Problem } from "./page-parts";
+import {
+  Breadcrumb,
+  ConfirmDialog,
+  LoadingPage,
+  PageTop,
+  Problem,
+} from "./page-parts";
 
 const COLUMNS =
   "grid grid-cols-[minmax(0,1fr)_60px] items-center gap-2.5 sm:grid-cols-[minmax(0,1fr)_110px_84px_60px]";
@@ -59,6 +67,16 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
   const hydrated = useHydrated();
   const [confirming, setConfirming] = useState(false);
   const { entry, drive } = line;
+  // Kept by the query client, not this panel, so choosing it again while it runs still
+  // shows it running.
+  const restoreKey = ["restore", drive.id, entry.id];
+  const restoring = useIsMutating({ mutationKey: restoreKey }) > 0;
+  const restoreThis = useMutation({
+    mutationKey: restoreKey,
+    mutationFn: async () => {
+      if (await restore(drive.id, entry.id, entry.name)) onGone();
+    },
+  });
   const when = (timestamp: number) =>
     hydrated ? formatChanged(timestamp, new Date()) : " ";
   const facts: [string, string][] = [
@@ -86,16 +104,15 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
           <Button
             variant="toolbar"
             icon={IconRestore}
-            onClick={() => {
-              onGone();
-              void restore(drive.id, entry.id, entry.name);
-            }}
+            pending={restoring}
+            onClick={() => restoreThis.mutate()}
           >
             Restore
           </Button>
           <Button
             variant="toolbar"
             icon={IconTrashX}
+            disabled={restoring}
             onClick={() => setConfirming(true)}
           >
             Delete forever
@@ -133,8 +150,8 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
                 data: { driveId: drive.id, itemId: entry.id },
               }),
             );
+            await refreshStorage(client);
             onGone();
-            await client.invalidateQueries({ queryKey: storageKeys.all });
           }}
           onClose={() => setConfirming(false)}
         />
@@ -150,7 +167,7 @@ function Trash() {
   const [selected, setSelected] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingPage title="Trash" />;
   const { lines, more } = query.data;
   const chosen = lines.find((line) => keyOf(line) === selected);
   const now = new Date();
@@ -238,7 +255,10 @@ function Trash() {
         <Panel
           key={keyOf(chosen)}
           line={chosen}
-          onGone={() => setSelected(null)}
+          onGone={() => {
+            const gone = keyOf(chosen);
+            setSelected((current) => (current === gone ? null : current));
+          }}
         />
       ) : (
         <NothingChosenPanel message="Choose something to see its details." />
@@ -251,7 +271,7 @@ function Trash() {
           onConfirm={async () => {
             await call(() => emptyTrash());
             setSelected(null);
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
           }}
           onClose={() => setConfirmingEmpty(false)}
         />

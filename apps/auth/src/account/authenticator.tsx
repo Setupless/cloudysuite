@@ -1,7 +1,7 @@
 import { Button, CopyField, Notice, Section, TextField } from "@cloudysuite/ui";
 import { IconDeviceMobile } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { authClient } from "../client";
 import { removalRefusal } from "../sign-in-methods";
 import type { AccountView } from "./functions";
@@ -17,9 +17,11 @@ const WRONG_PASSWORD = "That password isn't right. Check it and try again.";
 
 function BackupCodes({
   codes,
+  pending,
   onDone,
 }: {
   codes: string[];
+  pending: boolean;
   onDone: () => void;
 }) {
   return (
@@ -36,7 +38,7 @@ function BackupCodes({
       </ul>
       <CopyField label="Copy all codes" value={codes.join(" ")} />
       <div>
-        <Button variant="action" onClick={onDone}>
+        <Button variant="action" pending={pending} onClick={onDone}>
           I've saved my codes
         </Button>
       </div>
@@ -47,17 +49,21 @@ function BackupCodes({
 export function AuthenticatorSetup({
   onDone,
   onCancel,
+  after,
 }: {
   onDone: () => void | Promise<void>;
   onCancel?: () => void;
+  // Rendered below each step before the app is on, told whether the step is busy.
+  after?: (busy: boolean) => ReactNode;
 }) {
   const [setup, setSetup] = useState<SetupStep>({ step: "password" });
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<"start" | "verify" | "done">();
+  const below = after?.(pending !== null);
 
   function start(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const password = String(new FormData(event.currentTarget).get("password"));
-    return run(async () => {
+    return run("start", async () => {
       const { data, error: failure } = await authClient.twoFactor.enable({
         password,
       });
@@ -75,44 +81,60 @@ export function AuthenticatorSetup({
 
   if (setup.step === "password") {
     return (
-      <form className="flex flex-col gap-3 text-left" onSubmit={start}>
-        <TextField
-          label="Your password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          hint="Enter it to confirm that this is you."
-          required
-        />
-        <div className="flex gap-2">
-          <Button
-            type="submit"
-            variant="action"
-            icon={IconDeviceMobile}
-            disabled={pending}
-          >
-            Set up authenticator app
-          </Button>
-          {onCancel && (
-            <Button variant="quiet" onClick={onCancel}>
-              Not now
+      <>
+        <form className="flex flex-col gap-3 text-left" onSubmit={start}>
+          <TextField
+            label="Your password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            hint="Enter it to confirm that this is you."
+            required
+          />
+          <div className="flex gap-2">
+            <Button
+              type="submit"
+              variant="action"
+              icon={IconDeviceMobile}
+              pending={pending === "start"}
+            >
+              Set up authenticator app
             </Button>
-          )}
-        </div>
-        {error && <Notice tone="danger">{error}</Notice>}
-      </form>
+            {onCancel && (
+              <Button
+                variant="quiet"
+                disabled={pending !== null}
+                onClick={onCancel}
+              >
+                Not now
+              </Button>
+            )}
+          </div>
+          {error && <Notice tone="danger">{error}</Notice>}
+        </form>
+        {below}
+      </>
     );
   }
 
   if (setup.step === "backup-codes") {
-    return <BackupCodes codes={setup.backupCodes} onDone={onDone} />;
+    return (
+      <>
+        <BackupCodes
+          codes={setup.backupCodes}
+          pending={pending === "done"}
+          onDone={() => run("done", async () => onDone())}
+        />
+        {error && <Notice tone="danger">{error}</Notice>}
+      </>
+    );
   }
 
   const { uri, backupCodes } = setup;
   function verify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const code = String(new FormData(event.currentTarget).get("code")).trim();
-    return run(async () => {
+    return run("verify", async () => {
       const { error: failure } = await authClient.twoFactor.verifyTotp({
         code,
       });
@@ -128,33 +150,36 @@ export function AuthenticatorSetup({
 
   const secret = new URL(uri).searchParams.get("secret") ?? "";
   return (
-    <form
-      className="flex flex-col items-start gap-3 text-left"
-      onSubmit={verify}
-    >
-      <p className="text-sm">
-        Open your authenticator app, such as Google Authenticator or 1Password,
-        and scan this code.
-      </p>
-      <QrCode text={uri} label="Code to scan with your authenticator app" />
-      <div className="w-full">
-        <CopyField
-          label="Can't scan it? Enter this key instead"
-          value={secret}
+    <>
+      <form
+        className="flex flex-col items-start gap-3 text-left"
+        onSubmit={verify}
+      >
+        <p className="text-sm">
+          Open your authenticator app, such as Google Authenticator or
+          1Password, and scan this code.
+        </p>
+        <QrCode text={uri} label="Code to scan with your authenticator app" />
+        <div className="w-full">
+          <CopyField
+            label="Can't scan it? Enter this key instead"
+            value={secret}
+          />
+        </div>
+        <TextField
+          label="6-digit code from your app"
+          name="code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
         />
-      </div>
-      <TextField
-        label="6-digit code from your app"
-        name="code"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        required
-      />
-      <Button type="submit" variant="action" disabled={pending}>
-        Confirm code
-      </Button>
-      {error && <Notice tone="danger">{error}</Notice>}
-    </form>
+        <Button type="submit" variant="action" pending={pending === "verify"}>
+          Confirm code
+        </Button>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </form>
+      {below}
+    </>
   );
 }
 
@@ -165,13 +190,13 @@ function TurnOffForm({ onClose }: { onClose: () => void }) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const password = String(new FormData(event.currentTarget).get("password"));
-    return run(async () => {
+    return run("turn-off", async () => {
       const { error: failure } = await authClient.twoFactor.disable({
         password,
       });
       if (failure) return explainFailure(failure, WRONG_PASSWORD);
-      onClose();
       await router.invalidate();
+      onClose();
     });
   }
 
@@ -186,10 +211,10 @@ function TurnOffForm({ onClose }: { onClose: () => void }) {
         required
       />
       <div className="flex gap-2">
-        <Button type="submit" variant="danger" disabled={pending}>
+        <Button type="submit" variant="danger" pending={pending !== null}>
           Turn off authenticator app
         </Button>
-        <Button variant="quiet" onClick={onClose}>
+        <Button variant="quiet" disabled={pending !== null} onClick={onClose}>
           Keep it on
         </Button>
       </div>
@@ -215,8 +240,8 @@ export function AuthenticatorSection({ account }: { account: AccountView }) {
         <AuthenticatorSetup
           onCancel={() => setPanel("closed")}
           onDone={async () => {
-            setPanel("closed");
             await router.invalidate();
+            setPanel("closed");
           }}
         />
       )}

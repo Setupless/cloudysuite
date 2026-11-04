@@ -1,6 +1,7 @@
-import { Badge } from "@cloudysuite/ui";
+import { Badge, Spinner } from "@cloudysuite/ui";
 import { IconPaperclip } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { callAction, isRefusal } from "../../queries";
 import { NotSavedOnDevice } from "../../failure";
 import { FOLDER_DISPLAY } from "../../model";
@@ -9,6 +10,7 @@ import { FailureNotice, SkeletonLines, ThreadDate } from "../../ui/states";
 import { useToast } from "../../ui/toast";
 import { reopenOutgoing } from "../functions";
 import {
+  type OutgoingId,
   type OutgoingSummary,
   SEND_FAILURES,
   UNKNOWN_OUTCOME_TEXT,
@@ -50,6 +52,7 @@ export function DraftRows() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const outgoing = useQuery(outgoingQuery(mailboxId));
+  const [opening, setOpening] = useState<OutgoingId | null>(null);
 
   if (outgoing.isPending) return <SkeletonLines rows={6} />;
   if (outgoing.isError) {
@@ -78,6 +81,7 @@ export function DraftRows() {
   const open = async (job: OutgoingSummary) => {
     if (isOnItsWay(job)) return;
     if (job.state !== "draft") {
+      setOpening(job.id);
       try {
         await callAction(() =>
           reopenOutgoing({ data: { mailboxId, id: job.id } }),
@@ -85,6 +89,8 @@ export function DraftRows() {
       } catch (error) {
         toast({ tone: "danger", message: (error as Error).message });
         return;
+      } finally {
+        setOpening(null);
       }
       void queryClient.invalidateQueries({
         queryKey: composeKeys.outgoing(mailboxId),
@@ -108,9 +114,10 @@ export function DraftRows() {
           >
             <button
               type="button"
-              disabled={isOnItsWay(job)}
+              disabled={isOnItsWay(job) || opening !== null}
+              aria-busy={opening === job.id || undefined}
               onClick={() => void open(job)}
-              className="flex w-full cursor-pointer flex-col gap-0.5 rounded px-2.5 py-2.5 text-left outline-accent focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:cursor-default"
+              className="flex w-full cursor-pointer flex-col gap-0.5 rounded px-2.5 py-2.5 text-left outline-accent focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:cursor-default aria-busy:cursor-progress"
             >
               <span className="flex items-baseline gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm">
@@ -132,6 +139,11 @@ export function DraftRows() {
                     className="flex-none"
                     aria-label="Has attachments"
                   />
+                )}
+                {opening === job.id && (
+                  <span className="flex flex-none">
+                    <Spinner size={14} />
+                  </span>
                 )}
                 {status && <Badge tone={status.tone}>{status.badge}</Badge>}
               </span>

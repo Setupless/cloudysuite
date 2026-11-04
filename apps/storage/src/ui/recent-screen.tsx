@@ -10,7 +10,7 @@ import { parseItemId } from "../types";
 import { levelOfRole } from "@cloudysuite/access";
 import { DetailsPanel, NothingChosenPanel } from "./details-panel";
 import { FileTable } from "./file-table";
-import { Breadcrumb, PageTop, Problem } from "./page-parts";
+import { Breadcrumb, LoadingPage, PageTop, Problem } from "./page-parts";
 import { personOf } from "./people";
 
 function Recent({ me, file }: { me: SignedIn; file: string | undefined }) {
@@ -18,7 +18,7 @@ function Recent({ me, file }: { me: SignedIn; file: string | undefined }) {
   const query = useQuery(recentQuery(50));
   const selectedId = file ? parseItemId(file) : null;
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingPage title="Recent" />;
   const { files, people } = query.data;
   const selected = files.find((item) => item.file.id === selectedId);
 

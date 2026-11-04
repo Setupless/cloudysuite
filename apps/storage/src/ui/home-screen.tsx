@@ -14,11 +14,18 @@ import {
   type RecentFile,
   type TeamFolderCard,
 } from "../functions";
-import { call, directoryQuery, recentQuery, storageKeys } from "../queries";
+import { call, directoryQuery, recentQuery, refreshStorage } from "../queries";
 import { FilePreview } from "./file-visuals";
 import { folderSummary, formatChanged } from "./format";
 import { MailAttachments } from "./mail-attachments";
-import { DropZone, FolderLink, PageActions, PageTop } from "./page-parts";
+import {
+  BONE,
+  DropZone,
+  FolderLink,
+  Loading,
+  PageActions,
+  PageTop,
+} from "./page-parts";
 import { personOf } from "./people";
 import { teamColour } from "./team-colour";
 
@@ -111,7 +118,7 @@ function Home({ mailHref }: { mailHref: string | undefined }) {
             await call(() =>
               createFolder({ data: { driveId, parentId: null, name } }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             await navigate({
               to: "/storage/drive/$driveId",
               params: { driveId },
@@ -125,11 +132,17 @@ function Home({ mailHref }: { mailHref: string | undefined }) {
             <TeamCard key={folder.id} folder={folder} />
           ))}
         </div>
+      ) : directory.data ? (
+        <p className="px-4 text-sm text-secondary">
+          No team folders yet. Choose New team folder to make one.
+        </p>
       ) : (
-        directory.data && (
-          <p className="px-4 text-sm text-secondary">
-            No team folders yet. Choose New team folder to make one.
-          </p>
+        directory.isPending && (
+          <Loading className="grid grid-cols-1 gap-2.5 px-4 sm:grid-cols-3">
+            {[0, 1, 2].map((index) => (
+              <span key={index} aria-hidden className={`h-[78px] ${BONE}`} />
+            ))}
+          </Loading>
         )
       )}
       <div className="flex items-center px-4 pt-4 pb-2 text-sm font-semibold">
@@ -157,12 +170,16 @@ function Home({ mailHref }: { mailHref: string | undefined }) {
             />
           ))}
         </div>
+      ) : recent.data ? (
+        <p className="px-4 text-sm text-secondary">
+          Files you and your team add will show up here.
+        </p>
       ) : (
-        recent.data && (
-          <p className="px-4 text-sm text-secondary">
-            Files you and your team add will show up here.
-          </p>
-        )
+        <Loading className="grid grid-cols-2 gap-2.5 px-4 sm:grid-cols-4">
+          {[0, 1, 2, 3].map((index) => (
+            <span key={index} aria-hidden className={`h-[136px] ${BONE}`} />
+          ))}
+        </Loading>
       )}
       {mailHref && <MailAttachments mailHref={mailHref} />}
     </DropZone>

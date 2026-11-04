@@ -1,6 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { Button, NAV_ITEM, Notice, Section } from "@cloudysuite/ui";
+import { Button, NAV_ITEM, Notice, Section, Working } from "@cloudysuite/ui";
 import {
   IconArrowLeft,
   IconBell,
@@ -216,6 +216,9 @@ function NotificationsSection() {
   });
 
   const on = setup.data?.subscribed === true;
+  const checking =
+    !offline &&
+    (device.isPending || (device.data?.kind === "ready" && setup.isPending));
   return (
     <Section
       title="Notifications"
@@ -226,6 +229,7 @@ function NotificationsSection() {
           You're offline. You can change notifications when you're back online.
         </p>
       )}
+      {checking && <Working>Checking notifications on this device…</Working>}
       {!offline && device.data?.kind === "unsupported" && (
         <p className="text-sm text-secondary">
           This browser can't show notifications from Mail.
@@ -253,7 +257,7 @@ function NotificationsSection() {
             <Button
               variant={on ? "quiet" : "action"}
               icon={on ? IconBellOff : IconBell}
-              disabled={toggle.isPending}
+              pending={toggle.isPending}
               onClick={() => toggle.mutate()}
             >
               {on

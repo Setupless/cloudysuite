@@ -1,11 +1,15 @@
 import type { DriveId } from "@cloudysuite/access";
 import { Button, useToast } from "@cloudysuite/ui";
 import { IconFolderSymlink, IconPencil, IconTrash } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { moveItem, renameItem, restoreItem, trashItem } from "../functions";
-import { call, storageKeys } from "../queries";
+import { call, refreshStorage } from "../queries";
 import type { DriveItem, ItemId } from "../types";
 import { MoveDialog } from "./move-dialog";
 import { NameDialog } from "./page-parts";
@@ -13,12 +17,17 @@ import { NameDialog } from "./page-parts";
 export function useRestore() {
   const client = useQueryClient();
   const toast = useToast();
-  return async (driveId: DriveId, itemId: ItemId, name: string) => {
+  // Resolves true once it's back and the lists show it.
+  return async (
+    driveId: DriveId,
+    itemId: ItemId,
+    name: string,
+  ): Promise<boolean> => {
     try {
       const result = await call(() =>
         restoreItem({ data: { driveId, itemId } }),
       );
-      await client.invalidateQueries({ queryKey: storageKeys.all });
+      await refreshStorage(client);
       const renamed =
         result.item.name === name
           ? ""
@@ -28,8 +37,10 @@ export function useRestore() {
           ? `"${name}" is back at the top level, because the folder it was in is gone.${renamed}`
           : `"${name}" is back where it was.${renamed}`,
       });
+      return true;
     } catch (failure) {
       toast({ tone: "danger", message: (failure as Error).message });
+      return false;
     }
   };
 }
@@ -47,11 +58,17 @@ export function ItemActions({
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const router = useRouter();
   const toast = useToast();
   const restore = useRestore();
   const [dialog, setDialog] = useState<"rename" | "move" | null>(null);
+  // Kept by the query client, not this panel, so picking another file and coming back
+  // still shows it running.
+  const trashKey = ["trash", driveId, item.id];
+  const trashing = useIsMutating({ mutationKey: trashKey }) > 0;
+  const trash = useMutation({ mutationKey: trashKey, mutationFn: moveToTrash });
 
-  const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
+  const refresh = () => refreshStorage(client);
   const stopChoosingFile = () =>
     navigate({
       to: ".",
@@ -72,14 +89,27 @@ export function ItemActions({
             params: { driveId: target, folderId },
           });
 
+  // The person may have gone on to something else while it was saving.
+  const stillShown = () =>
+    item.kind === "folder"
+      ? router.state.matches.some(
+          (match) =>
+            "folderId" in match.params && match.params.folderId === item.id,
+        )
+      : router.state.location.search.file === item.id;
+
   async function moveToTrash() {
     try {
       await call(() => trashItem({ data: { driveId, itemId: item.id } }));
-      // Off the page first, or the folder being looked at reports itself missing.
-      await (item.kind === "folder"
-        ? openFolder(driveId, item.parentId)
-        : stopChoosingFile());
-      await refresh();
+      // A folder being looked at must be left first, or it reports itself missing.
+      // A file's panel stays until the list has caught up.
+      if (item.kind === "folder") {
+        if (stillShown()) await openFolder(driveId, item.parentId);
+        await refresh();
+      } else {
+        await refresh();
+        if (stillShown()) await stopChoosingFile();
+      }
       toast({
         message: `"${item.name}" moved to Trash.`,
         action: {
@@ -97,6 +127,7 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconPencil}
+        disabled={trashing}
         onClick={() => setDialog("rename")}
       >
         Rename
@@ -104,6 +135,7 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconFolderSymlink}
+        disabled={trashing}
         onClick={() => setDialog("move")}
       >
         Move
@@ -111,7 +143,8 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconTrash}
-        onClick={() => void moveToTrash()}
+        pending={trashing}
+        onClick={() => trash.mutate()}
       >
         Delete
       </Button>
@@ -140,13 +173,17 @@ export function ItemActions({
                 data: { driveId, itemId: item.id, toDriveId, toParentId },
               }),
             );
-            if (item.kind === "file") await stopChoosingFile();
-            else if (toDriveId !== driveId) {
-              await (outcome === "moved"
-                ? openFolder(toDriveId, item.id)
-                : openFolder(driveId, item.parentId));
+            if (item.kind === "file") {
+              await refresh();
+              await stopChoosingFile();
+            } else {
+              if (toDriveId !== driveId) {
+                await (outcome === "moved"
+                  ? openFolder(toDriveId, item.id)
+                  : openFolder(driveId, item.parentId));
+              }
+              await refresh();
             }
-            await refresh();
             toast({
               message:
                 outcome === "moved"

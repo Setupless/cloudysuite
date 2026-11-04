@@ -167,13 +167,17 @@ function UnreadableList({ status }: { status: ImportStatus }) {
 }
 
 type Sending = { partsDone: number; partCount: number };
+type Work = "start" | "resume" | "cancel";
 
 function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState<Sending | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [working, setWorking] = useState<Work | null>(null);
+  // Cancel can run while a start or resume is still sending, and each ends on its own.
+  const finish = (work: Work) =>
+    setWorking((now) => (now === work ? null : now));
   const abort = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
@@ -249,7 +253,7 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
       );
       return;
     }
-    setBusy(true);
+    setWorking("start");
     try {
       const created = await startJob(mailbox.id, {
         fileName: file.name,
@@ -261,14 +265,14 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
-      setBusy(false);
+      finish("start");
     }
   }
 
   async function resume(current: ImportJobView) {
     if (!file) return;
     setError(null);
-    setBusy(true);
+    setWorking("resume");
     try {
       if (
         file.size !== current.size ||
@@ -287,13 +291,13 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
-      setBusy(false);
+      finish("resume");
     }
   }
 
   async function cancel(current: ImportJobView) {
     setError(null);
-    setBusy(true);
+    setWorking("cancel");
     abort.current?.abort();
     try {
       await cancelJob(mailbox.id, current.id);
@@ -302,7 +306,7 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
-      setBusy(false);
+      finish("cancel");
     }
   }
 
@@ -341,13 +345,14 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
                   <FilePicker
                     label={`Pick ${job.fileName} again`}
                     onPick={setFile}
-                    disabled={busy}
+                    disabled={working !== null}
                   />
                   <div>
                     <Button
                       variant="action"
                       icon={IconPlayerPlay}
-                      disabled={!file || busy}
+                      pending={working === "resume"}
+                      disabled={!file || working !== null}
                       onClick={() => resume(job)}
                     >
                       Carry on sending
@@ -380,7 +385,8 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
             <Button
               variant="danger"
               icon={IconX}
-              disabled={busy && !sending}
+              pending={working === "cancel"}
+              disabled={working !== null && !sending}
               onClick={() => cancel(job)}
             >
               Cancel import
@@ -428,14 +434,15 @@ function ImportPanel({ mailbox }: { mailbox: ManagedMailbox }) {
             <FilePicker
               label="Your .mbox file"
               onPick={setFile}
-              disabled={busy}
+              disabled={working !== null}
             />
             <div>
               <Button
                 type="submit"
                 variant="action"
                 icon={IconUpload}
-                disabled={!file || busy}
+                pending={working === "start"}
+                disabled={!file || working !== null}
               >
                 Start import
               </Button>

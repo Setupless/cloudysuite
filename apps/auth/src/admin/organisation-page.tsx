@@ -15,7 +15,7 @@ import {
   removeJevKey,
   saveJevKey,
 } from "./functions";
-import { StorageLimitForm } from "./storage-limit-form";
+import { type LimitKey, StorageLimitForm } from "./storage-limit-form";
 import { UPDATE_STEPS_URL, type UpdateNotice } from "./updates";
 
 const APP_TEXT: Record<ToggleableApp, { name: string; off: string }> = {
@@ -31,15 +31,15 @@ const APP_TEXT: Record<ToggleableApp, { name: string; off: string }> = {
 
 function AppToggle({ id, enabled }: { id: ToggleableApp; enabled: boolean }) {
   const router = useRouter();
-  const { pending, error, run } = useAction();
+  const { pending, error, run } = useAction<"on" | "off">();
   const [confirming, setConfirming] = useState(false);
   const { name, off } = APP_TEXT[id];
 
   const change = (next: boolean) =>
-    run(async () => {
+    run(next ? "on" : "off", async () => {
       await changeAppEnabled({ data: { app: id, enabled: next } });
-      setConfirming(false);
       await router.invalidate();
+      setConfirming(false);
     });
 
   return (
@@ -58,7 +58,7 @@ function AppToggle({ id, enabled }: { id: ToggleableApp; enabled: boolean }) {
         ) : (
           <Button
             variant="action"
-            disabled={pending}
+            pending={pending === "on"}
             onClick={() => change(true)}
           >
             Turn on {name}
@@ -67,16 +67,24 @@ function AppToggle({ id, enabled }: { id: ToggleableApp; enabled: boolean }) {
       </div>
       {error && !confirming && <Notice tone="danger">{error}</Notice>}
       {confirming && (
-        <Modal title={`Turn off ${name}?`} onClose={() => setConfirming(false)}>
+        <Modal
+          title={`Turn off ${name}?`}
+          busy={pending === "off"}
+          onClose={() => setConfirming(false)}
+        >
           <p className="text-sm text-secondary">{off}</p>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
-            <Button variant="quiet" onClick={() => setConfirming(false)}>
+            <Button
+              variant="quiet"
+              disabled={pending !== null}
+              onClick={() => setConfirming(false)}
+            >
               Keep it on
             </Button>
             <Button
               variant="danger"
-              disabled={pending}
+              pending={pending === "off"}
               onClick={() => change(false)}
             >
               Turn off {name}
@@ -95,7 +103,7 @@ function RequireSection({ view }: { view: OrganisationView }) {
   const others = count === 1 ? "1 person hasn't" : `${count} people haven't`;
 
   const change = (require2fa: boolean) =>
-    run(async () => {
+    run("change", async () => {
       await changeRequire2fa({ data: { require2fa } });
       await router.invalidate();
     });
@@ -114,7 +122,7 @@ function RequireSection({ view }: { view: OrganisationView }) {
         {view.require2fa ? (
           <Button
             variant="danger"
-            disabled={pending}
+            pending={pending !== null}
             onClick={() => change(false)}
           >
             Stop requiring it
@@ -122,7 +130,7 @@ function RequireSection({ view }: { view: OrganisationView }) {
         ) : (
           <Button
             variant="action"
-            disabled={pending}
+            pending={pending !== null}
             onClick={() => change(true)}
           >
             Require it
@@ -165,14 +173,14 @@ function JevKeyForm({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    return run(async () => {
+    return run("save", async () => {
       const result = await saveJevKey({
         data: { key, acknowledged: true },
       });
       if (!result.ok) return result.message;
+      await router.invalidate();
       setKey("");
       onDone(result.summary);
-      await router.invalidate();
       return null;
     });
   };
@@ -212,6 +220,7 @@ function JevKeyForm({
           type="checkbox"
           className="mt-0.5 size-4 flex-none accent-accent"
           checked={acknowledged}
+          disabled={pending !== null}
           onChange={(event) => setAcknowledged(event.target.checked)}
         />
         I understand that message content goes to Jev, and that Jev may keep it.
@@ -221,19 +230,25 @@ function JevKeyForm({
         type="password"
         autoComplete="off"
         value={key}
+        disabled={pending !== null}
         onChange={(event) => setKey(event.target.value)}
       />
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
         {onCancel && (
-          <Button variant="quiet" onClick={onCancel}>
+          <Button
+            variant="quiet"
+            disabled={pending !== null}
+            onClick={onCancel}
+          >
             Keep the current key
           </Button>
         )}
         <Button
           type="submit"
           variant="action"
-          disabled={pending || !acknowledged || key.trim() === ""}
+          pending={pending !== null}
+          disabled={!acknowledged || key.trim() === ""}
         >
           Check and save key
         </Button>
@@ -250,11 +265,11 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
   const [saved, setSaved] = useState<string | null>(null);
 
   const remove = () =>
-    run(async () => {
+    run("remove", async () => {
       await removeJevKey();
+      await router.invalidate();
       setRemoving(false);
       setSaved(null);
-      await router.invalidate();
     });
 
   return (
@@ -274,7 +289,11 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
                 Replace key
               </Button>
             )}
-            <Button variant="danger" onClick={() => setRemoving(true)}>
+            <Button
+              variant="danger"
+              disabled={replacing}
+              onClick={() => setRemoving(true)}
+            >
               Remove key
             </Button>
           </div>
@@ -294,7 +313,11 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
       )}
       {error && !removing && <Notice tone="danger">{error}</Notice>}
       {removing && (
-        <Modal title="Remove the Jev key?" onClose={() => setRemoving(false)}>
+        <Modal
+          title="Remove the Jev key?"
+          busy={pending !== null}
+          onClose={() => setRemoving(false)}
+        >
           <p className="text-sm text-secondary">
             Nothing more goes to Jev, starting now. Spam filtering goes back to
             what's built in, and rules that use a description pause until a key
@@ -302,10 +325,18 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
           </p>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
-            <Button variant="quiet" onClick={() => setRemoving(false)}>
+            <Button
+              variant="quiet"
+              disabled={pending !== null}
+              onClick={() => setRemoving(false)}
+            >
               Keep it
             </Button>
-            <Button variant="danger" disabled={pending} onClick={remove}>
+            <Button
+              variant="danger"
+              pending={pending !== null}
+              onClick={remove}
+            >
               Remove key
             </Button>
           </div>
@@ -317,6 +348,7 @@ function JevSection({ jev }: { jev: OrganisationView["jev"] }) {
 
 function StorageSection({ storage }: { storage: OrganisationView["storage"] }) {
   const router = useRouter();
+  const limit = useAction<LimitKey>();
   const { usedBytes, limitBytes } = storage;
   return (
     <Section
@@ -329,6 +361,7 @@ function StorageSection({ storage }: { storage: OrganisationView["storage"] }) {
           : `${formatBytes(usedBytes)} used of the ${formatBytes(limitBytes)} limit.`}
       </p>
       <StorageLimitForm
+        action={limit}
         label="Limit for the whole organisation, in GB"
         limitBytes={limitBytes}
         onChange={async (next) => {

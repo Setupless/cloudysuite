@@ -1,6 +1,7 @@
 import { Button, Page, TextField } from "@cloudysuite/ui";
 import { IconCloud, IconKey } from "@tabler/icons-react";
 import { type FormEvent, useState } from "react";
+import { leave } from "./account/use-action";
 import { authClient } from "./client";
 
 type Step = "passkey" | "password" | "code" | "backup-code";
@@ -23,45 +24,46 @@ function explain(failure: NonNullable<Failure>, otherwise: string): string {
 
 export function SignIn({ returnTo }: { returnTo: string }) {
   const [step, setStep] = useState<Step>("passkey");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  // Both belong to the step whose action started them. The passkey prompt can
+  // hang, so the person can move to their password while it is still open.
+  const [errors, setErrors] = useState<Partial<Record<Step, string>>>({});
+  const [pending, setPending] = useState<Step | null>(null);
+  const error = errors[step];
+  const busy = pending === step;
 
   function goTo(next: Step) {
-    setError(null);
+    setErrors({});
     setStep(next);
   }
 
-  function finish() {
-    window.location.assign(returnTo);
-  }
+  const finish = () => leave(returnTo);
 
-  async function attempt(action: () => Promise<void>) {
-    setError(null);
-    setPending(true);
+  // The action returns a message when it didn't sign the person in.
+  async function attempt(action: () => Promise<string | void>) {
+    const from = step;
+    setErrors({});
+    setPending(from);
+    let message: string | void;
     try {
-      await action();
+      message = await action();
     } catch {
-      setError(
-        "We couldn't reach CloudySuite. Check your connection and try again.",
-      );
-    } finally {
-      setPending(false);
+      message =
+        "We couldn't reach CloudySuite. Check your connection and try again.";
     }
+    if (message) setErrors((shown) => ({ ...shown, [from]: message }));
+    setPending((running) => (running === from ? null : running));
   }
 
   function signInWithPasskey() {
     return attempt(async () => {
       const { error: failure } = await authClient.signIn.passkey();
       if (failure) {
-        setError(
-          explain(
-            failure,
-            "We couldn't sign you in with a passkey. Try again, or use your password instead.",
-          ),
+        return explain(
+          failure,
+          "We couldn't sign you in with a passkey. Try again, or use your password instead.",
         );
-        return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -74,19 +76,16 @@ export function SignIn({ returnTo }: { returnTo: string }) {
         password: String(form.get("password")),
       });
       if (failure) {
-        setError(
-          explain(
-            failure,
-            "That email or password isn't right. Check them and try again.",
-          ),
+        return explain(
+          failure,
+          "That email or password isn't right. Check them and try again.",
         );
-        return;
       }
       if ("twoFactorRedirect" in data && data.twoFactorRedirect) {
         goTo("code");
         return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -99,17 +98,14 @@ export function SignIn({ returnTo }: { returnTo: string }) {
           ? await authClient.twoFactor.verifyTotp({ code })
           : await authClient.twoFactor.verifyBackupCode({ code });
       if (failure) {
-        setError(
-          explain(
-            failure,
-            step === "code"
-              ? "That code isn't right. Codes change every 30 seconds, so try the newest one."
-              : "That backup code isn't right, or it has already been used.",
-          ),
+        return explain(
+          failure,
+          step === "code"
+            ? "That code isn't right. Codes change every 30 seconds, so try the newest one."
+            : "That backup code isn't right, or it has already been used.",
         );
-        return;
       }
-      finish();
+      await finish();
     });
   }
 
@@ -117,7 +113,7 @@ export function SignIn({ returnTo }: { returnTo: string }) {
     <Page icon={IconCloud} title={STEP_TITLES[step]}>
       {step === "passkey" && (
         <>
-          <Button icon={IconKey} disabled={pending} onClick={signInWithPasskey}>
+          <Button icon={IconKey} pending={busy} onClick={signInWithPasskey}>
             Continue with passkey
           </Button>
           <Button variant="link" onClick={() => goTo("password")}>
@@ -143,10 +139,14 @@ export function SignIn({ returnTo }: { returnTo: string }) {
             autoComplete="current-password"
             required
           />
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" pending={busy}>
             Sign in
           </Button>
-          <Button variant="link" onClick={() => goTo("passkey")}>
+          <Button
+            variant="link"
+            disabled={busy}
+            onClick={() => goTo("passkey")}
+          >
             Use a passkey instead
           </Button>
         </form>
@@ -172,11 +172,12 @@ export function SignIn({ returnTo }: { returnTo: string }) {
               autoFocus
             />
           )}
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" pending={busy}>
             Continue
           </Button>
           <Button
             variant="link"
+            disabled={busy}
             onClick={() => goTo(step === "code" ? "backup-code" : "code")}
           >
             {step === "code"

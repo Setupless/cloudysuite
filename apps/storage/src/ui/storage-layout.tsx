@@ -23,7 +23,7 @@ import {
 } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { createTeamFolder, type Directory } from "../functions";
-import { call, directoryQuery, storageKeys } from "../queries";
+import { call, directoryQuery, refreshStorage } from "../queries";
 import { formatBytes } from "./format";
 import { StorageMeter } from "./storage-meter";
 import { NameDialog } from "./page-parts";
@@ -181,7 +181,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
             const driveId = await call(() =>
               createTeamFolder({ data: { name } }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             await navigate({
               to: "/storage/drive/$driveId",
               params: { driveId },

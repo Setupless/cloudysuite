@@ -1,6 +1,7 @@
 import { Button, Page } from "@cloudysuite/ui";
 import { IconLogout } from "@tabler/icons-react";
 import { useState } from "react";
+import { leave } from "./account/use-action";
 import { authClient } from "./client";
 
 const mailDeviceCleared = () =>
@@ -18,7 +19,7 @@ export function SignOut() {
       const { error } = await authClient.signOut();
       if (error) setState("failed");
       // Mail's host removes what it saved on this device, then comes back to sign-in.
-      else window.location.assign(mailDeviceCleared());
+      else await leave(mailDeviceCleared());
     } catch {
       setState("failed");
     }
@@ -40,7 +41,7 @@ export function SignOut() {
       )}
       <Button
         variant={state === "failed" ? "secondary" : "primary"}
-        disabled={state === "working"}
+        pending={state === "working"}
         onClick={signOut}
       >
         {state === "failed" ? "Try again" : "Sign out"}

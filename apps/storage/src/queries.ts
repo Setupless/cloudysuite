@@ -2,6 +2,7 @@ import {
   dehydrate,
   infiniteQueryOptions,
   keepPreviousData,
+  type Query,
   QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
@@ -86,6 +87,24 @@ export const storageKeys = {
   starred: ["storage", "starred"] as const,
   starIds: (driveId: DriveId) => ["storage", "star-ids", driveId] as const,
 };
+
+// Search and mail attachments can take seconds, and no change shows its outcome
+// there, so a dialog waiting on this doesn't wait for them.
+const refreshesBehind = (query: Query) =>
+  query.queryKey[1] === storageKeys.search("")[1] ||
+  query.queryKey[1] === storageKeys.mailAttachments[1];
+
+// Resolves once every list a change shows up in has its new contents.
+export async function refreshStorage(client: QueryClient) {
+  void client.invalidateQueries({
+    queryKey: storageKeys.all,
+    predicate: refreshesBehind,
+  });
+  await client.invalidateQueries({
+    queryKey: storageKeys.all,
+    predicate: (query) => !refreshesBehind(query),
+  });
+}
 
 export const directoryQuery = () =>
   queryOptions({

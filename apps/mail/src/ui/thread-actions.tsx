@@ -1,3 +1,4 @@
+import { Spinner } from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconArchive,
@@ -31,12 +32,16 @@ export function IconButton({
   onClick,
   pressed,
   tone,
+  pending = false,
+  disabled = false,
 }: {
   icon: Icon;
   label: string;
   onClick: () => void;
   pressed?: boolean;
   tone?: "star" | "danger";
+  pending?: boolean;
+  disabled?: boolean;
 }) {
   const colour = {
     star: "text-tag-1",
@@ -49,10 +54,16 @@ export function IconButton({
       title={label}
       aria-label={label}
       aria-pressed={pressed}
+      aria-busy={pending || undefined}
+      disabled={disabled || pending}
       onClick={onClick}
-      className={`flex size-8 flex-none cursor-pointer items-center justify-center rounded outline-accent hover:bg-field focus-visible:outline-2 ${colour}`}
+      className={`flex size-8 flex-none cursor-pointer items-center justify-center rounded outline-accent hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress ${colour}`}
     >
-      <ButtonIcon size={18} stroke={1.75} aria-hidden />
+      {pending ? (
+        <Spinner />
+      ) : (
+        <ButtonIcon size={18} stroke={1.75} aria-hidden />
+      )}
     </button>
   );
 }

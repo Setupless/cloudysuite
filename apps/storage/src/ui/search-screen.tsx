@@ -12,7 +12,13 @@ import { searchQuery } from "../queries";
 import { searchWords } from "../search-text";
 import { FileIcon } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
-import { FolderLink, Breadcrumb, PageTop, Problem } from "./page-parts";
+import {
+  FolderLink,
+  Breadcrumb,
+  LoadingRows,
+  PageTop,
+  Problem,
+} from "./page-parts";
 import { StarButton } from "./star-button";
 
 const COLUMNS =
@@ -128,7 +134,7 @@ function Results({ text }: { text: string }) {
     );
   }
   if (query.isError) return <Problem message={query.error.message} />;
-  if (!query.data) return null;
+  if (!query.data) return <LoadingRows />;
   const { rows, more, incomplete } = query.data;
 
   return (

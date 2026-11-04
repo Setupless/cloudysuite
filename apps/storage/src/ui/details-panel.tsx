@@ -18,7 +18,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { accessQuery, call, storageKeys } from "../queries";
+import { accessQuery, call, refreshStorage } from "../queries";
 import { deleteTeamFolder, renameTeamFolder } from "../sharing-functions";
 import type { DriveItem, FileItem, FolderItem, ItemId } from "../types";
 import { ACCESS_LABELS } from "./access-labels";
@@ -26,7 +26,7 @@ import { detailsPanelId, focusDetailsIfAsked } from "./details-focus";
 import { FilePreview } from "./file-visuals";
 import { formatBytes, formatChanged, itemCount } from "./format";
 import { ItemActions } from "./item-actions";
-import { ConfirmDialog, NameDialog } from "./page-parts";
+import { BONE, ConfirmDialog, Loading, NameDialog } from "./page-parts";
 import { ShareDialog } from "./share-dialog";
 import { StarButton } from "./star-button";
 import { TeamDialog } from "./team-dialog";
@@ -92,16 +92,32 @@ function WhoCanOpen({
   itemId: ItemId | null;
   me: SignedIn;
 }) {
-  const { data } = useQuery({
+  const query = useQuery({
     ...accessQuery(driveId as DriveId, itemId),
     enabled: driveId !== null,
   });
+  const { data } = query;
   const onlyMe =
     driveId === null ||
     (data?.lines.length === 1 &&
       data.lines[0]?.person.id === me.id &&
       data.lines[0].access === "owner" &&
       data.everyone === null);
+  if (!onlyMe && query.isError) {
+    return <p className="text-[13px] text-danger">{query.error.message}</p>;
+  }
+  if (!onlyMe && !data) {
+    return (
+      <Loading className="flex flex-col gap-2">
+        {["w-24", "w-32"].map((width) => (
+          <span key={width} aria-hidden className="flex items-center gap-2">
+            <span className={`size-[22px] flex-none rounded-full ${BONE}`} />
+            <span className={`h-3 ${width} ${BONE}`} />
+          </span>
+        ))}
+      </Loading>
+    );
+  }
   if (onlyMe) {
     return (
       <ul>
@@ -213,7 +229,7 @@ function TeamActions({ team, me }: { team: TeamRoot; me: SignedIn }) {
             await call(() =>
               renameTeamFolder({ data: { driveId, name: next } }),
             );
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
           }}
           onClose={() => setDialog(null)}
         />
@@ -226,7 +242,7 @@ function TeamActions({ team, me }: { team: TeamRoot; me: SignedIn }) {
           onConfirm={async () => {
             await call(() => deleteTeamFolder({ data: { driveId } }));
             await navigate({ to: "/storage" });
-            await client.invalidateQueries({ queryKey: storageKeys.all });
+            await refreshStorage(client);
             toast({ message: `${name} is deleted.` });
           }}
           onClose={() => setDialog(null)}
@@ -318,6 +334,7 @@ export function DetailsPanel({
             </a>
             {subject.canEdit && (
               <ItemActions
+                key={`${subject.driveId}/${subject.file.id}`}
                 driveId={subject.driveId}
                 item={subject.file}
                 shared={subject.shared}
@@ -332,6 +349,7 @@ export function DetailsPanel({
             <div className="flex flex-wrap gap-1.5">
               <ShareButton driveId={subject.driveId} item={subject.folder} />
               <ItemActions
+                key={`${subject.driveId}/${subject.folder.id}`}
                 driveId={subject.driveId}
                 item={subject.folder}
                 shared={subject.shared}

@@ -51,7 +51,7 @@ function MailboxCard({
     event.preventDefault();
     const form = event.currentTarget;
     const address = addressFrom(new FormData(form));
-    return run(async () => {
+    return run("add-address", async () => {
       const outcome = await addAlias({
         data: { mailboxId: mailbox.id, address },
       });
@@ -65,7 +65,7 @@ function MailboxCard({
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
-    return run(async () => {
+    return run("grant", async () => {
       const outcome = await grantMailboxAccess({
         data: {
           mailboxId: mailbox.id,
@@ -101,9 +101,10 @@ function MailboxCard({
             {kind === "alias" && (
               <Button
                 variant="danger"
-                disabled={pending}
+                pending={pending === `remove-alias:${address}`}
+                disabled={pending !== null}
                 onClick={() =>
-                  run(async () => {
+                  run(`remove-alias:${address}`, async () => {
                     await removeAlias({ data: { address } });
                     await router.invalidate();
                   })
@@ -123,7 +124,12 @@ function MailboxCard({
             required
           />
           <div>
-            <Button type="submit" variant="quiet" disabled={pending}>
+            <Button
+              type="submit"
+              variant="quiet"
+              pending={pending === "add-address"}
+              disabled={pending !== null}
+            >
               Add address
             </Button>
           </div>
@@ -148,9 +154,10 @@ function MailboxCard({
             </span>
             <Button
               variant="danger"
-              disabled={pending}
+              pending={pending === `revoke:${access.userId}`}
+              disabled={pending !== null}
               onClick={() =>
-                run(async () => {
+                run(`revoke:${access.userId}`, async () => {
                   await revokeMailboxAccess({
                     data: { mailboxId: mailbox.id, userId: access.userId },
                   });
@@ -177,7 +184,12 @@ function MailboxCard({
             <option value="manager">{ROLE_LABEL.manager}</option>
           </SelectField>
           <div>
-            <Button type="submit" variant="quiet" disabled={pending}>
+            <Button
+              type="submit"
+              variant="quiet"
+              pending={pending === "grant"}
+              disabled={pending !== null}
+            >
               Give access
             </Button>
           </div>
@@ -198,7 +210,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
     const form = event.currentTarget;
     const values = new FormData(form);
     const address = addressFrom(values);
-    return run(async () => {
+    return run("create", async () => {
       const outcome =
         kind === "shared"
           ? await createSharedMailbox({
@@ -231,6 +243,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
           <Button
             variant={kind === "shared" ? "action" : "quiet"}
             icon={IconUsers}
+            disabled={pending !== null}
             onClick={() => setKind("shared")}
           >
             Shared
@@ -238,6 +251,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
           <Button
             variant={kind === "personal" ? "action" : "quiet"}
             icon={IconInbox}
+            disabled={pending !== null}
             onClick={() => setKind("personal")}
           >
             Personal
@@ -256,7 +270,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
         )}
         <AddressField label="Address" domains={view.emailDomains} required />
         <div>
-          <Button type="submit" variant="action" disabled={pending}>
+          <Button type="submit" variant="action" pending={pending !== null}>
             Create mailbox
           </Button>
         </div>
