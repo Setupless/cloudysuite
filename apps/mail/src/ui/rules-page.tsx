@@ -448,7 +448,7 @@ function RuleCard({
   paused,
   first,
   last,
-  toggling,
+  working,
   onEdit,
   onToggle,
   onMove,
@@ -460,12 +460,13 @@ function RuleCard({
   paused: boolean;
   first: boolean;
   last: boolean;
-  toggling: boolean;
+  working: "idle" | "toggling" | "other";
   onEdit: () => void;
   onToggle: () => void;
   onMove: (direction: -1 | 1) => void;
   onDelete: () => void;
 }) {
+  const toggling = working === "toggling";
   return (
     <li className="flex flex-col gap-2 rounded border border-line bg-panel p-4">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -486,7 +487,7 @@ function RuleCard({
                 type="checkbox"
                 className="size-4 accent-accent"
                 checked={rule.enabled}
-                disabled={!hasAction(rule.actions) || toggling}
+                disabled={!hasAction(rule.actions) || working !== "idle"}
                 aria-busy={toggling || undefined}
                 aria-label={`${rule.name} is on`}
                 onChange={onToggle}
@@ -513,6 +514,7 @@ function RuleCard({
               icon={IconTrash}
               label="Delete"
               tone="danger"
+              disabled={working !== "idle"}
               onClick={onDelete}
             />
           </div>
@@ -533,11 +535,13 @@ function RuleCard({
 function ConfirmDelete({
   name,
   busy,
+  failure,
   onCancel,
   onConfirm,
 }: {
   name: string;
   busy: boolean;
+  failure: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -546,6 +550,7 @@ function ConfirmDelete({
       <p className="text-sm text-secondary">
         Mail it has already sorted stays where it is.
       </p>
+      {failure && <Notice tone="danger">{failure}</Notice>}
       <div className="flex justify-end gap-2">
         <Button variant="quiet" autoFocus disabled={busy} onClick={onCancel}>
           Keep it
@@ -573,6 +578,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const [deleting, setDeleting] = useState<Rule | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [working, setWorking] = useState<RuleWork | null>(null);
+  const [deleteProblem, setDeleteProblem] = useState<string | null>(null);
 
   const rules = rulesData.data?.rules ?? [];
   const addresses = rulesData.data?.addresses ?? [];
@@ -584,16 +590,18 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
   const attempt = async (
     work: RuleWork | null,
     run: () => Promise<unknown>,
-  ) => {
+  ): Promise<string | null> => {
     setProblem(null);
     if (work) setWorking(work);
+    let failure: string | null = null;
     try {
       await callAction(run);
     } catch (thrown) {
-      setProblem((await asMailFailure(thrown)).message);
+      failure = (await asMailFailure(thrown)).message;
     }
     await refresh();
-    if (work) setWorking(null);
+    if (work) setWorking((current) => (current === work ? null : current));
+    return failure;
   };
 
   const save = async (draft: RuleDraft): Promise<string | null> => {
@@ -633,7 +641,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
     }
     void attempt(null, () =>
       reorderRules({ data: { mailboxId, ruleIds: ids } }),
-    );
+    ).then(setProblem);
   };
 
   let body: ReactNode;
@@ -670,7 +678,13 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
             paused={!jevIsSet && needsJev(rule)}
             first={index === 0}
             last={index === rules.length - 1}
-            toggling={working?.kind === "toggle" && working.id === rule.id}
+            working={
+              working === null
+                ? "idle"
+                : working.kind === "toggle" && working.id === rule.id
+                  ? "toggling"
+                  : "other"
+            }
             onEdit={() => setEditing({ kind: "existing", rule })}
             onToggle={() =>
               void attempt({ kind: "toggle", id: rule.id }, () =>
@@ -681,7 +695,7 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
                     rule: { ...draftOf(rule), enabled: !rule.enabled },
                   },
                 }),
-              )
+              ).then(setProblem)
             }
             onMove={(direction) => move(index, direction)}
             onDelete={() => setDeleting(rule)}
@@ -749,13 +763,19 @@ function Rules({ mailboxId }: { mailboxId: MailboxId }) {
         <ConfirmDelete
           name={deleting.name}
           busy={working?.kind === "delete" && working.id === deleting.id}
-          onCancel={() => setDeleting(null)}
+          failure={deleteProblem}
+          onCancel={() => {
+            setDeleting(null);
+            setDeleteProblem(null);
+          }}
           onConfirm={async () => {
             const { id } = deleting;
-            await attempt({ kind: "delete", id }, () =>
+            setDeleteProblem(null);
+            const failure = await attempt({ kind: "delete", id }, () =>
               deleteRule({ data: { mailboxId, ruleId: id } }),
             );
-            setDeleting(null);
+            if (failure) setDeleteProblem(failure);
+            else setDeleting(null);
           }}
         />
       )}
