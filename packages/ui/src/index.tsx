@@ -1,5 +1,5 @@
 import type { Icon } from "@tabler/icons-react";
-import { IconCheck, IconCopy, IconX } from "@tabler/icons-react";
+import { IconCheck, IconCopy, IconLoader2, IconX } from "@tabler/icons-react";
 import {
   type ComponentProps,
   type ReactNode,
@@ -71,28 +71,55 @@ const BUTTON_VARIANTS = {
 };
 
 export const buttonClass = (variant: keyof typeof BUTTON_VARIANTS) =>
-  `flex cursor-pointer items-center justify-center gap-2 rounded outline-accent focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60 ${BUTTON_VARIANTS[variant]}`;
+  `flex cursor-pointer items-center justify-center gap-2 rounded outline-accent focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress ${BUTTON_VARIANTS[variant]}`;
+
+export function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <IconLoader2
+      size={size}
+      stroke={1.75}
+      className="animate-spin"
+      aria-hidden
+    />
+  );
+}
 
 export function Button({
   variant = "primary",
   icon: ButtonIcon,
+  pending = false,
+  disabled,
   type = "button",
   children,
   ...props
 }: Omit<ComponentProps<"button">, "className"> & {
   variant?: keyof typeof BUTTON_VARIANTS;
   icon?: Icon;
+  pending?: boolean;
 }) {
+  const size = variant.startsWith("toolbar") ? 16 : 18;
   return (
-    <button type={type} className={buttonClass(variant)} {...props}>
-      {ButtonIcon && (
-        <ButtonIcon
-          size={variant.startsWith("toolbar") ? 16 : 18}
-          stroke={1.75}
-          aria-hidden
-        />
+    <button
+      type={type}
+      className={buttonClass(variant)}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
+      {...props}
+    >
+      {pending && ButtonIcon && <Spinner size={size} />}
+      {!pending && ButtonIcon && (
+        <ButtonIcon size={size} stroke={1.75} aria-hidden />
       )}
-      {children}
+      {pending && !ButtonIcon ? (
+        // The spinner sits over the label so the button keeps its width, and the
+        // label stays readable to screen readers.
+        <span className="grid place-items-center *:col-start-1 *:row-start-1">
+          <span className="opacity-0">{children}</span>
+          <Spinner size={size} />
+        </span>
+      ) : (
+        children
+      )}
     </button>
   );
 }
@@ -202,11 +229,14 @@ export function Modal({
   title,
   onClose,
   closeButton = false,
+  busy = false,
   children,
 }: {
   title: string;
   onClose: () => void;
   closeButton?: boolean;
+  // While the dialog's action runs it stays open, so the person sees how it ended.
+  busy?: boolean;
   children: ReactNode;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -217,6 +247,10 @@ export function Modal({
     <dialog
       ref={dialog}
       onClose={onClose}
+      onCancel={(event) => {
+        if (busy) event.preventDefault();
+      }}
+      aria-busy={busy || undefined}
       className="m-auto w-full max-w-md rounded border border-line bg-panel p-5 text-text backdrop:bg-text backdrop:opacity-30"
     >
       <div className="flex flex-col gap-3">
@@ -228,7 +262,8 @@ export function Modal({
             <button
               type="button"
               aria-label="Close"
-              className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2"
+              disabled={busy}
+              className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60"
               onClick={onClose}
             >
               <IconX size={18} stroke={1.75} aria-hidden />
