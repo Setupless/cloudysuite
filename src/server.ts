@@ -4,7 +4,7 @@ import { X_TSS_RAW_RESPONSE } from "@tanstack/react-start";
 import handler from "@tanstack/react-start/server-entry";
 import { appOffRefusal } from "./app-on";
 import { withResponseHeaders } from "./response-headers";
-import { gate, resolveHost, type ToggleableApp } from "./routing";
+import { gate, isLocalHost, resolveHost, type ToggleableApp } from "./routing";
 import { settingsFor } from "./settings";
 
 export { Mailbox } from "@cloudysuite/mail/mailbox";
@@ -43,7 +43,18 @@ async function route(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request, env) {
-    return withResponseHeaders(await route(request, env));
+    const url = new URL(request.url);
+    if (url.protocol === "http:" && !isLocalHost(url.hostname)) {
+      url.protocol = "https:";
+      // The apps serve https on the default port only, as appOrigins assumes.
+      url.port = "";
+      // 308, so a form posted over http is resent as a POST and not turned into a GET.
+      return new Response(null, {
+        status: 308,
+        headers: { Location: url.href },
+      });
+    }
+    return withResponseHeaders(await route(request, env), url);
   },
 
   async email(message, env) {
