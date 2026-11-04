@@ -13,7 +13,12 @@ import { NameDialog } from "./page-parts";
 export function useRestore() {
   const client = useQueryClient();
   const toast = useToast();
-  return async (driveId: DriveId, itemId: ItemId, name: string) => {
+  // Resolves true once it's back and the lists show it.
+  return async (
+    driveId: DriveId,
+    itemId: ItemId,
+    name: string,
+  ): Promise<boolean> => {
     try {
       const result = await call(() =>
         restoreItem({ data: { driveId, itemId } }),
@@ -28,8 +33,10 @@ export function useRestore() {
           ? `"${name}" is back at the top level, because the folder it was in is gone.${renamed}`
           : `"${name}" is back where it was.${renamed}`,
       });
+      return true;
     } catch (failure) {
       toast({ tone: "danger", message: (failure as Error).message });
+      return false;
     }
   };
 }
@@ -50,6 +57,7 @@ export function ItemActions({
   const toast = useToast();
   const restore = useRestore();
   const [dialog, setDialog] = useState<"rename" | "move" | null>(null);
+  const [trashing, setTrashing] = useState(false);
 
   const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
   const stopChoosingFile = () =>
@@ -73,6 +81,7 @@ export function ItemActions({
           });
 
   async function moveToTrash() {
+    setTrashing(true);
     try {
       await call(() => trashItem({ data: { driveId, itemId: item.id } }));
       // Off the page first, or the folder being looked at reports itself missing.
@@ -89,6 +98,8 @@ export function ItemActions({
       });
     } catch (failure) {
       toast({ tone: "danger", message: (failure as Error).message });
+    } finally {
+      setTrashing(false);
     }
   }
 
@@ -97,6 +108,7 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconPencil}
+        disabled={trashing}
         onClick={() => setDialog("rename")}
       >
         Rename
@@ -104,6 +116,7 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconFolderSymlink}
+        disabled={trashing}
         onClick={() => setDialog("move")}
       >
         Move
@@ -111,6 +124,7 @@ export function ItemActions({
       <Button
         variant="toolbar"
         icon={IconTrash}
+        pending={trashing}
         onClick={() => void moveToTrash()}
       >
         Delete

@@ -58,6 +58,7 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
   const restore = useRestore();
   const hydrated = useHydrated();
   const [confirming, setConfirming] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const { entry, drive } = line;
   const when = (timestamp: number) =>
     hydrated ? formatChanged(timestamp, new Date()) : " ";
@@ -86,9 +87,11 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
           <Button
             variant="toolbar"
             icon={IconRestore}
-            onClick={() => {
-              onGone();
-              void restore(drive.id, entry.id, entry.name);
+            pending={restoring}
+            onClick={async () => {
+              setRestoring(true);
+              if (await restore(drive.id, entry.id, entry.name)) onGone();
+              else setRestoring(false);
             }}
           >
             Restore
@@ -96,6 +99,7 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
           <Button
             variant="toolbar"
             icon={IconTrashX}
+            disabled={restoring}
             onClick={() => setConfirming(true)}
           >
             Delete forever
@@ -133,8 +137,8 @@ function Panel({ line, onGone }: { line: TrashLine; onGone: () => void }) {
                 data: { driveId: drive.id, itemId: entry.id },
               }),
             );
-            onGone();
             await client.invalidateQueries({ queryKey: storageKeys.all });
+            onGone();
           }}
           onClose={() => setConfirming(false)}
         />

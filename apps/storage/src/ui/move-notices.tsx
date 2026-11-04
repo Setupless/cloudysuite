@@ -1,6 +1,7 @@
 import { Button, useToast } from "@cloudysuite/ui";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import type { MoveNoticeRow } from "../across-drives";
 import { dismissMoveNotice } from "../functions";
 import { call, moveNoticesQuery, storageKeys } from "../queries";
@@ -40,45 +41,57 @@ function Words({ notice }: { notice: MoveNoticeRow }) {
   );
 }
 
-export function MoveNotices() {
+function MoveNotice({ notice }: { notice: MoveNoticeRow }) {
   const client = useQueryClient();
   const toast = useToast();
-  const { data: notices = [] } = useQuery(moveNoticesQuery());
+  const [pending, setPending] = useState(false);
 
-  async function dismiss({ driveId, moveId }: MoveNoticeRow) {
+  // On success the note leaves the list, so it only stops spinning if it fails.
+  async function dismiss() {
+    setPending(true);
     try {
-      await call(() => dismissMoveNotice({ data: { driveId, moveId } }));
+      await call(() =>
+        dismissMoveNotice({
+          data: { driveId: notice.driveId, moveId: notice.moveId },
+        }),
+      );
       await client.invalidateQueries({ queryKey: storageKeys.moveNotices });
     } catch (failure) {
+      setPending(false);
       toast({ tone: "danger", message: (failure as Error).message });
     }
   }
 
   return (
+    <div className="flex items-start gap-2.5 rounded border border-line bg-sidebar px-3 py-2.5 text-sm">
+      <span className="mt-px flex-none text-danger">
+        <IconAlertCircle size={18} stroke={1.75} aria-hidden />
+      </span>
+      <p className="min-w-0 flex-1 break-words">
+        <Words notice={notice} />
+      </p>
+      <Button
+        variant="quiet"
+        aria-label={
+          notice.name === null
+            ? "OK, hide this note"
+            : `OK, hide the note about "${notice.name}"`
+        }
+        pending={pending}
+        onClick={() => void dismiss()}
+      >
+        OK
+      </Button>
+    </div>
+  );
+}
+
+export function MoveNotices() {
+  const { data: notices = [] } = useQuery(moveNoticesQuery());
+  return (
     <div role="status" className="flex flex-col gap-2 px-4 pb-2.5 empty:hidden">
       {notices.map((notice) => (
-        <div
-          key={notice.moveId}
-          className="flex items-start gap-2.5 rounded border border-line bg-sidebar px-3 py-2.5 text-sm"
-        >
-          <span className="mt-px flex-none text-danger">
-            <IconAlertCircle size={18} stroke={1.75} aria-hidden />
-          </span>
-          <p className="min-w-0 flex-1 break-words">
-            <Words notice={notice} />
-          </p>
-          <Button
-            variant="quiet"
-            aria-label={
-              notice.name === null
-                ? "OK, hide this note"
-                : `OK, hide the note about "${notice.name}"`
-            }
-            onClick={() => void dismiss(notice)}
-          >
-            OK
-          </Button>
-        </div>
+        <MoveNotice key={notice.moveId} notice={notice} />
       ))}
     </div>
   );

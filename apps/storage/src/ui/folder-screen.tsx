@@ -214,7 +214,7 @@ function Folder({
           <div className="mt-3 flex justify-center">
             <Button
               variant="quiet"
-              disabled={query.isFetchingNextPage}
+              pending={query.isFetchingNextPage}
               onClick={() => void query.fetchNextPage()}
             >
               Show more
