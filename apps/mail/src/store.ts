@@ -205,6 +205,8 @@ function toMessageDetail(
 
 export type ThreadFacts = { folders: Folder[]; labelIds: LabelId[] };
 
+export type MessageContentRefs = { body: BodyRef[]; inline: AttachmentRef[] };
+
 function toSummary(
   row: ViewRow,
   facts: ThreadFacts | undefined,
@@ -1039,6 +1041,14 @@ export class MailboxStore {
       )
       .toArray()
       .map((row) => ({ ...toAttachmentInfo(row), r2Key: row.r2_key }));
+  }
+
+  messageContent(messageId: MessageId): MessageContentRefs | null {
+    if (this.storagePrefix(messageId) === null) return null;
+    return {
+      body: this.bodyRefs(messageId),
+      inline: this.inlineAttachmentRefs(messageId),
+    };
   }
 
   storagePrefix(messageId: MessageId): string | null {
