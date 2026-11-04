@@ -20,9 +20,9 @@ import { composeKeys, isOnItsWay, outgoingQuery } from "./queries";
 const SENT_NOTE_MS = 6_000;
 
 const TRAY_ACTION =
-  "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline outline-page focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress";
+  "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline outline-page focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress";
 const NOTICE_ACTION =
-  "inline-flex cursor-pointer items-center gap-1.5 font-semibold text-accent underline outline-accent focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress";
+  "inline-flex cursor-pointer items-center gap-1.5 font-semibold text-accent underline outline-accent focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress";
 
 const STILL_GOING_OFFLINE =
   "You're offline, so Undo isn't available. This message doesn't need this device and will still go.";
@@ -80,7 +80,7 @@ function useUndoSend(mailboxId: MailboxId) {
     await queryClient.invalidateQueries({
       queryKey: composeKeys.outgoing(mailboxId),
     });
-    setUndoing(null);
+    setUndoing((current) => (current === job.id ? null : current));
   };
   return { undo, undoing };
 }
@@ -173,7 +173,7 @@ export function SendNotices() {
     await queryClient.invalidateQueries({
       queryKey: composeKeys.outgoing(mailboxId),
     });
-    setReopening(null);
+    setReopening((current) => (current === job.id ? null : current));
   };
   const dismiss = (job: OutgoingSummary) => {
     const next = new Set(dismissed).add(job.id);
@@ -200,7 +200,7 @@ export function SendNotices() {
           <button
             type="button"
             className={NOTICE_ACTION}
-            disabled={undoing === waiting.id}
+            disabled={undoing !== null}
             aria-busy={undoing === waiting.id || undefined}
             onClick={() => void undo(waiting)}
           >
@@ -221,7 +221,7 @@ export function SendNotices() {
           <button
             type="button"
             className={NOTICE_ACTION}
-            disabled={reopening === failed.id}
+            disabled={reopening !== null}
             aria-busy={reopening === failed.id || undefined}
             onClick={() => void reopen(failed)}
           >
@@ -315,7 +315,7 @@ export function SendTray() {
               <button
                 type="button"
                 className={TRAY_ACTION}
-                disabled={undoing === job.id}
+                disabled={undoing !== null}
                 aria-busy={undoing === job.id || undefined}
                 onClick={() => void undo(job)}
               >
