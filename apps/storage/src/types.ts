@@ -43,6 +43,8 @@ export type FolderListing = {
   // Reached through a share rather than through being on the drive.
   shared: boolean;
   canEdit: boolean;
+  // The folder itself. Whoever can edit something listed in it can rename that.
+  canRename: boolean;
   // Only when the folder can't be edited: what in it can be, through its own share.
   editableIds: ItemId[];
 };
@@ -65,7 +67,12 @@ export type MoveNotice = {
 };
 
 // One item as a particular person can see it. A share's own item shows no parent.
-export type OpenedItem = { item: DriveItem; canEdit: boolean; shared: boolean };
+export type OpenedItem = {
+  item: DriveItem;
+  canEdit: boolean;
+  canRename: boolean;
+  shared: boolean;
+};
 
 // Everyone in the organisation can only ever view. Null user ids and an edit level on it
 // aren't representable here or in the object's table.
@@ -96,6 +103,7 @@ export type SharedLine = {
   item: DriveItem;
   level: AccessLevel;
   canEdit: boolean;
+  canRename: boolean;
   sharedBy: UserId;
   sharedAt: number;
 };

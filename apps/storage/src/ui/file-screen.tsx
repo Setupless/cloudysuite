@@ -82,6 +82,7 @@ function File({
           file: opened.file,
           addedBy: personOf(opened.people, opened.file.createdBy).name,
           canEdit: opened.canEdit,
+          canRename: opened.canRename,
           shared: true,
         }}
         me={me}

@@ -48,10 +48,12 @@ export function useRestore() {
 export function ItemActions({
   driveId,
   item,
+  canRename,
   shared,
 }: {
   driveId: DriveId;
   item: DriveItem;
+  canRename: boolean;
   // Reached through a share. A shared item shows no parent, and the drive's root is out
   // of reach, so leaving it goes to Shared with me.
   shared: boolean;
@@ -124,7 +126,7 @@ export function ItemActions({
 
   return (
     <>
-      {!(shared && item.parentId === null) && (
+      {canRename && (
         <Button
           variant="toolbar"
           icon={IconPencil}

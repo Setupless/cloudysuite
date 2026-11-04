@@ -265,6 +265,7 @@ export const getFile = createServerFn({ method: "GET" })
     return {
       file,
       canEdit: opened.canEdit,
+      canRename: opened.canRename,
       shared: opened.shared,
       people: await peopleOf(env.DB, [file.createdBy]),
     };

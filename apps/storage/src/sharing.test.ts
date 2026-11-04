@@ -379,6 +379,38 @@ test("renaming what's shared on its own says nothing about the folder around it"
   expect((await bob.rename(sibling.id, named("Free"))).status).toBe("renamed");
 });
 
+test("each item says whether its person can rename it, as rename answers", async () => {
+  await shareWithBob("view");
+  await shareWithBob("edit", inner.id);
+  await shareWithBob("edit", sibling.id);
+  const flags = async () => {
+    const lines = await bob.sharedWith(10);
+    const line = (id: ItemId) =>
+      lines.find((each) => each.item.id === id)?.canRename;
+    return {
+      innerLine: line(inner.id),
+      innerOpened: (await bob.opened(inner.id))?.canRename,
+      siblingLine: line(sibling.id),
+      siblingListing: (await bob.list(sibling.id, null))?.canRename,
+      sharedListing: (await bob.list(shared.id, null))?.canRename,
+    };
+  };
+  expect(await flags()).toEqual({
+    innerLine: true,
+    innerOpened: true,
+    siblingLine: false,
+    siblingListing: false,
+    sharedListing: false,
+  });
+  expect((await bob.rename(inner.id, named("Rota.png"))).status).toBe(
+    "renamed",
+  );
+  expect((await bob.rename(sibling.id, named("Free"))).status).toBe(
+    "folderOutOfReach",
+  );
+  expect((await kit.drive.list(parent.id, null))?.canRename).toBe(true);
+});
+
 test("a share covers what's added later, and moving something out ends it", async () => {
   await shareWithBob("view");
   const later = await upload("later.png", sub.id);

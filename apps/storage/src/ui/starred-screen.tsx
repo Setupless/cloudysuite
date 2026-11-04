@@ -70,6 +70,7 @@ function Starred({ me, file }: { me: SignedIn; file: string | undefined }) {
             file: selected.item,
             addedBy: personOf(people, selected.item.createdBy).name,
             canEdit: selected.canEdit,
+            canRename: selected.canRename,
             shared: selected.shared,
           }}
           me={me}

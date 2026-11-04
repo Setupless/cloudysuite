@@ -47,6 +47,7 @@ export type PanelSubject =
       // Only at the root of a team folder.
       team: TeamRoot | null;
       canEdit: boolean;
+      canRename: boolean;
       shared: boolean;
     }
   | {
@@ -55,6 +56,7 @@ export type PanelSubject =
       file: FileItem;
       addedBy: string;
       canEdit: boolean;
+      canRename: boolean;
       shared: boolean;
     };
 
@@ -337,6 +339,7 @@ export function DetailsPanel({
                 key={`${subject.driveId}/${subject.file.id}`}
                 driveId={subject.driveId}
                 item={subject.file}
+                canRename={subject.canRename}
                 shared={subject.shared}
               />
             )}
@@ -352,6 +355,7 @@ export function DetailsPanel({
                 key={`${subject.driveId}/${subject.folder.id}`}
                 driveId={subject.driveId}
                 item={subject.folder}
+                canRename={subject.canRename}
                 shared={subject.shared}
               />
             </div>
