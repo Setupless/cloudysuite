@@ -8,7 +8,7 @@ import {
 } from "@cloudysuite/ui";
 import { IconKey, IconPlus } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { authClient } from "../client";
 import { removalRefusal } from "../sign-in-methods";
 import type { AccountView, PasskeySummary } from "./functions";
@@ -17,9 +17,12 @@ import { explainFailure, useAction } from "./use-action";
 export function AddPasskeyForm({
   onAdded,
   buttonLabel = "Add a passkey",
+  after,
 }: {
   onAdded: () => void | Promise<void>;
   buttonLabel?: string;
+  // Rendered below the form, told whether the form is busy.
+  after?: (busy: boolean) => ReactNode;
 }) {
   const { pending, error, run } = useAction();
 
@@ -49,26 +52,29 @@ export function AddPasskeyForm({
   }
 
   return (
-    <form className="flex flex-col gap-3" onSubmit={submit}>
-      <TextField
-        label="Name for this passkey"
-        name="name"
-        required
-        maxLength={60}
-        placeholder="Work laptop"
-      />
-      <div>
-        <Button
-          type="submit"
-          variant="action"
-          icon={IconPlus}
-          pending={pending !== null}
-        >
-          {buttonLabel}
-        </Button>
-      </div>
-      {error && <Notice tone="danger">{error}</Notice>}
-    </form>
+    <>
+      <form className="flex flex-col gap-3" onSubmit={submit}>
+        <TextField
+          label="Name for this passkey"
+          name="name"
+          required
+          maxLength={60}
+          placeholder="Work laptop"
+        />
+        <div>
+          <Button
+            type="submit"
+            variant="action"
+            icon={IconPlus}
+            pending={pending !== null}
+          >
+            {buttonLabel}
+          </Button>
+        </div>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </form>
+      {after?.(pending !== null)}
+    </>
   );
 }
 

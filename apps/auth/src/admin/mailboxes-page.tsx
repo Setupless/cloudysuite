@@ -243,6 +243,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
           <Button
             variant={kind === "shared" ? "action" : "quiet"}
             icon={IconUsers}
+            disabled={pending !== null}
             onClick={() => setKind("shared")}
           >
             Shared
@@ -250,6 +251,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
           <Button
             variant={kind === "personal" ? "action" : "quiet"}
             icon={IconInbox}
+            disabled={pending !== null}
             onClick={() => setKind("personal")}
           >
             Personal

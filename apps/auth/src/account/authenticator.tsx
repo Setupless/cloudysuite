@@ -1,7 +1,7 @@
 import { Button, CopyField, Notice, Section, TextField } from "@cloudysuite/ui";
 import { IconDeviceMobile } from "@tabler/icons-react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { authClient } from "../client";
 import { removalRefusal } from "../sign-in-methods";
 import type { AccountView } from "./functions";
@@ -49,12 +49,16 @@ function BackupCodes({
 export function AuthenticatorSetup({
   onDone,
   onCancel,
+  after,
 }: {
   onDone: () => void | Promise<void>;
   onCancel?: () => void;
+  // Rendered below each step, told whether the step is busy.
+  after?: (busy: boolean) => ReactNode;
 }) {
   const [setup, setSetup] = useState<SetupStep>({ step: "password" });
   const { pending, error, run } = useAction<"start" | "verify" | "done">();
+  const below = after?.(pending !== null);
 
   function start(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -77,36 +81,39 @@ export function AuthenticatorSetup({
 
   if (setup.step === "password") {
     return (
-      <form className="flex flex-col gap-3 text-left" onSubmit={start}>
-        <TextField
-          label="Your password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          hint="Enter it to confirm that this is you."
-          required
-        />
-        <div className="flex gap-2">
-          <Button
-            type="submit"
-            variant="action"
-            icon={IconDeviceMobile}
-            pending={pending === "start"}
-          >
-            Set up authenticator app
-          </Button>
-          {onCancel && (
+      <>
+        <form className="flex flex-col gap-3 text-left" onSubmit={start}>
+          <TextField
+            label="Your password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            hint="Enter it to confirm that this is you."
+            required
+          />
+          <div className="flex gap-2">
             <Button
-              variant="quiet"
-              disabled={pending !== null}
-              onClick={onCancel}
+              type="submit"
+              variant="action"
+              icon={IconDeviceMobile}
+              pending={pending === "start"}
             >
-              Not now
+              Set up authenticator app
             </Button>
-          )}
-        </div>
-        {error && <Notice tone="danger">{error}</Notice>}
-      </form>
+            {onCancel && (
+              <Button
+                variant="quiet"
+                disabled={pending !== null}
+                onClick={onCancel}
+              >
+                Not now
+              </Button>
+            )}
+          </div>
+          {error && <Notice tone="danger">{error}</Notice>}
+        </form>
+        {below}
+      </>
     );
   }
 
@@ -119,6 +126,7 @@ export function AuthenticatorSetup({
           onDone={() => run("done", async () => onDone())}
         />
         {error && <Notice tone="danger">{error}</Notice>}
+        {below}
       </>
     );
   }
@@ -143,33 +151,36 @@ export function AuthenticatorSetup({
 
   const secret = new URL(uri).searchParams.get("secret") ?? "";
   return (
-    <form
-      className="flex flex-col items-start gap-3 text-left"
-      onSubmit={verify}
-    >
-      <p className="text-sm">
-        Open your authenticator app, such as Google Authenticator or 1Password,
-        and scan this code.
-      </p>
-      <QrCode text={uri} label="Code to scan with your authenticator app" />
-      <div className="w-full">
-        <CopyField
-          label="Can't scan it? Enter this key instead"
-          value={secret}
+    <>
+      <form
+        className="flex flex-col items-start gap-3 text-left"
+        onSubmit={verify}
+      >
+        <p className="text-sm">
+          Open your authenticator app, such as Google Authenticator or
+          1Password, and scan this code.
+        </p>
+        <QrCode text={uri} label="Code to scan with your authenticator app" />
+        <div className="w-full">
+          <CopyField
+            label="Can't scan it? Enter this key instead"
+            value={secret}
+          />
+        </div>
+        <TextField
+          label="6-digit code from your app"
+          name="code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
         />
-      </div>
-      <TextField
-        label="6-digit code from your app"
-        name="code"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        required
-      />
-      <Button type="submit" variant="action" pending={pending === "verify"}>
-        Confirm code
-      </Button>
-      {error && <Notice tone="danger">{error}</Notice>}
-    </form>
+        <Button type="submit" variant="action" pending={pending === "verify"}>
+          Confirm code
+        </Button>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </form>
+      {below}
+    </>
   );
 }
 
