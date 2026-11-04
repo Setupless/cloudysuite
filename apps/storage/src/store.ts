@@ -305,6 +305,12 @@ export class DriveStore {
     return actor.role !== null && levelOfRole(actor.role) === "edit";
   }
 
+  // A refused name would describe the folder around the item, so renaming needs sight of
+  // that folder. Only the top of a share has a parent the person can't open.
+  #mayRename(reach: Reach, id: ItemId): boolean {
+    return reach.level === "edit" && reach.topId !== id;
+  }
+
   #trimmed<Item extends DriveItem>(item: Item, reach: Reach): Item {
     return item.id === reach.topId ? { ...item, parentId: null } : item;
   }
@@ -316,6 +322,7 @@ export class DriveStore {
       ? {
           item: this.#trimmed(item, reach),
           canEdit: reach.level === "edit",
+          canRename: this.#mayRename(reach, id),
           shared: reach.topId !== null,
         }
       : null;
@@ -399,6 +406,7 @@ export class DriveStore {
     return {
       shared: reach.topId !== null,
       canEdit: reach.level === "edit",
+      canRename: found !== null && this.#mayRename(reach, found.id),
       editableIds:
         reach.level === "edit"
           ? []
@@ -930,9 +938,11 @@ export class DriveStore {
   }): RenameResult {
     const { actor, driveId, id, name, now } = input;
     return this.#db.transaction((): RenameResult => {
-      if (!this.#canEdit(actor, id)) return NO_ACCESS;
+      const reach = this.reachOf(actor, id);
+      if (reach?.level !== "edit") return NO_ACCESS;
       const item = this.item(id);
       if (!item) return { status: "gone" };
+      if (!this.#mayRename(reach, id)) return { status: "folderOutOfReach" };
       if (this.#isLocked(id)) return { status: "busy" };
       if (
         nameKeyOf(item.name) !== name.nameKey &&
@@ -1751,6 +1761,7 @@ export class DriveStore {
               item: { ...parseItem(row), parentId: null },
               level: row.share_level,
               canEdit: reach.level === "edit",
+              canRename: this.#mayRename(reach, row.id as ItemId),
               sharedBy: row.shared_by as UserId,
               sharedAt: row.shared_at,
             },

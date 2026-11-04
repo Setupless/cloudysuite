@@ -58,6 +58,7 @@ function Recent({ me, file }: { me: SignedIn; file: string | undefined }) {
             file: selected.file,
             addedBy: personOf(people, selected.file.createdBy).name,
             canEdit: levelOfRole(selected.drive.role) === "edit",
+            canRename: levelOfRole(selected.drive.role) === "edit",
             shared: false,
           }}
           me={me}

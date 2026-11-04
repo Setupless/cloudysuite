@@ -48,10 +48,12 @@ export function useRestore() {
 export function ItemActions({
   driveId,
   item,
+  canRename,
   shared,
 }: {
   driveId: DriveId;
   item: DriveItem;
+  canRename: boolean;
   // Reached through a share. A shared item shows no parent, and the drive's root is out
   // of reach, so leaving it goes to Shared with me.
   shared: boolean;
@@ -124,14 +126,16 @@ export function ItemActions({
 
   return (
     <>
-      <Button
-        variant="toolbar"
-        icon={IconPencil}
-        disabled={trashing}
-        onClick={() => setDialog("rename")}
-      >
-        Rename
-      </Button>
+      {canRename && (
+        <Button
+          variant="toolbar"
+          icon={IconPencil}
+          disabled={trashing}
+          onClick={() => setDialog("rename")}
+        >
+          Rename
+        </Button>
+      )}
       <Button
         variant="toolbar"
         icon={IconFolderSymlink}

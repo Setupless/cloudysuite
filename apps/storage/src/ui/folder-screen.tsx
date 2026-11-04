@@ -102,12 +102,16 @@ function Folder({
     folderId,
     name: title,
   };
+  const listedCanEdit =
+    listed !== undefined &&
+    (first.canEdit || first.editableIds.includes(listed.id));
   const selected =
     listed?.kind === "file"
       ? {
           file: listed,
           people,
-          canEdit: first.canEdit || first.editableIds.includes(listed.id),
+          canEdit: listedCanEdit,
+          canRename: listedCanEdit,
         }
       : selectedId !== null
         ? fetched.data
@@ -119,6 +123,7 @@ function Folder({
         file: selected.file,
         addedBy: personOf(selected.people, selected.file.createdBy).name,
         canEdit: selected.canEdit,
+        canRename: selected.canRename,
         shared: first.shared,
       }
     : {
@@ -147,6 +152,7 @@ function Folder({
               }
             : null,
         canEdit: first.canEdit,
+        canRename: first.canRename,
         shared: first.shared,
       };
 
@@ -319,6 +325,7 @@ export function MyFilesScreen({ me }: { me: SignedIn }) {
           folder: null,
           team: null,
           canEdit: true,
+          canRename: true,
           shared: false,
         }}
         me={me}
