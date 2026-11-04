@@ -10,6 +10,7 @@ import { displayName, sendersLine } from "./format";
 import { useMailView } from "./mail-view-context";
 import { ThreadDate } from "./states";
 import { RowLabels, useLabels } from "./label-chip";
+import { prefetchOpenBodies } from "./thread-pane";
 import {
   LabelButton,
   MoveButtons,
@@ -35,6 +36,14 @@ function ThreadRow({
   // Only the row under the pointer holds these, so a long list stays light.
   const [hovered, setHovered] = useState(false);
   const prefetchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const prefetch = () =>
+    void queryClient
+      .fetchQuery(threadQuery(mailboxId, thread.id))
+      .then(
+        (detail) =>
+          detail && prefetchOpenBodies(queryClient, mailboxId, detail),
+      )
+      .catch(() => {});
   const unread = thread.unreadCount > 0;
   const sender = thread.senders[0];
   const quietMoves = movesOf(thread.folders).filter(
@@ -58,13 +67,11 @@ function ThreadRow({
         search={listingSearchParams(view)}
         aria-current={open ? "true" : undefined}
         onMouseEnter={() => {
-          prefetchTimer.current = setTimeout(
-            () =>
-              void queryClient.prefetchQuery(threadQuery(mailboxId, thread.id)),
-            HOVER_PREFETCH_MS,
-          );
+          prefetchTimer.current = setTimeout(prefetch, HOVER_PREFETCH_MS);
         }}
         onMouseLeave={() => clearTimeout(prefetchTimer.current)}
+        onPointerDown={prefetch}
+        onFocus={prefetch}
         className="flex gap-2.5 rounded px-2.5 py-2.5 outline-accent focus-visible:outline-2 focus-visible:-outline-offset-2"
       >
         <Avatar
