@@ -2,7 +2,7 @@ import { assembleBodies } from "./body";
 import { prepareSent } from "../ingest";
 import { quoteHtmlKey, quoteTextKey, sentCopyPrefix } from "../r2-keys";
 import type { Address } from "../types";
-import type { DueJob, OutgoingStore } from "./store";
+import type { DueJob, SendJobStore } from "./job-store";
 import {
   type OutgoingFile,
   type OutgoingMessage,
@@ -77,7 +77,7 @@ async function messageOf(
 }
 
 function retryOrFail(
-  outgoing: OutgoingStore,
+  outgoing: SendJobStore,
   job: DueJob,
   failure: SendFailure,
   now: number,
@@ -90,7 +90,7 @@ function retryOrFail(
 // Nothing has gone out when this is called, and repeating it can send nothing. The copy
 // has its own R2 prefix per job, so a repeat overwrites the same objects.
 async function storeCopy(
-  outgoing: OutgoingStore,
+  outgoing: SendJobStore,
   bucket: R2Bucket,
   job: DueJob,
   now: number,
@@ -119,7 +119,7 @@ async function storeCopy(
 }
 
 async function send(
-  outgoing: OutgoingStore,
+  outgoing: SendJobStore,
   bucket: R2Bucket,
   email: SendEmailPort,
   database: D1Database,
@@ -197,7 +197,7 @@ async function send(
 // Each step reads where the job stands and does only what is left, so a run after a
 // crash at any point converges without a second send.
 export async function runDueSends(
-  outgoing: OutgoingStore,
+  outgoing: SendJobStore,
   bucket: R2Bucket,
   email: SendEmailPort,
   database: D1Database,

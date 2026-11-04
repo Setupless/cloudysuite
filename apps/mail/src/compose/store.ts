@@ -1,17 +1,17 @@
 import type { MailboxId } from "@cloudysuite/access";
-import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import type { MailboxStore } from "../store";
-import type {
-  Address,
-  AttachmentId,
-  CommitResult,
-  MessageId,
-  NewMessage,
-  ThreadId,
-} from "../types";
+import type { Address, AttachmentId, MessageId, ThreadId } from "../types";
 import { outgoingPrefix } from "../r2-keys";
 import { holdsSomethingAdded } from "./added";
 import { nextCopyId } from "./copy-id";
+import {
+  type AttachmentRow,
+  type OutgoingRow,
+  outgoingFiles,
+  outgoingRow,
+  SELECT_ROW,
+} from "./rows";
 import type {
   ComposeMode,
   DiscardResult,
@@ -30,7 +30,6 @@ import type {
   RemoveAttachmentResult,
   SaveIntent,
   SaveResult,
-  SendFailure,
 } from "./types";
 import {
   fitsSendLimit,
@@ -43,106 +42,11 @@ import {
   UNDO_WINDOW_MS,
 } from "./types";
 
-// A claim that never finished is found by this wake-up, and only then, since one
-// mailbox's alarm handlers never overlap.
-const SENDING_CHECK_MS = 60_000;
 const FINISHED_KEPT_MS = 24 * 60 * 60 * 1000;
 const SENT_NOTE_KEPT_MS = 60 * 60 * 1000;
 const SNIPPET_LENGTH = 140;
 
-type OutgoingFields = {
-  id: string;
-  state: OutgoingState;
-  revision: number;
-  mode: ComposeMode;
-  parent_message_id: number | null;
-  parent_rfc_id: string | null;
-  parent_refs: string;
-  from_address: string;
-  from_name: string;
-  to_addresses: string;
-  cc_addresses: string;
-  bcc_addresses: string;
-  subject: string;
-  html: string;
-  body_text: string;
-  include_quote: number;
-  quote_bytes: number | null;
-  quote_designed: number;
-  r2_prefix: string;
-  updated_by: string;
-  updated_by_name: string;
-  updated_at: number;
-  sent_by: string | null;
-  mailbox_id: string | null;
-  due_at: number | null;
-  attempts: number;
-  failure: SendFailure | null;
-  returned_message_id: string | null;
-  accepted_at: number | null;
-  stored_message_id: number | null;
-  thread_id: number | null;
-  attachment_count: number;
-  upload_count: number;
-  prefill_to: string;
-  prefill_cc: string;
-  prefill_subject: string;
-  last_session: string | null;
-  copied_from: string | null;
-};
-
-type OutgoingRow = SqlRow & OutgoingFields;
-
-type AttachmentRow = SqlRow & {
-  id: number;
-  filename: string;
-  mime_type: string;
-  size: number;
-  r2_key: string;
-  carried_from: number | null;
-  copied_from_file: number | null;
-};
-
-const SELECT_ROW = `
-  SELECT o.*,
-    COALESCE(
-      (SELECT thread_id FROM messages WHERE id = o.stored_message_id),
-      (SELECT thread_id FROM messages WHERE id = o.parent_message_id)
-    ) AS thread_id,
-    (SELECT COUNT(*) FROM outgoing_attachments a WHERE a.outgoing_id = o.id) AS attachment_count,
-    (SELECT COUNT(*) FROM outgoing_attachments a WHERE a.outgoing_id = o.id AND a.carried_from IS NULL) AS upload_count
-  FROM outgoing o`;
-
 const addressesIn = (json: string) => JSON.parse(json) as Address[];
-
-// Words from a device can ask for a quote that only the row it was written on had.
-const withQuoteOnlyIfHeld = (
-  content: DraftContent,
-  row: OutgoingRow | null,
-  create?: NewOutgoing,
-): DraftContent =>
-  (row ? row.quote_bytes : create?.quote) == null
-    ? { ...content, includeQuote: false }
-    : content;
-
-const holdsWords = (row: OutgoingRow, content: DraftContent): boolean =>
-  row.from_address === content.from &&
-  row.to_addresses === JSON.stringify(content.to) &&
-  row.cc_addresses === JSON.stringify(content.cc) &&
-  row.bcc_addresses === JSON.stringify(content.bcc) &&
-  row.subject === content.subject &&
-  row.html === content.html;
-
-const holdsContent = (row: OutgoingRow, content: DraftContent): boolean =>
-  holdsWords(row, content) &&
-  (row.include_quote === 1) === content.includeQuote;
-
-const isBehind = (row: OutgoingRow, base: DraftBase): boolean =>
-  row.revision !== base.baseRevision && row.last_session !== base.session;
-
-const changeBy = (row: OutgoingRow, editor: Editor): DraftChange => ({
-  by: row.updated_by === editor.id ? null : row.updated_by_name,
-});
 
 const toAttachment = (row: AttachmentRow): OutgoingAttachment => ({
   id: row.id,
@@ -173,6 +77,15 @@ const holdsSomething = (row: OutgoingRow) =>
     prefillOf(row),
   );
 
+const parentOf = (row: OutgoingRow): ParentFacts | null =>
+  row.parent_message_id === null
+    ? null
+    : {
+        messageId: row.parent_message_id as MessageId,
+        rfcMessageId: row.parent_rfc_id,
+        references: JSON.parse(row.parent_refs) as string[],
+      };
+
 function toSummary(
   row: OutgoingRow,
   viewerId: string,
@@ -200,6 +113,35 @@ function toSummary(
   };
 }
 
+// Words from a device can ask for a quote that only the row it was written on had.
+const withQuoteOnlyIfHeld = (
+  content: DraftContent,
+  row: OutgoingRow | null,
+  create?: NewOutgoing,
+): DraftContent =>
+  (row ? row.quote_bytes : create?.quote) == null
+    ? { ...content, includeQuote: false }
+    : content;
+
+const holdsWords = (row: OutgoingRow, content: DraftContent): boolean =>
+  row.from_address === content.from &&
+  row.to_addresses === JSON.stringify(content.to) &&
+  row.cc_addresses === JSON.stringify(content.cc) &&
+  row.bcc_addresses === JSON.stringify(content.bcc) &&
+  row.subject === content.subject &&
+  row.html === content.html;
+
+const holdsContent = (row: OutgoingRow, content: DraftContent): boolean =>
+  holdsWords(row, content) &&
+  (row.include_quote === 1) === content.includeQuote;
+
+const isBehind = (row: OutgoingRow, base: DraftBase): boolean =>
+  row.revision !== base.baseRevision && row.last_session !== base.session;
+
+const changeBy = (row: OutgoingRow, editor: Editor): DraftChange => ({
+  by: row.updated_by === editor.id ? null : row.updated_by_name,
+});
+
 export type NewOutgoing = {
   id: OutgoingId;
   mode: ComposeMode;
@@ -217,8 +159,6 @@ export type NewOutgoing = {
   }[];
   editor: Editor;
 };
-
-export type DueJob = OutgoingFields & { files: AttachmentRow[] };
 
 export type ScheduleResult =
   | { status: "scheduled" }
@@ -274,7 +214,8 @@ const plainRow = (
   editor,
 });
 
-// Every read and write of the send job's table. See types.ts for its state machine.
+// The person's side of the send job's state machine in types.ts: drafts, Send, Undo, and
+// files. The alarm's side is in job-store.ts.
 export class OutgoingStore {
   readonly #db: SqlDriver;
   readonly #mail: MailboxStore;
@@ -284,40 +225,17 @@ export class OutgoingStore {
     this.#mail = mail;
   }
 
-  #row(id: OutgoingId): OutgoingRow | null {
-    const [row] = this.#db
-      .exec<OutgoingRow>(`${SELECT_ROW} WHERE o.id = ?`, id)
-      .toArray();
-    return row ?? null;
-  }
-
-  #attachments(id: OutgoingId): AttachmentRow[] {
-    return this.#db
-      .exec<AttachmentRow>(
-        "SELECT id, filename, mime_type, size, r2_key, carried_from, copied_from_file FROM outgoing_attachments WHERE outgoing_id = ? ORDER BY id",
-        id,
-      )
-      .toArray();
-  }
-
   detail(
     id: OutgoingId,
     viewerId: string,
     now = Date.now(),
   ): OutgoingDetail | null {
-    const row = this.#row(id);
+    const row = outgoingRow(this.#db, id);
     if (!row) return null;
     return {
       ...toSummary(row, viewerId, now),
       revision: row.revision,
-      parent:
-        row.parent_message_id === null
-          ? null
-          : {
-              messageId: row.parent_message_id as MessageId,
-              rfcMessageId: row.parent_rfc_id,
-              references: JSON.parse(row.parent_refs) as string[],
-            },
+      parent: parentOf(row),
       content: {
         from: row.from_address,
         to: addressesIn(row.to_addresses),
@@ -327,7 +245,7 @@ export class OutgoingStore {
         html: row.html,
         includeQuote: row.include_quote === 1,
       },
-      attachments: this.#attachments(id).map(toAttachment),
+      attachments: outgoingFiles(this.#db, id).map(toAttachment),
       quote:
         row.quote_bytes === null
           ? null
@@ -337,7 +255,7 @@ export class OutgoingStore {
   }
 
   #carried(id: OutgoingId): OutgoingAttachment[] {
-    return this.#attachments(id)
+    return outgoingFiles(this.#db, id)
       .filter((file) => file.carried_from !== null)
       .map(toAttachment);
   }
@@ -464,8 +382,8 @@ export class OutgoingStore {
   }
 
   #holds(id: OutgoingId): DraftHolds {
-    const row = this.#row(id)!;
-    const files = this.#attachments(id);
+    const row = outgoingRow(this.#db, id)!;
+    const files = outgoingFiles(this.#db, id);
     return {
       attachmentIds: files.flatMap((file) =>
         file.copied_from_file === null
@@ -500,7 +418,7 @@ export class OutgoingStore {
   ): StoredSave {
     return this.#db.transaction(() => {
       const { id, session, plainText, editor, r2Prefix, create } = input;
-      const row = this.#row(id);
+      const row = outgoingRow(this.#db, id);
       const content = withQuoteOnlyIfHeld(input.content, row, create);
       const onItsWay = row !== null && row.state !== "draft";
       if (onItsWay && input.whenLocked === "report") {
@@ -540,7 +458,7 @@ export class OutgoingStore {
       const held = this.#holds(id);
       const sameFiles =
         input.showing.every((file) => isHeld(file, held)) &&
-        input.showing.length === this.#attachments(id).length;
+        input.showing.length === outgoingFiles(this.#db, id).length;
       if (!onItsWay && sameFiles && holdsContent(row, content)) {
         return {
           status: "saved",
@@ -576,16 +494,16 @@ export class OutgoingStore {
       state: copy.state,
       revision,
       holds: this.#holds(copy.id as OutgoingId),
-      files: this.#attachments(copy.id as OutgoingId).map(toAttachment),
+      files: outgoingFiles(this.#db, copy.id as OutgoingId).map(toAttachment),
       changed,
       carry,
     });
 
     let copyId = input.copyId;
-    let mine = this.#row(copyId);
+    let mine = outgoingRow(this.#db, copyId);
     while (mine && mine.last_session !== session) {
       copyId = nextCopyId(copyId);
-      mine = this.#row(copyId);
+      mine = outgoingRow(this.#db, copyId);
     }
     if (mine) {
       const revision =
@@ -599,13 +517,13 @@ export class OutgoingStore {
               now,
             )
           : mine.revision;
-      return answer(this.#row(copyId)!, revision, null);
+      return answer(outgoingRow(this.#db, copyId)!, revision, null);
     }
 
     if (!input.written) {
       return { status: "behind", changed };
     }
-    const files = this.#attachments(row.id as OutgoingId).filter((file) =>
+    const files = outgoingFiles(this.#db, row.id as OutgoingId).filter((file) =>
       input.showing.some((shown) =>
         isHeld(shown, {
           attachmentIds: [file.id],
@@ -644,14 +562,7 @@ export class OutgoingStore {
       {
         id: copyId,
         mode: row.mode,
-        parent:
-          row.parent_message_id === null
-            ? null
-            : {
-                messageId: row.parent_message_id as MessageId,
-                rfcMessageId: row.parent_rfc_id,
-                references: JSON.parse(row.parent_refs) as string[],
-              },
+        parent: parentOf(row),
         prefill,
         content: withoutQuote,
         r2Prefix: toPrefix,
@@ -694,7 +605,7 @@ export class OutgoingStore {
             })),
           }
         : null;
-    return answer(this.#row(copyId)!, revision, carry);
+    return answer(outgoingRow(this.#db, copyId)!, revision, carry);
   }
 
   // What the Worker managed to copy. Anything it couldn't stays out, and the person is told.
@@ -703,7 +614,7 @@ export class OutgoingStore {
     carried: Pick<CopyCarry, "quote" | "files">,
   ): { holds: DraftHolds; files: OutgoingAttachment[] } | null {
     return this.#db.transaction(() => {
-      if (!this.#row(id)) return null;
+      if (!outgoingRow(this.#db, id)) return null;
       if (carried.quote) {
         this.#db.exec(
           "UPDATE outgoing SET quote_bytes = ?, quote_designed = ?, include_quote = 1 WHERE id = ?",
@@ -726,7 +637,7 @@ export class OutgoingStore {
       }
       return {
         holds: this.#holds(id),
-        files: this.#attachments(id).map(toAttachment),
+        files: outgoingFiles(this.#db, id).map(toAttachment),
       };
     });
   }
@@ -750,7 +661,7 @@ export class OutgoingStore {
     return this.#db.transaction(() => {
       const { id, plainText, editor, r2Prefix, fromName, mailboxId, session } =
         input;
-      const row = this.#row(id);
+      const row = outgoingRow(this.#db, id);
       const content = withQuoteOnlyIfHeld(input.content, row, input.create);
       if (row?.state === "scheduled" && row.last_session === session) {
         return { status: "scheduled" };
@@ -820,7 +731,7 @@ export class OutgoingStore {
     input: DraftBase & { id: OutgoingId; editor: Editor },
   ): DiscardResult {
     return this.#db.transaction(() => {
-      const row = this.#row(input.id);
+      const row = outgoingRow(this.#db, input.id);
       if (!row || !["draft", "failed", "unknown"].includes(row.state)) {
         return { status: "gone" };
       }
@@ -856,7 +767,7 @@ export class OutgoingStore {
   ): AddAttachmentResult {
     return this.#db.transaction(() => {
       const { id, filename, mimeType, size, r2Key, editor, create } = input;
-      const row = this.#row(id);
+      const row = outgoingRow(this.#db, id);
       if (row && row.state !== "draft") {
         return {
           status: "refused",
@@ -867,7 +778,7 @@ export class OutgoingStore {
       }
       if (row && isBehind(row, input)) return { status: "behind" };
       const existing = row
-        ? this.#attachments(id)
+        ? outgoingFiles(this.#db, id)
         : (create?.attachments ?? []);
       if (existing.length >= MAX_ATTACHMENTS) {
         return {
@@ -938,7 +849,7 @@ export class OutgoingStore {
   ): RemoveAttachmentResult {
     return this.#db.transaction(() => {
       const { id, attachmentId, editor, session } = input;
-      const row = this.#row(id);
+      const row = outgoingRow(this.#db, id);
       if (!row) return { status: "removed", revision: null };
       if (row.state !== "draft") return { status: "locked" };
       if (isBehind(row, input)) return { status: "behind" };
@@ -958,10 +869,6 @@ export class OutgoingStore {
     });
   }
 
-  attachmentSizes(id: OutgoingId): number[] {
-    return this.#attachments(id).map((file) => file.size);
-  }
-
   suggestions(query: string, limit: number): Address[] {
     const pattern = `${query.replace(/[\\%_]/g, "\\$&")}%`;
     return this.#db
@@ -974,119 +881,5 @@ export class OutgoingStore {
       )
       .toArray()
       .map(({ name, address }) => ({ name, address }));
-  }
-
-  // --- The alarm's side of the state machine ---
-
-  nextDueAt(): number | null {
-    const [row] = this.#db
-      .exec<{ next: number | null }>(
-        "SELECT MIN(due_at) AS next FROM outgoing WHERE due_at IS NOT NULL",
-      )
-      .toArray();
-    return row?.next ?? null;
-  }
-
-  dueJobs(now: number): DueJob[] {
-    return this.#db
-      .exec<OutgoingRow>(
-        `${SELECT_ROW} WHERE o.due_at IS NOT NULL AND o.due_at <= ? ORDER BY o.due_at`,
-        now,
-      )
-      .toArray()
-      .map((row) => ({
-        ...row,
-        files: this.#attachments(row.id as OutgoingId),
-      }));
-  }
-
-  // The record of intent. Once this is on disk, a crash can only ever lead to
-  // `unknown`, never to a second send. False if Undo got there first. The job holds what
-  // was read and checked, so a revision changed by an undo and a new Send doesn't count.
-  claim(id: OutgoingId, revision: number, now: number): boolean {
-    return (
-      this.#db
-        .exec(
-          "UPDATE outgoing SET state = 'sending', due_at = ?, updated_at = ? WHERE id = ? AND state = 'scheduled' AND revision = ? RETURNING id",
-          now + SENDING_CHECK_MS,
-          now,
-          id,
-          revision,
-        )
-        .toArray().length > 0
-    );
-  }
-
-  postpone(id: OutgoingId, attempts: number, dueAt: number): void {
-    this.#db.exec(
-      "UPDATE outgoing SET state = 'scheduled', attempts = ?, due_at = ? WHERE id = ? AND state IN ('scheduled', 'sending')",
-      attempts,
-      dueAt,
-      id,
-    );
-  }
-
-  fail(id: OutgoingId, failure: SendFailure, now: number): void {
-    this.#db.exec(
-      "UPDATE outgoing SET state = 'failed', failure = ?, due_at = NULL, updated_at = ? WHERE id = ? AND state IN ('scheduled', 'sending')",
-      failure,
-      now,
-      id,
-    );
-  }
-
-  markUnknown(id: OutgoingId, now: number): void {
-    this.#db.exec(
-      "UPDATE outgoing SET state = 'unknown', due_at = NULL, updated_at = ? WHERE id = ? AND state = 'sending'",
-      now,
-      id,
-    );
-  }
-
-  accept(id: OutgoingId, returnedMessageId: string, now: number): void {
-    this.#db.exec(
-      `UPDATE outgoing SET
-         state = 'accepted', returned_message_id = ?, accepted_at = ?, attempts = 0,
-         due_at = ?, updated_at = ?
-       WHERE id = ? AND state = 'sending'`,
-      returnedMessageId,
-      now,
-      now,
-      now,
-      id,
-    );
-  }
-
-  postponeStoring(id: OutgoingId, attempts: number, dueAt: number): void {
-    this.#db.exec(
-      "UPDATE outgoing SET attempts = ?, due_at = ? WHERE id = ? AND state = 'accepted'",
-      attempts,
-      dueAt,
-      id,
-    );
-  }
-
-  // The stored copy and the end of the job land together, so no crash can store it
-  // twice. The draft's content and files go here too: a draft is deleted on send.
-  finish(id: OutgoingId, copy: NewMessage, now: number): CommitResult {
-    return this.#db.transaction(() => {
-      const row = this.#row(id)!;
-      const result = this.#mail.commit(copy);
-      this.#db.exec(
-        `UPDATE outgoing SET
-           state = 'sent', html = '', body_text = '', bcc_addresses = '[]',
-           cc_addresses = '[]', due_at = NULL, updated_at = ?, stored_message_id = ?
-         WHERE id = ?`,
-        now,
-        result.messageId,
-        id,
-      );
-      this.#db.exec(
-        "DELETE FROM outgoing_attachments WHERE outgoing_id = ?",
-        id,
-      );
-      this.#mail.queueDeletion(row.r2_prefix);
-      return result;
-    });
   }
 }
