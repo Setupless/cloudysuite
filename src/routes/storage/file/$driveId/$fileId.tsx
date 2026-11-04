@@ -1,4 +1,5 @@
-import { FileScreen, prefetchFile } from "@cloudysuite/storage";
+import { FileScreen } from "@cloudysuite/storage";
+import { prefetchFile } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/storage/file/$driveId/$fileId")({

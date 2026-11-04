@@ -1,4 +1,5 @@
-import { prefetchSenders, SendersPage } from "@cloudysuite/mail";
+import { SendersPage } from "@cloudysuite/mail";
+import { prefetchSenders } from "@cloudysuite/mail/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail/$mailboxId/senders")({

@@ -1,4 +1,5 @@
-import { prefetchStarred, StarredScreen } from "@cloudysuite/storage";
+import { StarredScreen } from "@cloudysuite/storage";
+import { prefetchStarred } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 const validateSearch = (search: Record<string, unknown>): { file?: string } =>

@@ -13,7 +13,8 @@
     "./device-session": "./src/pwa/session-route.ts",
     "./download": "./src/download.ts",
     "./ingest": "./src/ingest.ts",
-    "./mailbox": "./src/mailbox.ts"
+    "./mailbox": "./src/mailbox.ts",
+    "./routes": "./src/routes.ts"
   },
   "dependencies": {
     "@cloudysuite/access": "workspace:*",

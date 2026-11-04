@@ -1,4 +1,5 @@
-import { NoMailbox, redirectToFirstMailbox } from "@cloudysuite/mail";
+import { NoMailbox } from "@cloudysuite/mail";
+import { redirectToFirstMailbox } from "@cloudysuite/mail/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail/")({

@@ -1,4 +1,5 @@
-import { HomeScreen, prefetchHome } from "@cloudysuite/storage";
+import { HomeScreen } from "@cloudysuite/storage";
+import { prefetchHome } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/storage/")({

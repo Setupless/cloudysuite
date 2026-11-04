@@ -1,4 +1,5 @@
-import { prefetchRecent, RecentScreen } from "@cloudysuite/storage";
+import { RecentScreen } from "@cloudysuite/storage";
+import { prefetchRecent } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 const validateSearch = (search: Record<string, unknown>): { file?: string } =>
