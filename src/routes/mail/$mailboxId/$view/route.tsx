@@ -1,4 +1,5 @@
-import { MailViewScreen, prefetchThreads } from "@cloudysuite/mail";
+import { MailViewScreen } from "@cloudysuite/mail";
+import { prefetchThreads } from "@cloudysuite/mail/routes";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail/$mailboxId/$view")({

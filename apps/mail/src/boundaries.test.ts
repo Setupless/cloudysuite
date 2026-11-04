@@ -70,5 +70,6 @@ test("the package does not export the stub or the store", () => {
     "./import-api",
     "./ingest",
     "./mailbox",
+    "./routes",
   ]);
 });

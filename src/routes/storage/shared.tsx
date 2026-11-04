@@ -1,4 +1,5 @@
-import { prefetchShared, SharedScreen } from "@cloudysuite/storage";
+import { SharedScreen } from "@cloudysuite/storage";
+import { prefetchShared } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 const validateSearch = (search: Record<string, unknown>): { file?: string } =>

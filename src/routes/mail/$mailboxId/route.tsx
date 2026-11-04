@@ -1,4 +1,5 @@
-import { MailboxLayout, prefetchMailboxes } from "@cloudysuite/mail";
+import { MailboxLayout } from "@cloudysuite/mail";
+import { prefetchMailboxes } from "@cloudysuite/mail/routes";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail/$mailboxId")({
