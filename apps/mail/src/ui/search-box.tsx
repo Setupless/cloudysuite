@@ -51,7 +51,11 @@ function SearchHelp({ onClose }: { onClose: () => void }) {
 
 export function SearchBox({ mailboxId }: { mailboxId: MailboxId }) {
   const { view } = useParams({ strict: false });
-  const { q } = useSearch({ strict: false }) as { q?: string };
+  // This sits above the $view route, so only reading from it gets q after its validateSearch.
+  const q = useSearch({
+    from: "/mail/$mailboxId/$view",
+    shouldThrow: false,
+  })?.q;
   const inAddress = view === "search" ? (q ?? "") : "";
   return (
     <SearchForm
@@ -150,7 +154,7 @@ function SearchForm({
         {tooLong && text !== initial && (
           <p
             role="alert"
-            className="absolute inset-x-0 top-full z-10 mt-1 rounded border border-line bg-panel px-2.5 py-1.5 text-xs text-danger shadow-lg"
+            className="absolute inset-x-0 top-full z-20 mt-1 rounded border border-line bg-panel px-2.5 py-1.5 text-xs text-danger shadow-lg"
           >
             That search is too long. Keep it under {MAX_SEARCH_LENGTH}{" "}
             characters.
