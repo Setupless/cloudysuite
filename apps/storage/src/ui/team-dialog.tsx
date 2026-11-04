@@ -1,5 +1,12 @@
 import type { DriveId, DriveRole } from "@cloudysuite/access";
-import { Avatar, Button, Modal, Notice, useToast } from "@cloudysuite/ui";
+import {
+  Avatar,
+  Button,
+  Modal,
+  Notice,
+  Spinner,
+  useToast,
+} from "@cloudysuite/ui";
 import { IconX } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -20,6 +27,14 @@ const ROLES = [
   { value: "manager", label: "Manager" },
 ] as const;
 
+// The change being saved. The role is kept so the menu shows what was picked, not what
+// it was, until the saved list comes back.
+type Running =
+  | { kind: "role"; personId: string; role: DriveRole }
+  | { kind: "remove"; personId: string }
+  | { kind: "leave" }
+  | null;
+
 export function TeamDialog({
   driveId,
   name,
@@ -34,15 +49,16 @@ export function TeamDialog({
   const client = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
-  const { data } = useQuery(accessQuery(driveId, null));
+  const access = useQuery(accessQuery(driveId, null));
+  const { data } = access;
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [running, setRunning] = useState<Running>(null);
   const canManage = data?.myRole === "manager";
   const lines = data?.lines ?? [];
 
   const refresh = () => client.invalidateQueries({ queryKey: storageKeys.all });
-  async function run(change: () => Promise<unknown>) {
-    setPending(true);
+  async function run(action: Running, change: () => Promise<unknown>) {
+    setRunning(action);
     setError(null);
     try {
       await call(change);
@@ -50,12 +66,13 @@ export function TeamDialog({
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
-      setPending(false);
+      setRunning(null);
     }
   }
 
+  // Leaving closes this with the page, so it only stops running if it fails.
   async function leave() {
-    setPending(true);
+    setRunning({ kind: "leave" });
     setError(null);
     try {
       await call(() => leaveTeamFolder({ data: { driveId } }));
@@ -64,12 +81,21 @@ export function TeamDialog({
       toast({ message: `You've left ${name}.` });
     } catch (failure) {
       setError((failure as Error).message);
-      setPending(false);
+      setRunning(null);
     }
   }
+  const runningOn = (personId: string) =>
+    running && running.kind !== "leave" && running.personId === personId
+      ? running
+      : null;
 
   return (
-    <Modal title={`People on ${name}`} onClose={onClose} closeButton>
+    <Modal
+      title={`People on ${name}`}
+      onClose={onClose}
+      closeButton
+      busy={running?.kind === "leave"}
+    >
       {canManage && (
         <PeoplePicker<DriveRole>
           levels={ROLES}
@@ -88,74 +114,105 @@ export function TeamDialog({
           }}
         />
       )}
+      {access.isError && <Notice tone="danger">{access.error.message}</Notice>}
+      {access.isPending && (
+        <p
+          role="status"
+          className="flex items-center gap-2 py-2 text-sm text-secondary"
+        >
+          <Spinner size={16} />
+          Getting the people on it…
+        </p>
+      )}
       <ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto">
-        {lines.map(({ person, access }) => (
-          <li key={person.id} className="flex items-center gap-2 text-sm">
-            <Avatar person={person} size="small" />
-            <span className="mr-auto min-w-0 truncate">
-              {person.name}
-              {person.id === meId && (
-                <span className="text-secondary"> (you)</span>
-              )}
-            </span>
-            {canManage ? (
-              <>
-                <select
-                  aria-label={`What ${person.name} can do`}
-                  value={access}
-                  disabled={pending}
-                  className={LEVEL_SELECT}
-                  onChange={(event) => {
-                    const role = event.target.value as DriveRole;
-                    void run(() =>
-                      changeMemberRole({
-                        data: { driveId, userId: person.id, role },
-                      }),
-                    );
-                  }}
-                >
-                  {ROLES.map(({ value, label }) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                {person.id !== meId && (
-                  <button
-                    type="button"
-                    aria-label={`Remove ${person.name}`}
-                    disabled={pending}
-                    className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2"
-                    onClick={() =>
-                      void run(() =>
-                        removeTeamMember({
-                          data: { driveId, userId: person.id },
-                        }),
-                      )
-                    }
-                  >
-                    <IconX size={16} stroke={1.75} aria-hidden />
-                  </button>
+        {lines.map(({ person, access: role }) => {
+          const mine = runningOn(person.id);
+          return (
+            <li key={person.id} className="flex items-center gap-2 text-sm">
+              <Avatar person={person} size="small" />
+              <span className="mr-auto min-w-0 truncate">
+                {person.name}
+                {person.id === meId && (
+                  <span className="text-secondary"> (you)</span>
                 )}
-              </>
-            ) : (
-              <em className="flex-none text-xs text-secondary not-italic">
-                {ACCESS_LABELS[access]}
-              </em>
-            )}
-          </li>
-        ))}
+              </span>
+              {canManage ? (
+                <>
+                  {mine?.kind === "role" && (
+                    <span className="flex-none text-secondary">
+                      <Spinner size={16} />
+                    </span>
+                  )}
+                  <select
+                    aria-label={`What ${person.name} can do`}
+                    value={mine?.kind === "role" ? mine.role : role}
+                    disabled={running !== null}
+                    aria-busy={mine?.kind === "role" || undefined}
+                    className={LEVEL_SELECT}
+                    onChange={(event) => {
+                      const next = event.target.value as DriveRole;
+                      void run(
+                        { kind: "role", personId: person.id, role: next },
+                        () =>
+                          changeMemberRole({
+                            data: { driveId, userId: person.id, role: next },
+                          }),
+                      );
+                    }}
+                  >
+                    {ROLES.map(({ value, label }) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  {person.id !== meId && (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${person.name}`}
+                      disabled={running !== null}
+                      aria-busy={mine?.kind === "remove" || undefined}
+                      className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2"
+                      onClick={() =>
+                        void run({ kind: "remove", personId: person.id }, () =>
+                          removeTeamMember({
+                            data: { driveId, userId: person.id },
+                          }),
+                        )
+                      }
+                    >
+                      {mine?.kind === "remove" ? (
+                        <Spinner size={16} />
+                      ) : (
+                        <IconX size={16} stroke={1.75} aria-hidden />
+                      )}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <em className="flex-none text-xs text-secondary not-italic">
+                  {ACCESS_LABELS[role]}
+                </em>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-between gap-2">
         <Button
           variant="toolbar"
-          disabled={pending}
+          disabled={running !== null}
+          pending={running?.kind === "leave"}
           onClick={() => void leave()}
         >
           Leave this team folder
         </Button>
-        <Button variant="toolbarAction" onClick={onClose}>
+        <Button
+          variant="toolbarAction"
+          disabled={running?.kind === "leave"}
+          onClick={onClose}
+        >
           Done
         </Button>
       </div>

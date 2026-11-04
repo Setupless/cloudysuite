@@ -1,4 +1,4 @@
-import { Avatar, Notice } from "@cloudysuite/ui";
+import { Avatar, Notice, Spinner } from "@cloudysuite/ui";
 import { IconFolder } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
@@ -27,11 +27,13 @@ export function PeoplePicker<Level extends string>({
   skip: ReadonlySet<string>;
   onAdd: (audience: Audience, level: Level) => Promise<void>;
 }) {
-  const { data } = useQuery(shareChoicesQuery());
+  const choices = useQuery(shareChoicesQuery());
+  const { data } = choices;
   const [text, setText] = useState("");
   const [level, setLevel] = useState(initialLevel);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  // Who's being added, named while the list catches up.
+  const [adding, setAdding] = useState<string | null>(null);
   const listId = useId();
 
   const wanted = text.trim().toLowerCase();
@@ -51,11 +53,11 @@ export function PeoplePicker<Level extends string>({
           team.name.toLowerCase().includes(wanted),
         );
 
-  async function add(audience: Audience) {
+  async function add(audience: Audience, name: string) {
     // Cleared now, so a next name typed while this one saves isn't wiped when it finishes.
     const typed = text;
     setText("");
-    setPending(true);
+    setAdding(name);
     setError(null);
     try {
       await onAdd(audience, level);
@@ -63,7 +65,7 @@ export function PeoplePicker<Level extends string>({
       setText(typed);
       setError((failure as Error).message);
     } finally {
-      setPending(false);
+      setAdding(null);
     }
   }
 
@@ -98,9 +100,11 @@ export function PeoplePicker<Level extends string>({
           <button
             key={person.id}
             type="button"
-            disabled={pending}
+            disabled={adding !== null}
             className={CHOICE}
-            onClick={() => void add({ kind: "person", userId: person.id })}
+            onClick={() =>
+              void add({ kind: "person", userId: person.id }, person.name)
+            }
           >
             <Avatar person={person} size="small" />
             <span className="min-w-0 truncate">{person.name}</span>
@@ -113,9 +117,11 @@ export function PeoplePicker<Level extends string>({
           <button
             key={team.id}
             type="button"
-            disabled={pending}
+            disabled={adding !== null}
             className={CHOICE}
-            onClick={() => void add({ kind: "team", driveId: team.id })}
+            onClick={() =>
+              void add({ kind: "team", driveId: team.id }, team.name)
+            }
           >
             <span
               className={`flex size-[22px] flex-none items-center justify-center rounded text-on-avatar ${teamColour(team.colour)}`}
@@ -128,12 +134,34 @@ export function PeoplePicker<Level extends string>({
             </span>
           </button>
         ))}
-        {wanted !== "" && people.length === 0 && teams.length === 0 && (
-          <p className="px-2 py-1.5 text-sm text-secondary">
-            Nobody by that name. Only people in your organisation can be added.
+        {wanted !== "" && choices.isPending && (
+          <p
+            role="status"
+            className="flex items-center gap-2 px-2 py-1.5 text-sm text-secondary"
+          >
+            <Spinner size={16} />
+            Looking for people…
           </p>
         )}
+        {wanted !== "" &&
+          !choices.isPending &&
+          people.length === 0 &&
+          teams.length === 0 && (
+            <p className="px-2 py-1.5 text-sm text-secondary">
+              Nobody by that name. Only people in your organisation can be
+              added.
+            </p>
+          )}
       </div>
+      {adding !== null && (
+        <p
+          role="status"
+          className="flex items-center gap-2 px-2 text-sm text-secondary"
+        >
+          <Spinner size={16} />
+          Adding {adding}…
+        </p>
+      )}
       <p className="text-xs text-secondary">
         A team folder adds the people on it right now, one by one. Anyone who
         joins it later isn't added.
