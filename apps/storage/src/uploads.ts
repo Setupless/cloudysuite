@@ -38,7 +38,7 @@ const NO_ACCESS = refuse(403, NO_UPLOAD_ACCESS_MESSAGE);
 
 const UPLOAD_ENDED = refuse(
   409,
-  "This upload stopped for too long, so it was removed. Choose the file again to start over.",
+  "This upload was removed because it went unfinished for too long. Choose the file again to start over.",
 );
 
 const FOLDER_ENDED = refuse(
