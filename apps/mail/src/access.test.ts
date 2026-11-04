@@ -6,7 +6,7 @@ import { createKit, type Kit, signIn } from "../../auth/src/admin/test-kit";
 const { openMailboxFor } = await import("./access");
 
 let kit: Kit;
-let fromStorage: Request;
+let cookie: string;
 
 beforeEach(async () => {
   kit = await createKit();
@@ -22,18 +22,21 @@ beforeEach(async () => {
     [MAILBOX_A, kit.admin],
   );
   const signedIn = await signIn(kit, "boss@example.com");
-  fromStorage = new Request("https://storage.example.com/_serverFn/x", {
-    method: "POST",
-    headers: { cookie: signedIn.headers.get("set-cookie") ?? "" },
-  });
+  cookie = signedIn.headers.get("set-cookie") ?? "";
 });
 
+const fromStorage = () =>
+  new Request("https://storage.example.com/_serverFn/x", {
+    method: "POST",
+    headers: { cookie },
+  });
+
 test("with Mail off, a call through another app's address is refused in plain words", async () => {
-  const mailbox = await openMailboxFor(fromStorage, MAILBOX_A);
+  const mailbox = await openMailboxFor(fromStorage(), MAILBOX_A);
   expect(await mailbox.summary()).toMatchObject({ labels: [] });
 
   kit.sqlite.run("INSERT INTO app_settings (app, enabled) VALUES ('mail', 0)");
-  const refused = await openMailboxFor(fromStorage, MAILBOX_A).then(
+  const refused = await openMailboxFor(fromStorage(), MAILBOX_A).then(
     () => null,
     (thrown: unknown) => thrown,
   );

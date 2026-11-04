@@ -6,6 +6,8 @@ import { appOrigins } from "./origins";
 
 const AUTH = "https://auth.example.com";
 const password = "a long enough password";
+const RULE_OFF = { require2fa: false };
+const RULE_ON = { require2fa: true };
 
 let sqlite: Database;
 let database: D1Database;
@@ -141,7 +143,9 @@ test("a session unused for 61 days is over", async () => {
   const headers = await signedInHeaders("a@example.com");
   ageSession(61);
   expect(await getActiveSession(auth, headers)).toBeNull();
-  expect((await readViewer(auth, database, headers)).status).toBe("signed-out");
+  expect((await readViewer(auth, database, headers, RULE_OFF)).status).toBe(
+    "signed-out",
+  );
 });
 
 test("a banned user cannot start a new session", async () => {
@@ -186,26 +190,31 @@ function requireSecondWay() {
 
 test("with the 2FA rule on, a person with only a password must enrol", async () => {
   const headers = await signedInHeaders("a@example.com");
-  expect((await readViewer(auth, database, headers)).status).toBe("ready");
-  requireSecondWay();
-  expect((await readViewer(auth, database, headers)).status).toBe("must-enrol");
+  expect((await readViewer(auth, database, headers, RULE_OFF)).status).toBe(
+    "ready",
+  );
+  expect((await readViewer(auth, database, headers, RULE_ON)).status).toBe(
+    "must-enrol",
+  );
 });
 
 test("a passkey or an authenticator app satisfies the 2FA rule", async () => {
   const headers = await signedInHeaders("a@example.com");
-  requireSecondWay();
   addPasskey("a@example.com");
-  expect((await readViewer(auth, database, headers)).status).toBe("ready");
+  expect((await readViewer(auth, database, headers, RULE_ON)).status).toBe(
+    "ready",
+  );
   sqlite.run("DELETE FROM passkey");
   sqlite.run("UPDATE user SET two_factor_enabled = 1");
-  expect((await readViewer(auth, database, headers)).status).toBe("ready");
+  expect((await readViewer(auth, database, headers, RULE_ON)).status).toBe(
+    "ready",
+  );
 });
 
 test("nobody is signed in without a session, rule or no rule", async () => {
-  requireSecondWay();
-  expect((await readViewer(auth, database, new Headers())).status).toBe(
-    "signed-out",
-  );
+  expect(
+    (await readViewer(auth, database, new Headers(), RULE_ON)).status,
+  ).toBe("signed-out");
 });
 
 test("under the 2FA rule, a password alone cannot reach a passkey-only account", async () => {

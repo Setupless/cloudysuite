@@ -4,7 +4,7 @@ import { X_TSS_RAW_RESPONSE } from "@tanstack/react-start";
 import handler from "@tanstack/react-start/server-entry";
 import { appOffRefusal } from "./app-on";
 import { gate, resolveHost, type ToggleableApp } from "./routing";
-import { readSettings } from "./settings";
+import { settingsFor } from "./settings";
 
 export { Mailbox } from "@cloudysuite/mail/mailbox";
 export { Drive } from "@cloudysuite/storage/drive";
@@ -30,7 +30,7 @@ async function refuseWhileOff(request: Request, app: ToggleableApp) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const settings = await readSettings(env.DB);
+    const settings = await settingsFor(request, env.DB);
     const decision = gate(resolveHost(url.hostname, settings), request);
 
     switch (decision.action) {

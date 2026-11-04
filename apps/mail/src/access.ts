@@ -6,6 +6,7 @@ import {
 } from "@cloudysuite/access";
 import { requireReadyUser } from "@cloudysuite/auth/guard";
 import { assertAppOn } from "../../../src/app-on";
+import { settingsFor } from "../../../src/settings";
 import {
   openMailbox,
   openMailboxRuleEditor,
@@ -16,7 +17,7 @@ export const NO_ACCESS_MESSAGE =
   "You don't have access to this mailbox. Ask your admin if you need it.";
 
 export async function requireMailUser(request: Request) {
-  await assertAppOn(env.DB, "mail");
+  assertAppOn(await settingsFor(request, env.DB), "mail");
   return requireReadyUser(request);
 }
 

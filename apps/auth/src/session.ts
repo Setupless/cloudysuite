@@ -1,12 +1,11 @@
-import { env } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { APPS, type AppId } from "../../../src/routing";
-import { getActiveSession, readViewer, type SessionUser } from "./auth";
+import { getActiveSession, type SessionUser } from "./auth";
 import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
 import { parsePath, parsePlace } from "./place";
-import { getAuth } from "./server";
+import { getAuth, getViewer } from "./server";
 
 export type { SessionUser };
 
@@ -17,8 +16,8 @@ export type SignedIn = SessionUser & {
 
 async function readSignedIn({ app, path }: { app: AppId; path: string }) {
   const request = getRequest();
-  const { auth, origins, settings } = await getAuth(request);
-  const viewer = await readViewer(auth, env.DB, request.headers);
+  const { origins, settings } = await getAuth(request);
+  const viewer = await getViewer(request);
   const here = new URL(path, origins[app]).href;
   if (viewer.status === "signed-out") {
     throw redirect({ href: signInUrl(origins, here) });
