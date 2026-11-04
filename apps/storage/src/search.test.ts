@@ -17,6 +17,7 @@ import { fileTypeOf } from "./file-types";
 import { ownersFor, peopleMatching } from "./people-lookup";
 import { type DriveSearch, parseSearch } from "./search-query";
 import { SearchStore } from "./search-store";
+import { parseSearchInput } from "./wire";
 import { DriveStore } from "./store";
 import {
   ALICE,
@@ -1107,4 +1108,22 @@ test("an operator nobody knows, or one with no value, is just words", async () =
   await upload("type of thing.png");
   expect(await names(kit.drive, "name:report")).toEqual(["name report.png"]);
   expect(await names(kit.drive, "type:")).toEqual(["type of thing.png"]);
+});
+
+test("a browser that can't name a usable time zone still searches, in UTC", () => {
+  for (const timeZone of [
+    undefined,
+    "Etc/Unknown",
+    "Foo/Bar",
+    5,
+    "x".repeat(65),
+  ]) {
+    expect(parseSearchInput({ text: "report", timeZone })).toEqual({
+      text: "report",
+      timeZone: "UTC",
+    });
+  }
+  expect(
+    parseSearchInput({ text: "report", timeZone: "Australia/Sydney" }).timeZone,
+  ).toBe("Australia/Sydney");
 });

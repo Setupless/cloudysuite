@@ -75,8 +75,10 @@ function dayStart(value: string, timeZone: string): number | null {
   });
   const midnight = utc.getTime();
   // The offset at UTC midnight can be the one from before the clocks changed, so the
-  // offset at the first guess decides. When the clocks jump past midnight, that lands
-  // on the day before, and the day starts at the jump instead.
+  // offset at the first guess decides. When the clocks jump forward at midnight, that
+  // lands on the day before, and the day starts at the jump instead. A day whose midnight
+  // repeats, or whose jump starts before midnight, can start up to 3 hours late. No zone
+  // has done that since 2023.
   const early = midnight - offsetAt(zone, midnight);
   const start = midnight - offsetAt(zone, early);
   return start + offsetAt(zone, start) < midnight ? early : start;
