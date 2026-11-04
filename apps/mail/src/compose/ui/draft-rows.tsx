@@ -140,7 +140,11 @@ export function DraftRows() {
                     aria-label="Has attachments"
                   />
                 )}
-                {opening === job.id && <Spinner size={14} />}
+                {opening === job.id && (
+                  <span className="flex flex-none">
+                    <Spinner size={14} />
+                  </span>
+                )}
                 {status && <Badge tone={status.tone}>{status.badge}</Badge>}
               </span>
               <span className="text-xs text-secondary">
