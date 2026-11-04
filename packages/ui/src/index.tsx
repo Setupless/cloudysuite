@@ -277,7 +277,7 @@ export function Modal({
               type="button"
               aria-label="Close"
               disabled={busy}
-              className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60"
+              className="flex-none cursor-pointer rounded p-1 text-secondary outline-accent enabled:hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60"
               onClick={onClose}
             >
               <IconX size={18} stroke={1.75} aria-hidden />

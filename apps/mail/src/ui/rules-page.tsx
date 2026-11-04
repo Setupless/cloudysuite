@@ -499,6 +499,7 @@ function RuleCard({
               <IconButton
                 icon={IconArrowUp}
                 label="Move up"
+                disabled={working !== "idle"}
                 onClick={() => onMove(-1)}
               />
             )}
@@ -506,10 +507,16 @@ function RuleCard({
               <IconButton
                 icon={IconArrowDown}
                 label="Move down"
+                disabled={working !== "idle"}
                 onClick={() => onMove(1)}
               />
             )}
-            <IconButton icon={IconPencil} label="Edit" onClick={onEdit} />
+            <IconButton
+              icon={IconPencil}
+              label="Edit"
+              disabled={working !== "idle"}
+              onClick={onEdit}
+            />
             <IconButton
               icon={IconTrash}
               label="Delete"

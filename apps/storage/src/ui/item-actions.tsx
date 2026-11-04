@@ -101,13 +101,15 @@ export function ItemActions({
   async function moveToTrash() {
     try {
       await call(() => trashItem({ data: { driveId, itemId: item.id } }));
-      // Off the page first, or the folder being looked at reports itself missing.
-      if (stillShown()) {
-        await (item.kind === "folder"
-          ? openFolder(driveId, item.parentId)
-          : stopChoosingFile());
+      // A folder being looked at must be left first, or it reports itself missing.
+      // A file's panel stays until the list has caught up.
+      if (item.kind === "folder") {
+        if (stillShown()) await openFolder(driveId, item.parentId);
+        await refresh();
+      } else {
+        await refresh();
+        if (stillShown()) await stopChoosingFile();
       }
-      await refresh();
       toast({
         message: `"${item.name}" moved to Trash.`,
         action: {
@@ -171,13 +173,17 @@ export function ItemActions({
                 data: { driveId, itemId: item.id, toDriveId, toParentId },
               }),
             );
-            if (item.kind === "file") await stopChoosingFile();
-            else if (toDriveId !== driveId) {
-              await (outcome === "moved"
-                ? openFolder(toDriveId, item.id)
-                : openFolder(driveId, item.parentId));
+            if (item.kind === "file") {
+              await refresh();
+              await stopChoosingFile();
+            } else {
+              if (toDriveId !== driveId) {
+                await (outcome === "moved"
+                  ? openFolder(toDriveId, item.id)
+                  : openFolder(driveId, item.parentId));
+              }
+              await refresh();
             }
-            await refresh();
             toast({
               message:
                 outcome === "moved"

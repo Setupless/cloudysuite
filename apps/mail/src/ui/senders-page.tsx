@@ -6,7 +6,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   asMailFailure,
   call,
@@ -78,6 +79,7 @@ function AddSender({
   const [value, setValue] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [adding, setAdding] = useState<SenderList | null>(null);
+  const field = useRef<HTMLInputElement>(null);
 
   const submit = async (list: SenderList) => {
     if (adding) return;
@@ -88,9 +90,12 @@ function AddSender({
     }
     setAdding(list);
     const failure = await onAdd(pattern, list);
-    setAdding(null);
-    setProblem(failure);
-    if (failure === null) setValue("");
+    flushSync(() => {
+      setAdding(null);
+      setProblem(failure);
+      if (failure === null) setValue("");
+    });
+    field.current?.focus();
   };
 
   return (
@@ -106,7 +111,9 @@ function AddSender({
         placeholder="name@example.com or example.com"
         autoComplete="off"
         spellCheck={false}
+        ref={field}
         value={value}
+        disabled={adding !== null}
         onChange={(event) => setValue(event.target.value)}
       />
       {problem && <Notice tone="danger">{problem}</Notice>}

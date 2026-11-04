@@ -53,7 +53,7 @@ export function AuthenticatorSetup({
 }: {
   onDone: () => void | Promise<void>;
   onCancel?: () => void;
-  // Rendered below each step, told whether the step is busy.
+  // Rendered below each step before the app is on, told whether the step is busy.
   after?: (busy: boolean) => ReactNode;
 }) {
   const [setup, setSetup] = useState<SetupStep>({ step: "password" });
@@ -126,7 +126,6 @@ export function AuthenticatorSetup({
           onDone={() => run("done", async () => onDone())}
         />
         {error && <Notice tone="danger">{error}</Notice>}
-        {below}
       </>
     );
   }

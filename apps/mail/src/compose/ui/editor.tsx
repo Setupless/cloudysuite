@@ -562,7 +562,7 @@ function EditorForm({
           }
           // Files uploaded while this is on its way aren't in what the server answers with.
           const had = attachmentsNow.current;
-          if (adds) setSaveState("saving");
+          if (adds && !isOffline()) setSaveState("saving");
           try {
             const result = await callAction(() =>
               saveDraft({
@@ -1253,7 +1253,7 @@ function EditorForm({
               onClick={() => void saveAsNewDraft()}
               disabled={working !== null}
               aria-busy={working === "copy" || undefined}
-              className="inline-flex cursor-pointer items-center gap-1 font-medium underline outline-accent focus-visible:outline-2 disabled:cursor-default aria-busy:cursor-progress"
+              className="inline-flex cursor-pointer items-center gap-1 font-medium underline outline-accent focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress"
             >
               Save as a new draft
               {working === "copy" && <Spinner size={14} />}
