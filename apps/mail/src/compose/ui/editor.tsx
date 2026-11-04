@@ -294,7 +294,9 @@ function EditorForm({
   const [notThreaded, setNotThreaded] = useState(false);
   const [working, setWorking] = useState<EditorWork | null>(null);
   const [locked, setLocked] = useState(false);
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState<{
+    failure: string | null;
+  } | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("unsaved");
 
   const body = useRef<HTMLDivElement>(null);
@@ -861,7 +863,9 @@ function EditorForm({
   };
 
   const discard = async () => {
+    if (working) return;
     setWorking("discard");
+    setConfirmingDiscard({ failure: null });
     discarding.current = true;
     clearTimeout(timer.current);
     dirty.current = false;
@@ -899,7 +903,7 @@ function EditorForm({
         return;
       }
       dirty.current = true;
-      setProblem((error as Error).message);
+      setConfirmingDiscard({ failure: (error as Error).message });
     }
   };
 
@@ -1143,10 +1147,12 @@ function EditorForm({
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.nativeEvent.isComposing) return;
+    // The Discard dialog sits inside this form, so its keys arrive here too.
+    if (confirmingDiscard) return;
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       void send();
-    } else if (event.key === "Escape" && !confirmingDiscard) {
+    } else if (event.key === "Escape") {
       event.preventDefault();
       void closeEditor();
     }
@@ -1415,7 +1421,7 @@ function EditorForm({
             ) {
               close();
             } else {
-              setConfirmingDiscard(true);
+              setConfirmingDiscard({ failure: null });
             }
           }}
           disabled={working !== null}
@@ -1427,24 +1433,28 @@ function EditorForm({
       {confirmingDiscard && (
         <Modal
           title="Discard this draft?"
-          onClose={() => setConfirmingDiscard(false)}
+          onClose={() => setConfirmingDiscard(null)}
           busy={working === "discard"}
         >
           <p className="text-sm text-secondary">
             You can't get it back after this.
           </p>
+          {confirmingDiscard.failure && (
+            <Notice tone="danger">{confirmingDiscard.failure}</Notice>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="quiet"
               autoFocus
               disabled={working === "discard"}
-              onClick={() => setConfirmingDiscard(false)}
+              onClick={() => setConfirmingDiscard(null)}
             >
               Keep it
             </Button>
             <Button
               variant="danger"
               pending={working === "discard"}
+              disabled={working !== null}
               onClick={() => void discard()}
             >
               Discard
