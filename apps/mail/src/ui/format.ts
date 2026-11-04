@@ -48,13 +48,9 @@ export const formatAddress = (person: Address): string =>
     ? `${person.name.trim()} <${person.address}>`
     : person.address;
 
-export const sendersLine = (senders: Address[]): string =>
-  senders.length === 0
-    ? "Unknown sender"
-    : senders
-        .map((person) =>
-          senders.length > 1
-            ? (displayName(person).split(/\s+/)[0] ?? person.address)
-            : displayName(person),
-        )
-        .join(", ");
+export const senderNames = (senders: Address[]): string[] =>
+  senders.map((person) =>
+    senders.length > 1
+      ? (displayName(person).split(/\s+/)[0] ?? person.address)
+      : displayName(person),
+  );
