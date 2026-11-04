@@ -23,7 +23,7 @@ async function clearEverything(): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  // A frame on another site gets no session cookie, so it would read as signed out.
+  // A page that frames this one must not be able to make it clear someone's mail.
   if (window.top !== window) return;
   const session = await readServerSession();
   let ownerKnown = true;
