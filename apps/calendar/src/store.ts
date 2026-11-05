@@ -101,6 +101,7 @@ export type ImportedPart = EventDetails & {
   sequence: number;
   shortfall: Shortfall | null;
   cancelled: boolean;
+  conference: string | null;
 };
 
 // One event: its series, or null when the file only changes dates of a series held
@@ -128,6 +129,7 @@ const partOf = (event: OutsideEvent): ImportedPart => ({
   sequence: event.sequence,
   shortfall: event.shortfall,
   cancelled: event.cancelled,
+  conference: event.conference,
 });
 
 export type EventGroup = {
@@ -1066,7 +1068,7 @@ export class EventStore {
           organiser: series.organiser,
           sequence: 0,
           cancelled: false,
-          conference: null,
+          conference: series.conference,
         },
         now,
       );
@@ -2267,8 +2269,7 @@ export class EventStore {
         organiser: held?.organiser ?? importer,
         sequence: series.sequence,
         cancelled: false,
-        // An event of the person's own takes its link from the place they can edit.
-        conference: null,
+        conference: series.conference,
       };
       if (held) this.#dropChanges(uid, null);
       this.#write(written, now);
@@ -2318,6 +2319,7 @@ export class EventStore {
         exdates: [],
         sequence: change.sequence,
         cancelled: false,
+        conference: change.conference,
       },
       now,
     );
