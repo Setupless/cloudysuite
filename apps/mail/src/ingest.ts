@@ -31,6 +31,8 @@ export type IngestInput = { mailboxId: MailboxId; raw: ArrayBuffer } & (
       envelope: { from: string; to: string };
       // Stored, with no notification for anyone.
       quiet?: boolean;
+      // Stored, and never handed to Calendar, which was off as it arrived.
+      calendarOff?: boolean;
     }
   | { source: "import" }
   | { source: "sent" }
@@ -202,7 +204,13 @@ export async function ingest(
       : { message: described, answers: null };
   const result = (await stub.commit(
     message,
-    input.source === "inbound" && !input.quiet ? mailboxId : null,
+    input.source === "inbound"
+      ? {
+          to: mailboxId,
+          notify: !input.quiet,
+          calendar: !input.calendarOff,
+        }
+      : null,
   )) as IngestResult;
   await noteJevUsage(env, answers);
   return result;
@@ -288,7 +296,7 @@ export async function receiveInbound(
     return;
   }
   const raw = await new Response(message.raw).arrayBuffer();
-  // Decided on arrival, because Mail may be back on before the notification's alarm.
+  // Decided on arrival, because Mail or Calendar may be back on before the alarm runs.
   const { disabled } = await readSettings(env.DB);
   const result = await ingest(env, {
     source: "inbound",
@@ -296,6 +304,7 @@ export async function receiveInbound(
     raw,
     envelope: { from: message.from, to: message.to },
     quiet: disabled.has("mail"),
+    calendarOff: disabled.has("calendar"),
   });
   if (result.status === "tooLarge") {
     message.setReject("This message is larger than the 25 MB limit.");

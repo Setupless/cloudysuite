@@ -74,6 +74,7 @@
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/jev": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",

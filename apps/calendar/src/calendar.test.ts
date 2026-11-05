@@ -14,7 +14,9 @@ import {
   TEAM,
 } from "./test-support";
 import type {
+  EmailAddress,
   EventTime,
+  EventUid,
   Occurrence,
   OccurrenceId,
   Repeat,
@@ -523,7 +525,13 @@ test("an invitation from someone else can be removed but not changed", async () 
     end: Date.parse("2026-11-10T15:30:00+11:00"),
     timeZone: SYDNEY,
     rule: null,
-    organiser: { kind: "invitation", email: "jo@example.net", name: "Jo" },
+    organiser: {
+      kind: "outside",
+      email: "jo@example.net" as EmailAddress,
+      name: "Jo",
+      uid: "invite@example.net" as EventUid,
+      fromOrganiser: true,
+    },
   });
   const alice = await kit.as(ALICE);
   const [seen] = (await listed("2026-11-10", "2026-11-11")).occurrences;

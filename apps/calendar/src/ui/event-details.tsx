@@ -24,7 +24,8 @@ import { calendarFill } from "./colours";
 import { actionsFor, type EventAction } from "./event-form";
 import { repeatText, whoCanSee, withLinks } from "./event-text";
 import { AnswerButtons, PeopleList, PeopleSummary } from "./invitation-parts";
-import { JoinButton, meetingOf } from "./join-button";
+import { JoinButton } from "./join-button";
+import { meetingLink } from "./meeting-link";
 import { type ShownEvent, whenOf } from "./shown-event";
 
 const FOCUS = "outline-accent focus-visible:outline-2";
@@ -236,7 +237,7 @@ export function EventCard({
 }) {
   const card = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const meeting = meetingOf(event);
+  const meeting = meetingLink(event);
   const [position, setPosition] = useState<{
     left: number;
     top: number;
@@ -320,7 +321,7 @@ export function EventPanel({
 }) {
   const titleId = useId();
   const panel = useRef<HTMLElement>(null);
-  const meeting = meetingOf(event);
+  const meeting = meetingLink(event);
   // On a narrow screen the panel covers the grid, so focus moves here from the event.
   useEffect(() => {
     panel.current?.focus();
@@ -337,7 +338,10 @@ export function EventPanel({
       {meeting && (
         <div className="flex flex-col gap-1.5">
           <JoinButton link={meeting} />
-          <p className="text-xs break-all text-secondary">{meeting.url}</p>
+          {/* A link from the place or the notes already shows there. */}
+          {meeting.from === "conference" && (
+            <p className="text-xs break-all text-secondary">{meeting.url}</p>
+          )}
         </div>
       )}
       <AnswerButtons event={event} />

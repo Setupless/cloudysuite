@@ -340,4 +340,17 @@ export const MIGRATIONS: Migrations = [
     `ALTER TABLE outgoing ADD COLUMN copied_from TEXT`,
     `ALTER TABLE outgoing_attachments ADD COLUMN copied_from_file INTEGER`,
   ],
+  // Inbound mail with a calendar part, waiting for the alarm to hand it to Calendar.
+  // Written with the message, so it never holds the message up. `proved` is Mail's
+  // sender check on arrival, which the spam filter makes too.
+  [
+    `CREATE TABLE calendar_handoffs (
+      message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+      mailbox_id TEXT NOT NULL,
+      proved INTEGER NOT NULL,
+      tries INTEGER NOT NULL,
+      try_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX calendar_handoffs_due ON calendar_handoffs(try_at)`,
+  ],
 ];

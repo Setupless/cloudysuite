@@ -61,8 +61,17 @@ export type Organiser =
       calendarId: CalendarId;
       uid: EventUid;
     }
-  // A copy of an event organised outside. It can be answered or removed.
-  | { kind: "invitation"; email: string; name: string | null };
+  // A copy of an invitation emailed from outside. It can be answered, by an email to that
+  // address, or removed. Only mail from that address that proves it was sent from there
+  // can change it. The copy has a UID of its own here, from the organiser's address and
+  // the UID they sent, which is this one. `fromOrganiser` says that proof came with it.
+  | {
+      kind: "outside";
+      email: EmailAddress;
+      name: string | null;
+      uid: EventUid;
+      fromOrganiser: boolean;
+    };
 
 export const ANSWERS = ["needsAnswer", "yes", "maybe", "no"] as const;
 export type Answer = (typeof ANSWERS)[number];
@@ -151,6 +160,8 @@ export type Occurrence = EventDetails & {
   answer: Answer | null;
   // The organiser called off this date, or the whole event.
   cancelled: boolean;
+  // The meeting link an invitation from outside gave, as hostile as its other text.
+  conference: string | null;
 };
 
 // Whole days on the viewer's own calendar. `to` is the day after the last day shown.
@@ -259,6 +270,15 @@ export const MAX_UID_LENGTH = 255;
 // Workers runtime.
 export const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
 export const MAX_IMPORT_EVENTS = 10_000;
+
+// A calendar part of an email is read on Mail's alarm, from anyone, so it gets a
+// sixteenth of a file's size. An invitation is one event and its changed dates.
+export const MAX_INVITATION_PART_BYTES = 256 * 1024;
+export const MAX_INVITATION_PARTS = 3;
+export const MAX_INVITATION_EVENTS = 200;
+// Each event an email adds, changes, or answers costs a call to a calendar from Mail's
+// alarm. A real invitation is one, with its changed dates, so the rest are left.
+export const MAX_EVENTS_PER_EMAIL = 20;
 
 export const SKIP_REASONS = [
   "unreadable",

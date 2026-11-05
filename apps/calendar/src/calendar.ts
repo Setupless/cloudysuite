@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { SearchTerm } from "@cloudysuite/search";
-import type { UserId } from "@cloudysuite/access";
+import type { CalendarId, UserId } from "@cloudysuite/access";
 import { isAppOff } from "../../../src/app-on";
 import { invitationReceiver } from "./client";
 import { findPersonalCalendar, makePersonalCalendar } from "./directory";
@@ -14,6 +14,9 @@ import {
   copyUidOf,
   type Delivery,
   type DeliveryResult,
+  type OutsideInvitation,
+  type OutsideReply,
+  type OutsideResult,
 } from "./invitations";
 import { MIGRATIONS } from "./migrations";
 import {
@@ -209,6 +212,29 @@ export class Calendar extends DurableObject<Env> {
   async receiveAnswer(notice: AnswerNotice): Promise<void> {
     this.#store.receiveAnswer(notice, Date.now());
     await this.#scheduleNextWakeUp();
+  }
+
+  // Only Mail's alarm calls these, through mailReceiver, once inbound.ts has checked the
+  // mailbox, the sender, and that Calendar is on. The store decides what an email may
+  // change, so there is nobody to check by then.
+  async receiveOutsideInvitation(
+    invitation: OutsideInvitation,
+  ): Promise<OutsideResult> {
+    const uid = await copyUidOf(invitation.organiser.email, invitation.uid);
+    return this.#store.receiveOutsideInvitation(invitation, uid, Date.now());
+  }
+
+  async receiveOutsideReply(
+    calendarId: CalendarId,
+    reply: OutsideReply,
+  ): Promise<boolean> {
+    const found = this.#store.receiveOutsideReply(
+      reply,
+      calendarId,
+      Date.now(),
+    );
+    await this.#scheduleNextWakeUp();
+    return found;
   }
 
   // Call this before any other await, so it commits with the rows that need it.

@@ -19,7 +19,8 @@ import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
 import { dayNumber, dayTitle, timeText, weekdayShort } from "./event-text";
 import { AnswerButtons } from "./invitation-parts";
-import { JoinButton, meetingOf } from "./join-button";
+import { JoinButton } from "./join-button";
+import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
@@ -131,7 +132,7 @@ function NextCard({
     next.kind === "today"
       ? `Next, ${untilText(next.start, now)}`
       : `Nothing else today. Next, tomorrow at ${timeText(next.start)}`;
-  const meeting = meetingOf(event);
+  const meeting = meetingLink(event);
   const coming = comingLine(event.people, me);
   // The event link covers the whole card, and Join sits above it, because one link
   // can't hold another.

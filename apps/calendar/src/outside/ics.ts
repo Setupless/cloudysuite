@@ -17,6 +17,7 @@ import {
 } from "../time";
 import {
   type CivilDate,
+  type EmailAddress,
   type EventDetails,
   type EventTime,
   type EventUid,
@@ -32,6 +33,15 @@ import {
   type TimeZone,
 } from "../types";
 import { zoneOfTzid } from "./zones";
+
+// A file to import, or a calendar part of an email. Mail's alarm reads the second, so
+// it gets far less.
+export type ReadingLimits = { bytes: number; events: number };
+
+export const IMPORT_LIMITS: ReadingLimits = {
+  bytes: MAX_IMPORT_BYTES,
+  events: MAX_IMPORT_EVENTS,
+};
 
 // Everything in a file from outside is hostile, like message content. This reads one
 // into events in the store's shape, and skips what it can't read instead of failing.
@@ -49,10 +59,12 @@ const MAX_LINE_LENGTH = 32 * 1024;
 const MAX_PARAMETERS = 200;
 const UTC = parseTimeZone("UTC") as TimeZone;
 
-// Google writes its Meet link here, and Outlook its Teams link.
+// Google writes its Meet link here, and Outlook its Teams link. Exchange also writes
+// the last one, which is often empty, so the first that isn't empty counts.
 const CONFERENCE_PROPERTIES = [
   "x-google-conference",
   "x-microsoft-skypeteamsmeetingurl",
+  "x-microsoft-onlinemeetingexternallink",
 ];
 
 // The properties read below. ical.js never sees the rest, such as an attachment
@@ -68,6 +80,7 @@ const READ_PROPERTIES = new Set([
   "LOCATION",
   "DESCRIPTION",
   "SEQUENCE",
+  "DTSTAMP",
   "STATUS",
   "ORGANIZER",
   "ATTENDEE",
@@ -75,7 +88,7 @@ const READ_PROPERTIES = new Set([
 ]);
 
 export type Answer = "accepted" | "tentative" | "declined" | "needsAction";
-export type OutsidePerson = { email: string; name: string | null };
+export type OutsidePerson = { email: EmailAddress; name: string | null };
 export type Attendee = OutsidePerson & { answer: Answer };
 
 // One VEVENT: an event, a repeating series, or one changed date of a series.
@@ -94,13 +107,32 @@ export type OutsideEvent = EventDetails & {
   attendees: Attendee[];
   // Plain text, as hostile as the rest. A Join button checks its host.
   conference: string | null;
+  // When the sender wrote it, which orders two answers to the same version.
+  stamp: number | null;
+};
+
+// iTIP's METHOD, from RFC 5546, for the three an email from outside can carry. Any
+// other, or a file that states none, reads as null.
+export type CalendarMethod = "request" | "cancel" | "reply";
+
+const METHODS: Record<string, CalendarMethod> = {
+  REQUEST: "request",
+  CANCEL: "cancel",
+  REPLY: "reply",
 };
 
 export type FileReading =
-  | { status: "read"; events: OutsideEvent[]; skipped: SkipReason[] }
+  | {
+      status: "read";
+      method: CalendarMethod | null;
+      events: OutsideEvent[];
+      skipped: SkipReason[];
+    }
   | { status: "tooLarge" | "tooManyEvents" | "notCalendar" };
 
 type Block = { name: string; lines: string[] };
+
+type Blocks = { blocks: Block[]; methods: Set<string> };
 
 // A day and time from the file. A wall time names no instant until its zone is known.
 type Moment =
@@ -145,13 +177,19 @@ const unfold = (text: string) =>
 const BEGIN = /^BEGIN:([A-Za-z0-9-]+)$/i;
 const END = /^END:([A-Za-z0-9-]+)$/i;
 
-// The events and time zones directly inside each VCALENDAR. An event keeps only its own
-// lines, so an alarm or any other part inside it is never read.
-function blocksOf(lines: string[]): Block[] | "notCalendar" | "tooManyEvents" {
+// The events and time zones directly inside each VCALENDAR, and the METHOD each states.
+// An event keeps only its own lines, so an alarm or any other part inside it is never
+// read.
+function blocksOf(
+  lines: string[],
+  maxEvents: number,
+): Blocks | "notCalendar" | "tooManyEvents" {
   const blocks: Block[] = [];
+  const methods = new Set<string>();
   const stack: string[] = [];
   let events = 0;
   let calendars = 0;
+  let stated = false;
   let current: Block | null = null;
   for (const line of lines) {
     if (line.trim() === "") continue;
@@ -161,9 +199,12 @@ function blocksOf(lines: string[]): Block[] | "notCalendar" | "tooManyEvents" {
       if (stack.length === 0 && begin !== "VCALENDAR") return "notCalendar";
       if (stack.length >= MAX_DEPTH) return "notCalendar";
       stack.push(begin);
-      if (stack.length === 1) calendars++;
+      if (stack.length === 1) {
+        calendars++;
+        stated = false;
+      }
       if (stack.length === 2) {
-        if (begin === "VEVENT" && ++events > MAX_IMPORT_EVENTS) {
+        if (begin === "VEVENT" && ++events > maxEvents) {
           return "tooManyEvents";
         }
         current = { name: begin, lines: [] };
@@ -182,15 +223,23 @@ function blocksOf(lines: string[]): Block[] | "notCalendar" | "tooManyEvents" {
         blocks.push(current);
         current = null;
       }
+      // RFC 5545: with no METHOD, no scheduling transaction may be assumed.
+      if (stack.length === 1 && !stated) methods.add("");
       stack.pop();
       continue;
     }
     if (stack.length === 0) return "notCalendar";
+    if (stack.length === 1 && nameOf(line) === "METHOD") {
+      methods.add(valueOf(line).trim().toUpperCase());
+      stated = true;
+    }
     if (current && (stack.length === 2 || current.name === "VTIMEZONE")) {
       current.lines.push(line);
     }
   }
-  return stack.length === 0 && calendars > 0 ? blocks : "notCalendar";
+  return stack.length === 0 && calendars > 0
+    ? { blocks, methods }
+    : "notCalendar";
 }
 
 const valueOf = (line: string) => {
@@ -466,6 +515,11 @@ function readEvent(block: Block, zones: Zones): OutsideEvent {
   ) {
     skip("tooComplex");
   }
+  // Counted before ical.js reads them, which takes far longer than counting.
+  const exdateValues = read
+    .filter((line) => nameOf(line) === "EXDATE")
+    .reduce((total, line) => total + valueOf(line).split(",").length, 0);
+  if (exdateValues > MAX_EXDATES) skip("unreadable");
   let event: ICAL.Component;
   try {
     event = new ICAL.Component(
@@ -512,7 +566,6 @@ function readEvent(block: Block, zones: Zones): OutsideEvent {
             ),
           ),
         ].sort();
-  if (exdates.length > MAX_EXDATES) skip("unreadable");
 
   const organiser = event.getFirstProperty("organizer");
   const conference = CONFERENCE_PROPERTIES.map((name) =>
@@ -540,22 +593,37 @@ function readEvent(block: Block, zones: Zones): OutsideEvent {
     organiser: organiser ? personOf(organiser) : null,
     attendees: attendeesOf(event),
     conference: conference ?? null,
+    stamp: stampOf(event, zones),
   };
+}
+
+// A stamp that can't be read orders nothing, and loses nothing else of the event.
+function stampOf(event: ICAL.Component, zones: Zones): number | null {
+  try {
+    const moment = firstMoment(event, "dtstamp", zones);
+    return moment?.kind === "wall" ? instantOf(moment.wall, moment.zone) : null;
+  } catch {
+    return null;
+  }
 }
 
 // `floating` is the zone for a time the file gives without one, the importer's own.
 export function readCalendarFile(
   text: string,
   floating: TimeZone,
+  limits: ReadingLimits = IMPORT_LIMITS,
 ): FileReading {
   if (
-    text.length > MAX_IMPORT_BYTES ||
-    new TextEncoder().encode(text).byteLength > MAX_IMPORT_BYTES
+    text.length > limits.bytes ||
+    new TextEncoder().encode(text).byteLength > limits.bytes
   ) {
     return { status: "tooLarge" };
   }
-  const blocks = blocksOf(unfold(text));
-  if (typeof blocks === "string") return { status: blocks };
+  const found = blocksOf(unfold(text), limits.events);
+  if (typeof found === "string") return { status: found };
+  const { blocks } = found;
+  // Two calendars in one file that disagree say nothing Calendar can act on.
+  const [method, ...others] = [...found.methods];
   const zones: Zones = {
     inFile: new Map(
       blocks.flatMap((block) => {
@@ -575,5 +643,10 @@ export function readCalendarFile(
       skipped.push(thrown instanceof Skip ? thrown.reason : "unreadable");
     }
   }
-  return { status: "read", events, skipped };
+  return {
+    status: "read",
+    method: (others.length === 0 && method && METHODS[method]) || null,
+    events,
+    skipped,
+  };
 }

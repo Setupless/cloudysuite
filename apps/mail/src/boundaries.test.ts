@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import packageJson from "../package.json";
 
 const ROOT = join(import.meta.dir, "../../..");
 
+// A glob doesn't follow links, so it never walks into a package through node_modules,
+// where Mail and Calendar, which use each other, would loop.
 function productionFiles(): string[] {
   return ["src", "apps", "packages"].flatMap((dir) =>
-    readdirSync(join(ROOT, dir), { recursive: true, encoding: "utf8" })
+    [...new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: join(ROOT, dir) })]
       .filter(
         (file) =>
           /\.(ts|tsx)$/.test(file) &&
@@ -61,6 +63,25 @@ test("Mail's code reaches the sign-in rule only through the Mail-on check", () =
   expect(users).toEqual([
     "apps/mail/src/access.ts",
     "apps/mail/src/pwa/session-route.ts",
+  ]);
+});
+
+// Mail hands inbound mail with a calendar part to Calendar's one entry for it, and
+// reaches nothing else of Calendar's.
+test("Mail reaches Calendar only through its entry for inbound mail", () => {
+  const imports = productionFiles()
+    .filter((file) => relative(ROOT, file).startsWith("apps/mail/"))
+    .flatMap((file) =>
+      [
+        ...readFileSync(file, "utf8").matchAll(
+          /from "(@cloudysuite\/calendar[^"]*|[^"]*\/calendar\/[^"]*)"/g,
+        ),
+      ].map(([, path]) => [relative(ROOT, file), path]),
+    )
+    .sort();
+  expect(imports).toEqual([
+    ["apps/mail/src/calendar-handoff.ts", "@cloudysuite/calendar/inbound"],
+    ["apps/mail/src/mailbox.ts", "@cloudysuite/calendar/inbound"],
   ]);
 });
 

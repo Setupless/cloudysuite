@@ -1,6 +1,7 @@
 import type { UserId } from "@cloudysuite/access";
 import { judgeSendError, retryDelay } from "@cloudysuite/mail/send-outcome";
 import { canStillEdit } from "../client";
+import { findPersonalCalendar } from "../directory";
 import { type EmailPlan, heldAfter, type QueuedEmail } from "../invitations";
 import type { EventStore } from "../store";
 import type {
@@ -110,15 +111,21 @@ async function sendOne(
 ): Promise<void> {
   const { store, database, email } = context;
   const to = recipientOf(queued.recipient);
+  // A reply goes from the person answering, and only while the calendar is still theirs.
+  const sender = plan.method === "reply" ? plan.by : plan.organiser.userId;
   let facts: SendingFacts;
   let canEdit: boolean;
   try {
     [facts, canEdit] = await Promise.all([
-      readSendingFacts(database, plan.organiser.userId, colleaguesIn(plan, to)),
-      // Nobody can edit a deleted calendar. Its manager was checked as they deleted it.
-      plan.method === "cancel" && plan.why === "calendarDeleted"
-        ? true
-        : canStillEdit(database, queued.changedBy, queued.calendarId),
+      readSendingFacts(database, sender, colleaguesIn(plan, to)),
+      plan.method === "reply"
+        ? findPersonalCalendar(database, plan.by).then(
+            (own) => own === queued.calendarId,
+          )
+        : // Nobody can edit a deleted calendar. Its manager was checked as they deleted it.
+          plan.method === "cancel" && plan.why === "calendarDeleted"
+          ? true
+          : canStillEdit(database, queued.changedBy, queued.calendarId),
     ]);
   } catch (error) {
     console.error("Could not check whether an invitation may go.", error);
@@ -149,10 +156,15 @@ async function sendOne(
       ? plan.to.kind === "colleague"
         ? plan.to.name
         : null
-      : null;
+      : plan.method === "reply"
+        ? plan.organiser.name
+        : null;
   const message = invitationMime({
     plan,
-    from: { address: facts.organiser, name: plan.organiser.name },
+    from: {
+      address: facts.organiser,
+      name: plan.method === "reply" ? plan.byName : plan.organiser.name,
+    },
     to: { address: toAddress, name: toName },
     attendees,
     now,

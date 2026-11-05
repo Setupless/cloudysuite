@@ -9,10 +9,10 @@ import {
   IconRefresh,
   IconUser,
 } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { answerInvitation, retryInvitationEmail } from "../functions";
-import { call, calendarKeys } from "../queries";
+import { call, calendarKeys, outsideInvitingQuery } from "../queries";
 import {
   type Answer,
   GIVEN_ANSWERS,
@@ -85,9 +85,26 @@ export function AnswerButtons({ event }: { event: ShownEvent }) {
           </Button>
         ))}
       </div>
+      {event.organiser.kind === "outside" && (
+        <ReplyNote organiser={event.organiser.name ?? event.organiser.email} />
+      )}
       {failure && <Notice tone="danger">{failure}</Notice>}
     </div>
   );
+}
+
+// An answer to someone outside goes by email from the person's own address. Said before
+// they choose, since nothing would tell them afterwards.
+function ReplyNote({ organiser }: { organiser: string }) {
+  const reach = useQuery(outsideInvitingQuery(null));
+  const note = reach.isError
+    ? `We couldn't check whether ${organiser} will be told your answer. It's still saved in your calendar either way.`
+    : reach.data === "mailOff"
+      ? `Mail is off, so ${organiser} won't be told your answer. It's still saved in your calendar.`
+      : reach.data === "noSender"
+        ? `You don't have a personal mailbox, so ${organiser} won't be told your answer. It's still saved in your calendar.`
+        : null;
+  return note && <p className="text-xs text-secondary">{note}</p>;
 }
 
 export function PeopleSummary({ event }: { event: ShownEvent }) {
@@ -204,7 +221,7 @@ export function PeopleList({ event }: { event: ShownEvent }) {
   if (event.people.length === 0) return null;
   const { organiser } = event;
   const organiserName =
-    organiser.kind === "invitation"
+    organiser.kind === "outside"
       ? (organiser.name ?? organiser.email)
       : organiser.name;
   return (
@@ -217,7 +234,7 @@ export function PeopleList({ event }: { event: ShownEvent }) {
         {organiserName && (
           <PersonLine
             name={organiserName}
-            you={organiser.kind !== "invitation" && organiser.userId === me}
+            you={organiser.kind !== "outside" && organiser.userId === me}
             detail="Organiser"
             icon={IconUser}
             tone="text-secondary"

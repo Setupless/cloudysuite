@@ -92,8 +92,14 @@ export async function createCalendarTest() {
       alarm: number | null;
     }
   >();
-  // Calendars that another calendar can't reach, as if the call between them failed.
+  // Calendars that another calendar, or Mail, can't reach, as if the call failed.
   const unreachable = new Set<string>();
+  const handedOver = [
+    "receiveInvitation",
+    "receiveAnswer",
+    "receiveOutsideInvitation",
+    "receiveOutsideReply",
+  ];
   // Calendars that stop the moment they save their progress, as if evicted then.
   const stopping = new Set<string>();
   // Every invitation one object handed another, as it crossed between them.
@@ -109,7 +115,7 @@ export async function createCalendarTest() {
             if (typeof value !== "function") return value;
             if (
               unreachable.has(name) &&
-              (property === "receiveInvitation" || property === "receiveAnswer")
+              handedOver.includes(property as string)
             ) {
               return () => Promise.reject(new Error("Calendar unreachable"));
             }

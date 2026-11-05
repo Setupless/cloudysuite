@@ -42,6 +42,15 @@ export function provedDomain(
   return signed ? domain : null;
 }
 
+// The filter's check on an inbound message. Another From address might be the one a
+// DMARC result is about, so a message with more than one proves nothing.
+export const provedSenderDomain = (
+  message: Pick<NewMessage, "authResults" | "from" | "spamFacts">,
+): string | null =>
+  message.spamFacts?.ambiguousFrom
+    ? null
+    : provedDomain(message.authResults, message.from);
+
 export const dmarcEnforced = (auth: AuthResults | null): boolean =>
   auth?.dmarc === "fail" &&
   (auth.dmarcPolicy === "quarantine" || auth.dmarcPolicy === "reject");

@@ -10,6 +10,7 @@ import {
   isAccepted,
   isShouting,
   provedDomain,
+  provedSenderDomain,
   replyDomainElsewhere,
   runnableFilename,
 } from "./signals";
@@ -314,9 +315,7 @@ export class SpamStore {
     const address = from?.address.toLowerCase() ?? null;
     const entries = address ? this.#listEntriesFor(address) : [];
     const narrowest = entries[0];
-    const proved = spamFacts?.ambiguousFrom
-      ? null
-      : provedDomain(authResults, from);
+    const proved = provedSenderDomain(message);
     const contact = address ? this.#contact(address) : null;
 
     const reasons: SpamReason[] = [];

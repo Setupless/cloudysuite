@@ -29,7 +29,7 @@ export type IcsAttendee = IcsPerson & { answer: Answer };
 type IcsInput = {
   plan: Exclude<EmailPlan, { method: "none" }>;
   organiser: IcsPerson;
-  // Everyone on a request, or the one person a cancellation is for.
+  // Everyone on a request, the one person a cancellation is for, or the one answering.
   attendees: IcsAttendee[];
   stamp: number;
 };
@@ -117,6 +117,8 @@ function addPerson(
   name: "organizer" | "attendee",
   person: IcsPerson,
   answer?: Answer,
+  // A reply gives the answer, so it asks for none.
+  asksForAnswer = true,
 ): void {
   const property = new ICAL.Property(name);
   const shown = person.name && cleanName(person.name);
@@ -124,7 +126,7 @@ function addPerson(
   if (answer) {
     property.setParameter("role", "REQ-PARTICIPANT");
     property.setParameter("partstat", PARTSTAT[answer]);
-    property.setParameter("rsvp", "TRUE");
+    if (asksForAnswer) property.setParameter("rsvp", "TRUE");
   }
   property.setValue(`mailto:${person.address}`);
   event.addProperty(property);
@@ -179,6 +181,31 @@ function eventOf(
   return event;
 }
 
+// RFC 5546's REPLY: who answers, and how, to the version they were sent. The organiser's
+// calendar holds the rest, and the time and title only help a person reading it.
+function replyOf(input: IcsInput, uid: EventUid, series: DeliveredPart) {
+  const event = new ICAL.Component("vevent");
+  event.addPropertyWithValue("uid", uid);
+  event.addPropertyWithValue("sequence", series.sequence);
+  event.addPropertyWithValue(
+    "dtstamp",
+    ICAL.Time.fromJSDate(new Date(input.stamp), true),
+  );
+  addTimes(event, series.time);
+  event.addPropertyWithValue("summary", cleanText(series.title));
+  addPerson(event, "organizer", input.organiser);
+  for (const attendee of input.attendees) {
+    addPerson(event, "attendee", attendee, attendee.answer, false);
+  }
+  return event;
+}
+
+const METHOD_NAMES = {
+  request: "REQUEST",
+  cancel: "CANCEL",
+  reply: "REPLY",
+} as const;
+
 function utf8Length(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
@@ -216,16 +243,13 @@ export function invitationIcs(input: IcsInput): string {
   calendar.addPropertyWithValue("prodid", PRODID);
   calendar.addPropertyWithValue("version", "2.0");
   calendar.addPropertyWithValue("calscale", "GREGORIAN");
-  calendar.addPropertyWithValue(
-    "method",
-    plan.method === "request" ? "REQUEST" : "CANCEL",
-  );
+  calendar.addPropertyWithValue("method", METHOD_NAMES[plan.method]);
   const series =
     plan.method === "request" ? (plan.parts[0] as DeliveredPart) : plan.series;
   const parts =
     plan.method === "request"
       ? plan.parts
-      : plan.why === "dateCancelled"
+      : plan.method === "cancel" && plan.why === "dateCancelled"
         ? [plan.date]
         : [plan.series];
   // A cancelled date is named on the series' own clock, which may not be its own.
@@ -238,7 +262,9 @@ export function invitationIcs(input: IcsInput): string {
   }
   for (const part of parts) {
     calendar.addSubcomponent(
-      eventOf(input, plan.uid, part, series, plan.method === "cancel"),
+      plan.method === "reply"
+        ? replyOf(input, plan.uid, part)
+        : eventOf(input, plan.uid, part, series, plan.method === "cancel"),
     );
   }
   const unfolded = calendar.toString().replace(/\r\n[ \t]/g, "");

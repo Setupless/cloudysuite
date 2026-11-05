@@ -20,7 +20,7 @@ const LOS_ANGELES = zone("America/Los_Angeles");
 const date = (raw: string) => raw as CivilDate;
 const MINUTE = 60_000;
 
-type Shown = { title: string; time: EventTime };
+type Shown = { title: string; time: EventTime; cancelled: boolean };
 
 function at(day: string, clock: string, where: TimeZone = SYDNEY): number {
   const [hours, minutes] = clock.split(":").map(Number) as [number, number];
@@ -45,12 +45,14 @@ function timed(
       end: instant + minutes * MINUTE,
       timeZone: SYDNEY,
     },
+    cancelled: false,
   };
 }
 
 const allDay = (title: string, first: string, after: string): Shown => ({
   title,
   time: { kind: "allDay", startDate: date(first), endDate: date(after) },
+  cancelled: false,
 });
 
 const planAt = (events: Shown[], now: number, where: TimeZone = SYDNEY) =>
@@ -108,6 +110,19 @@ test("in the evening the card takes tomorrow's first event, and Tomorrow leaves 
   ]);
   expect(plan.ahead).toEqual([]);
   expect(titles(plan.tomorrowEvents)).toEqual(["Offsite", "Press briefing"]);
+});
+
+test("a cancelled event is never next, and stays in the rest of today", () => {
+  const calledOff = THURSDAY.map((event) =>
+    event.title === "Spring launch review"
+      ? { ...event, cancelled: true }
+      : event,
+  );
+  const plan = planAt(calledOff, at("2026-11-05", "10:35"));
+  expect(plan.next.kind !== "none" && plan.next.event.title).toBe(
+    "1:1 with Tom",
+  );
+  expect(titles(plan.ahead)).toEqual(["Spring launch review", "Invoice run"]);
 });
 
 test("with nothing left today or tomorrow, there is no next event", () => {
@@ -184,6 +199,7 @@ test("a hidden calendar's events are left out of Today", () => {
     people: [],
     answer: null,
     cancelled: false,
+    conference: null,
   });
   const events = shownEvents(
     {
@@ -258,6 +274,7 @@ test("on the night Los Angeles turns its clocks back, Tomorrow and the time unti
         end: start + minutes * MINUTE,
         timeZone: LOS_ANGELES,
       },
+      cancelled: false,
     };
   };
   const events = [

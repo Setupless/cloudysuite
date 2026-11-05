@@ -1,7 +1,12 @@
 import type { DeliveredPart, EmailPlan } from "../invitations";
 import { repeatOf } from "../repeat";
 import { addDays } from "../time";
-import type { EmailAddress, EventTime, RepeatFrequency } from "../types";
+import type {
+  EmailAddress,
+  EventTime,
+  GivenAnswer,
+  RepeatFrequency,
+} from "../types";
 import { type IcsAttendee, type IcsPerson, invitationIcs } from "./ics";
 
 // One invitation email as raw MIME, laid out the way Google Calendar's are: text, HTML,
@@ -103,6 +108,13 @@ function repeatLine(series: DeliveredPart): string | null {
 
 const nameOf = (person: IcsPerson) => person.name || person.address;
 
+// The words Google Calendar and Outlook use, so a reply reads the way people expect.
+const REPLY_WORDS: Record<GivenAnswer, { subject: string; said: string }> = {
+  yes: { subject: "Accepted", said: "accepted" },
+  maybe: { subject: "Tentatively accepted", said: "tentatively accepted" },
+  no: { subject: "Declined", said: "declined" },
+};
+
 type Words = {
   subject: string;
   opening: string;
@@ -116,7 +128,7 @@ function wordsOf(email: InvitationEmail): Words {
   const series =
     plan.method === "request"
       ? plan.parts[0]!
-      : plan.why === "dateCancelled"
+      : plan.method === "cancel" && plan.why === "dateCancelled"
         ? plan.date
         : plan.series;
   const title = series.title;
@@ -157,6 +169,16 @@ function wordsOf(email: InvitationEmail): Words {
       ],
       notes: series.notes,
       closing: "Answer Yes, Maybe, or No from your calendar or mail app.",
+    };
+  }
+  if (plan.method === "reply") {
+    const { subject, said } = REPLY_WORDS[plan.answer];
+    return {
+      subject: `${subject}: ${title}, ${when}`,
+      opening: `${nameOf(from)} ${said} ${title}.`,
+      details,
+      notes: "",
+      closing: null,
     };
   }
   return {
@@ -278,14 +300,18 @@ export function invitationMime(email: InvitationEmail): {
   raw: string;
 } {
   const words = wordsOf(email);
-  const method = email.plan.method === "request" ? "REQUEST" : "CANCEL";
+  const { plan } = email;
+  const method = plan.method.toUpperCase();
+  // A reply goes from someone invited to the organiser.
   const ics = invitationIcs({
-    plan: email.plan,
-    organiser: email.from,
+    plan,
+    organiser: plan.method === "reply" ? email.to : email.from,
     attendees:
-      email.plan.method === "request"
+      plan.method === "request"
         ? email.attendees
-        : [{ ...email.to, answer: "needsAnswer" }],
+        : plan.method === "reply"
+          ? [{ ...email.from, answer: plan.answer }]
+          : [{ ...email.to, answer: "needsAnswer" }],
     stamp: email.now,
   });
   const body = multipart("mixed", `mixed-${email.id}`, [

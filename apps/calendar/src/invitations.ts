@@ -2,9 +2,11 @@ import type { CalendarId, UserId } from "@cloudysuite/access";
 import type {
   Answer,
   Attendee,
+  EmailAddress,
   EventDetails,
   EventTime,
   EventUid,
+  GivenAnswer,
   OccurrenceId,
   PersonKey,
 } from "./types";
@@ -16,7 +18,44 @@ export type DeliveredPart = EventDetails & {
   rule: string | null;
   exdates: OccurrenceId[];
   sequence: number;
+  conference: string | null;
 };
+
+// One part of an invitation emailed from outside. A changed date can say it's off.
+export type OutsidePart = DeliveredPart & { cancelled: boolean };
+
+export type OutsidePerson = { email: EmailAddress; name: string | null };
+
+// An invitation, an update, or a cancellation from an organiser outside, for one
+// person's personal calendar. Everything in it came from the email.
+export type OutsideInvitation = {
+  method: "request" | "cancel";
+  // Whose personal calendar it is, whose answer the copy holds.
+  to: UserId;
+  uid: EventUid;
+  organiser: OutsidePerson;
+  // Null when the email changes or calls off only some dates of a repeat.
+  series: OutsidePart | null;
+  changes: OutsidePart[];
+  // As the email lists them, with that person as a colleague.
+  people: Attendee[];
+  // The From address is the organiser's, and Mail's sender check proves it. Only then
+  // may the email change a copy already here.
+  fromOrganiser: boolean;
+};
+
+// Someone outside answering an invitation that went from this organiser's address. The
+// From address was theirs, and Mail's sender check proved it.
+export type OutsideReply = {
+  organiser: UserId;
+  uid: EventUid;
+  attendee: OutsidePerson;
+  answer: GivenAnswer;
+  // When they wrote it, since two answers to one version carry the same sequence.
+  stamp: number | null;
+};
+
+export type OutsideResult = "added" | "updated" | "unchanged" | "refused";
 
 // What one Calendar object hands another person's calendar. It's read from the event as
 // it is when it goes, so a retry carries the latest version, never an older one.
@@ -76,8 +115,9 @@ export type QueuedEmail = {
   sent: EmailMethod | null;
 };
 
-// iTIP's REQUEST, for an invitation or an update, and CANCEL.
-export type EmailMethod = "request" | "cancel";
+// iTIP's REQUEST, for an invitation or an update, CANCEL, and REPLY, for an answer to an
+// organiser outside.
+export type EmailMethod = "request" | "cancel" | "reply";
 
 // One date as they last saw it, at the series' sequence for the change that called it off.
 export type CancelledDate = DeliveredPart & { recurrenceId: OccurrenceId };
@@ -87,9 +127,11 @@ export type CancelledDate = DeliveredPart & { recurrenceId: OccurrenceId };
 export const heldAfter = (
   plan: Exclude<EmailPlan, { method: "none" }>,
 ): EmailMethod =>
-  plan.method === "cancel" && plan.why !== "dateCancelled"
-    ? "cancel"
-    : "request";
+  plan.method === "reply"
+    ? "reply"
+    : plan.method === "cancel" && plan.why !== "dateCancelled"
+      ? "cancel"
+      : "request";
 
 export type EmailPlanOrganiser = { userId: UserId; name: string | null };
 
@@ -128,14 +170,26 @@ export type EmailPlan =
       to: PersonKey;
       why: "dateCancelled";
     }
+  // An answer to an organiser outside, from the address of the person answering.
+  | {
+      method: "reply";
+      uid: EventUid;
+      by: UserId;
+      // As the invitation named them, or null when it didn't list them.
+      byName: string | null;
+      organiser: OutsidePerson;
+      series: DeliveredPart;
+      answer: GivenAnswer;
+    }
   // Nothing to say, as to someone taken off before anything reached them.
   | { method: "none" };
 
 // Where a copy lives in the calendar it's sent to. Anyone can import a file with any UID,
-// so two calendars can each send one with the same UID, and a copy is named by both. One
-// calendar's copy can then never take the place of another's.
+// and anyone who was sent an invitation can send another with its UID, so two calendars
+// or two organisers can each send one with the same UID. A copy is named by where it
+// came from and the UID together, so one's copy can never take the place of another's.
 export async function copyUidOf(
-  from: CalendarId,
+  from: CalendarId | EmailAddress,
   uid: EventUid,
 ): Promise<EventUid> {
   const digest = await crypto.subtle.digest(

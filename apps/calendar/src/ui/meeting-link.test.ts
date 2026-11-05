@@ -1,13 +1,20 @@
 import { expect, test } from "bun:test";
-import { type MeetingService, meetingLink } from "./meeting-link";
+import {
+  type MeetingService,
+  type MeetingSources,
+  meetingLink,
+} from "./meeting-link";
 
 const MEET = "https://meet.google.com/abc-defg-hij";
 const TEAMS =
   "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0";
 const ZOOM = "https://us04web.zoom.us/j/71695031152?pwd=T0g1d0JDZ";
 
+const linkIn = (sources: MeetingSources) =>
+  meetingLink({ ...sources, cancelled: false });
+
 const inPlace = (location: string) =>
-  meetingLink({ conference: null, location, notes: "" });
+  linkIn({ conference: null, location, notes: "" });
 
 const joins: [string, MeetingService, string][] = [
   [MEET, "Google Meet", MEET],
@@ -36,7 +43,7 @@ const joins: [string, MeetingService, string][] = [
 ];
 
 test.each(joins)("%s joins %s", (link, service, url) => {
-  expect(inPlace(link)).toEqual({ service, url });
+  expect(inPlace(link)).toEqual({ service, url, from: "location" });
 });
 
 const noJoin: [string, string][] = [
@@ -68,9 +75,9 @@ const noJoin: [string, string][] = [
 
 test.each(noJoin)("%s gets no Join button", (_, link) => {
   expect(inPlace(link)).toBeNull();
-  expect(meetingLink({ conference: link, location: "", notes: "" })).toBeNull();
+  expect(linkIn({ conference: link, location: "", notes: "" })).toBeNull();
   expect(
-    meetingLink({ conference: null, location: "", notes: `Join ${link}` }),
+    linkIn({ conference: null, location: "", notes: `Join ${link}` }),
   ).toBeNull();
 });
 
@@ -88,14 +95,14 @@ test.each(realHost)("%s still joins Meet at its real host", (_, link) => {
     { conference: null, location: link, notes: "" },
     { conference: null, location: "", notes: `Join ${link}` },
   ]) {
-    const found = meetingLink(sources);
+    const found = linkIn(sources);
     expect(found?.service).toBe("Google Meet");
     expect(new URL(found!.url).host).toBe("meet.google.com");
   }
 });
 
 test("a Markdown link in the notes opens the Meet address it shows, not the hidden one", () => {
-  const found = meetingLink({
+  const found = linkIn({
     conference: null,
     location: "",
     notes: "[https://meet.google.com/x](https://evil.com)",
@@ -108,34 +115,49 @@ test("a link inside text is found without the punctuation after it", () => {
   expect(inPlace(`Online (${MEET}).`)).toEqual({
     service: "Google Meet",
     url: MEET,
+    from: "location",
   });
 });
 
 test("the conference field comes first, then the place, then the notes", () => {
   const all = { conference: MEET, location: ZOOM, notes: TEAMS };
-  expect(meetingLink(all)?.service).toBe("Google Meet");
-  expect(meetingLink({ ...all, conference: null })?.service).toBe("Zoom");
-  expect(
-    meetingLink({ ...all, conference: null, location: "Room 4" })?.service,
-  ).toBe("Microsoft Teams");
+  expect(linkIn(all)).toEqual({
+    service: "Google Meet",
+    url: MEET,
+    from: "conference",
+  });
+  expect(linkIn({ ...all, conference: null })?.from).toBe("location");
+  expect(linkIn({ ...all, conference: null, location: "Room 4" })).toEqual({
+    service: "Microsoft Teams",
+    url: TEAMS,
+    from: "notes",
+  });
 });
 
 test("a source with no meeting link passes to the next one", () => {
   expect(
-    meetingLink({
+    linkIn({
       conference: "https://meet.google.com.evil.com/abc",
       location: "Room 4 https://maps.example.org/room-4",
       notes: `Agenda https://docs.google.com/d/1, then join ${TEAMS}`,
     }),
-  ).toEqual({ service: "Microsoft Teams", url: TEAMS });
+  ).toEqual({ service: "Microsoft Teams", url: TEAMS, from: "notes" });
+});
+
+test("a cancelled event or date offers no Join", () => {
+  const all = { conference: MEET, location: ZOOM, notes: TEAMS };
+  expect(meetingLink({ ...all, cancelled: true })).toBeNull();
+  expect(meetingLink({ ...all, cancelled: false })?.service).toBe(
+    "Google Meet",
+  );
 });
 
 test("the first meeting link in a field wins", () => {
   expect(
-    meetingLink({
+    linkIn({
       conference: null,
       location: "",
       notes: `Join ${ZOOM} or dial in. Backup: ${MEET}`,
     }),
-  ).toEqual({ service: "Zoom", url: ZOOM });
+  ).toEqual({ service: "Zoom", url: ZOOM, from: "notes" });
 });
