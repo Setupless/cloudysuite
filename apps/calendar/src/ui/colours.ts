@@ -15,11 +15,21 @@ const BORDERS = [
   "border-avatar-5",
   "border-avatar-6",
 ];
+const TINTS = [
+  "bg-event-1",
+  "bg-event-2",
+  "bg-event-3",
+  "bg-event-4",
+  "bg-event-5",
+  "bg-event-6",
+];
 
 export const calendarFill = (colour: number) =>
   FILLS[(colour - 1) % FILLS.length];
 export const calendarBorder = (colour: number) =>
   BORDERS[(colour - 1) % BORDERS.length];
+export const calendarTint = (colour: number) =>
+  TINTS[(colour - 1) % TINTS.length];
 
 // In the order of the avatar roles, so colour n is COLOUR_NAMES[n - 1].
 export const COLOUR_NAMES = [
