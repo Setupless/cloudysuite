@@ -9,12 +9,14 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { openCalendarAs, requireCalendarUser } from "./access";
+import { withOwnCopies } from "./across-calendars";
 import type { CalendarClient } from "./client";
 import {
   addToTeam,
   createTeam,
   deleteTeam,
   readAddable,
+  readInvitable,
   readKind,
   readMembers,
   readMyCalendars,
@@ -35,8 +37,10 @@ import {
 } from "./store";
 import {
   type CalendarEntry,
+  type CalendarOccurrence,
   type ChangeResult,
   EVENT_GONE_MESSAGE,
+  type EventDraft,
   type EventListing,
   type EventUid,
   IMPORT_NOT_CALENDAR_MESSAGE,
@@ -45,10 +49,12 @@ import {
   type ImportSummary,
   LAST_MANAGER_MESSAGE,
   MAX_OCCURRENCES,
+  MAX_PERSON_NAME_LENGTH,
   type Member,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
+  PEOPLE_FOR_ONE_DATE_MESSAGE,
   PERSONAL_CALENDAR_MESSAGE,
   type Person,
   READ_ONLY_MESSAGE,
@@ -56,12 +62,14 @@ import {
 } from "./types";
 import {
   parseAddMembersInput,
+  parseAnswerInput,
   parseCalendarInput,
   parseColourInput,
   parseEventChangeInput,
   parseEventRemovalInput,
   parseHiddenInput,
   parseImportInput,
+  parseInvitationsInput,
   parseMemberInput,
   parseMemberRoleInput,
   parseNewEventInput,
@@ -126,6 +134,10 @@ function answerChange(result: ChangeResult): void {
       throw refusal(403, READ_ONLY_MESSAGE);
     case "gone":
       throw refusal(404, EVENT_GONE_MESSAGE);
+    case "notInvitable":
+      throw refusal(404, NOT_A_PERSON_MESSAGE);
+    case "peopleForOneDate":
+      throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
   }
 }
 
@@ -256,9 +268,10 @@ export const listEvents = createServerFn({ method: "GET" })
         };
       }),
     );
-    const occurrences = listings
-      .flatMap((listing) => listing.occurrences)
-      .sort(inViewerOrder(data.timeZone));
+    const occurrences = withOwnCopies(
+      listings.flatMap((listing) => listing.occurrences),
+      "perDate",
+    ).sort(inViewerOrder(data.timeZone));
     return {
       occurrences: occurrences.slice(0, MAX_OCCURRENCES),
       complete:
@@ -267,21 +280,60 @@ export const listEvents = createServerFn({ method: "GET" })
     };
   });
 
+// Today shows these even when the personal calendar is hidden, so none is missed.
+export const listInvitations = createServerFn({ method: "GET" })
+  .validator(parseInvitationsInput)
+  .handler(async ({ data }): Promise<CalendarOccurrence[]> => {
+    const person = await me();
+    const [personal] = await readMyCalendars(env.DB, person);
+    if (!personal?.id) return [];
+    const calendarId = personal.id;
+    const calendar = await openCalendarAs(person.id, calendarId);
+    return (await calendar.invitations(data.timeZone)).map((occurrence) => ({
+      ...occurrence,
+      calendarId,
+    }));
+  });
+
+// Names come from the directory, never from the request.
+const invitableIn = (draft: EventDraft) => readInvitable(env.DB, draft.people);
+
+// Kept on every event the person makes, so it can't be a whole page long.
+const organiserName = (person: { name: string }) =>
+  person.name.slice(0, MAX_PERSON_NAME_LENGTH);
+
 export const createEvent = createServerFn({ method: "POST" })
   .validator(parseNewEventInput)
   .handler(async ({ data }): Promise<EventUid> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
-    const result = await calendar.create(person.name, data.draft);
-    if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
-    return result.uid;
+    const result = await calendar.create(
+      organiserName(person),
+      data.draft,
+      await invitableIn(data.draft),
+    );
+    switch (result.status) {
+      case "created":
+        return result.uid;
+      case "noAccess":
+        throw refusal(403, VIEW_ONLY_MESSAGE);
+      case "notInvitable":
+        throw refusal(404, NOT_A_PERSON_MESSAGE);
+    }
   });
 
 export const updateEvent = createServerFn({ method: "POST" })
   .validator(parseEventChangeInput)
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
-    answerChange(await calendar.update(data.target, data.scope, data.draft));
+    answerChange(
+      await calendar.update(
+        data.target,
+        data.scope,
+        data.draft,
+        await invitableIn(data.draft),
+      ),
+    );
   });
 
 export const deleteEvent = createServerFn({ method: "POST" })
@@ -310,11 +362,19 @@ export const importCalendarFile = createServerFn({ method: "POST" })
     const groups = groupForImport(reading.events);
     for (let first = 0; first < groups.length; first += IMPORT_BATCH) {
       const result = await calendar.importEvents(
-        person.name,
+        organiserName(person),
         groups.slice(first, first + IMPORT_BATCH),
       );
       if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
       addSummary(summary, result.summary);
     }
     return summary;
+  });
+
+export const answerInvitation = createServerFn({ method: "POST" })
+  .validator(parseAnswerInput)
+  .handler(async ({ data }): Promise<void> => {
+    const calendar = await openCalendarAs((await me()).id, data.calendarId);
+    const result = await calendar.answer(data.uid, data.answer);
+    if (result.status === "gone") throw refusal(404, EVENT_GONE_MESSAGE);
   });

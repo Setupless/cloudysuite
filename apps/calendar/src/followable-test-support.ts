@@ -4,7 +4,7 @@
 //   bun followable-test-support.ts fuzz <seed> <cases>
 import { applyMigrations } from "@cloudysuite/object-sql";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
-import type { UserId } from "@cloudysuite/access";
+import type { CalendarId, UserId } from "@cloudysuite/access";
 import { type FollowableRule, followableRule } from "./followable";
 import { MIGRATIONS } from "./migrations";
 import { readCalendarFile } from "./outside/ics";
@@ -16,7 +16,11 @@ import type { CivilDate, EventTime, TimeZone } from "./types";
 const SYDNEY = "Australia/Sydney" as TimeZone;
 const DAY = 86_400_000;
 const WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
-const MANAGER = { userId: "user-manager" as UserId, role: "manager" as const };
+const MANAGER = {
+  userId: "user-manager" as UserId,
+  role: "manager" as const,
+  calendarId: "1b3f4e30-ac2d-4f90-9e77-2c3d4e5f6071" as CalendarId,
+};
 
 const print = (value: unknown) => console.log(JSON.stringify(value));
 

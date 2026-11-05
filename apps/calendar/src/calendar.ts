@@ -1,7 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { SearchTerm } from "@cloudysuite/search";
+import { invitationReceiver } from "./client";
+import { findPersonalCalendar, makePersonalCalendar } from "./directory";
 import { findEvents } from "./event-search";
+import { listInvitations } from "./invitation-list";
+import type { AnswerNotice, Delivery, DeliveryResult } from "./invitations";
 import { MIGRATIONS } from "./migrations";
 import {
   type Actor,
@@ -10,6 +14,8 @@ import {
   type ImportResult,
 } from "./store";
 import type {
+  Answer,
+  AnswerResult,
   ChangeResult,
   ChangeScope,
   CreateResult,
@@ -18,9 +24,15 @@ import type {
   EventDraft,
   EventSearchResult,
   EventTarget,
+  EventUid,
+  Invitee,
+  Occurrence,
   RangeListing,
   TimeZone,
 } from "./types";
+
+const DELIVERIES_PER_WAKE_UP = 25;
+const ANSWERS_PER_WAKE_UP = 25;
 
 // One calendar's events. Every call that reads or changes them is told who is asking,
 // and refuses Can view a change, or anyone but a manager emptying it, in the same call
@@ -52,37 +64,79 @@ export class Calendar extends DurableObject<Env> {
     return findEvents(this.#db, actor, terms, timeZone, Date.now());
   }
 
-  createEvent(
+  invitations(actor: Actor, timeZone: TimeZone): Occurrence[] {
+    return listInvitations(this.#db, actor, timeZone, Date.now());
+  }
+
+  async createEvent(
     actor: Actor,
     organiserName: string,
     draft: EventDraft,
-  ): CreateResult {
-    return this.#store.create(actor, organiserName, draft, Date.now());
+    invitable: Invitee[],
+  ): Promise<CreateResult> {
+    const result = this.#store.create(
+      actor,
+      organiserName,
+      draft,
+      invitable,
+      Date.now(),
+    );
+    await this.#scheduleNextWakeUp();
+    return result;
   }
 
-  updateEvent(
+  async updateEvent(
     actor: Actor,
     target: EventTarget,
     scope: ChangeScope,
     draft: EventDraft,
-  ): ChangeResult {
-    return this.#store.update(actor, target, scope, draft, Date.now());
+    invitable: Invitee[],
+  ): Promise<ChangeResult> {
+    const result = this.#store.update(
+      actor,
+      target,
+      scope,
+      draft,
+      invitable,
+      Date.now(),
+    );
+    await this.#scheduleNextWakeUp();
+    return result;
   }
 
-  removeEvent(
+  async removeEvent(
     actor: Actor,
     target: EventTarget,
     scope: ChangeScope,
-  ): ChangeResult {
-    return this.#store.remove(actor, target, scope, Date.now());
+  ): Promise<ChangeResult> {
+    const result = this.#store.remove(actor, target, scope, Date.now());
+    await this.#scheduleNextWakeUp();
+    return result;
   }
 
-  importEvents(
+  async answerEvent(
+    actor: Actor,
+    uid: EventUid,
+    answer: Answer,
+  ): Promise<AnswerResult> {
+    const result = this.#store.answer(actor, uid, answer, Date.now());
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
+  async importEvents(
     actor: Actor,
     organiserName: string,
     groups: ImportGroup[],
-  ): ImportResult {
-    return this.#store.importEvents(actor, organiserName, groups, Date.now());
+  ): Promise<ImportResult> {
+    const result = this.#store.importEvents(
+      actor,
+      organiserName,
+      groups,
+      Date.now(),
+    );
+    await this.#scheduleNextWakeUp();
+    return result;
   }
 
   // Anyone on the calendar sees its events, so anyone on it may know how many there are.
@@ -90,7 +144,75 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.countEvents();
   }
 
-  erase(actor: Actor): EraseResult {
-    return this.#store.erase(actor);
+  async erase(actor: Actor): Promise<EraseResult> {
+    const result = this.#store.erase(actor, Date.now());
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
+  // Only another Calendar object calls these, through invitationReceiver. They write only
+  // a copy of an event organised on the calendar that sent it, or one invited person's
+  // answer, so there is nobody to check by then.
+  receiveInvitation(delivery: Delivery): DeliveryResult {
+    return this.#store.receiveInvitation(delivery, Date.now());
+  }
+
+  async receiveAnswer(notice: AnswerNotice): Promise<void> {
+    this.#store.receiveAnswer(notice, Date.now());
+    await this.#scheduleNextWakeUp();
+  }
+
+  // Call this before any other await, so it commits with the rows that need it.
+  #scheduleNextWakeUp(): Promise<void> {
+    const due = this.#store.nextWakeUpAt();
+    return due === null
+      ? this.ctx.storage.deleteAlarm()
+      : // The runtime refuses a time of 0.
+        this.ctx.storage.setAlarm(Math.max(due, 1));
+  }
+
+  override async alarm(): Promise<void> {
+    await this.#sendDeliveries();
+    await this.#sendAnswers();
+    await this.#scheduleNextWakeUp();
+  }
+
+  // Someone removed from the organisation has no personal calendar any more, so their
+  // delivery is dropped. The first invitation that reaches anyone else makes theirs.
+  async #sendDeliveries(): Promise<void> {
+    const due = this.#store.dueDeliveries(Date.now(), DELIVERIES_PER_WAKE_UP);
+    for (const queued of due) {
+      try {
+        const delivery = this.#store.deliveryFor(queued);
+        const calendarId =
+          delivery.kind === "event"
+            ? await makePersonalCalendar(this.env.DB, queued.userId)
+            : await findPersonalCalendar(this.env.DB, queued.userId);
+        if (calendarId && calendarId !== queued.calendarId) {
+          await invitationReceiver(this.env, calendarId).deliver(
+            this.#store.deliveryFor(queued),
+          );
+        }
+        this.#store.finishDelivery(queued);
+      } catch (error) {
+        console.error("Could not deliver an invitation. Trying again.", error);
+        this.#store.postponeDelivery(queued, Date.now());
+      }
+    }
+  }
+
+  async #sendAnswers(): Promise<void> {
+    for (const notice of this.#store.dueAnswers(
+      Date.now(),
+      ANSWERS_PER_WAKE_UP,
+    )) {
+      try {
+        await invitationReceiver(this.env, notice.calendarId).answer(notice);
+        this.#store.finishAnswer(notice);
+      } catch (error) {
+        console.error("Could not send an answer. Trying again.", error);
+        this.#store.postponeAnswer(notice, Date.now());
+      }
+    }
   }
 }

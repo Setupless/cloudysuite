@@ -3,9 +3,30 @@ import { askEach, type SearchTerm } from "@cloudysuite/search";
 import type { CalendarClient } from "./client";
 import { readMyCalendars } from "./directory";
 import { inSearchOrder } from "./event-search";
-import type { EventSearchAnswer, TimeZone } from "./types";
+import type { CalendarOccurrence, EventSearchAnswer, TimeZone } from "./types";
 
 const RESULTS_SHOWN = 100;
+
+// Someone invited to an event on a team calendar they also see would find it twice. They
+// see their own copy, with their answer. Schedule matches each date, and search, which
+// finds an event once, matches the event.
+export function withOwnCopies(
+  entries: readonly CalendarOccurrence[],
+  match: "perDate" | "perEvent",
+): CalendarOccurrence[] {
+  const keyOf = (calendarId: CalendarId, entry: CalendarOccurrence) =>
+    match === "perDate"
+      ? `${calendarId} ${entry.uid} ${entry.occurrenceId ?? ""}`
+      : `${calendarId} ${entry.uid}`;
+  const copies = new Set(
+    entries.flatMap((entry) =>
+      entry.organiser.kind === "colleague"
+        ? [keyOf(entry.organiser.calendarId, entry)]
+        : [],
+    ),
+  );
+  return entries.filter((entry) => !copies.has(keyOf(entry.calendarId, entry)));
+}
 
 export type OpenCalendar = (calendarId: CalendarId) => Promise<CalendarClient>;
 
@@ -31,9 +52,10 @@ export async function searchCalendars(
       })),
     };
   });
-  const sorted = answers
-    .flatMap((answer) => answer.occurrences)
-    .sort(inSearchOrder(zone, Date.now()));
+  const sorted = withOwnCopies(
+    answers.flatMap((answer) => answer.occurrences),
+    "perEvent",
+  ).sort(inSearchOrder(zone, Date.now()));
   return {
     status: "found",
     occurrences: sorted.slice(0, RESULTS_SHOWN),

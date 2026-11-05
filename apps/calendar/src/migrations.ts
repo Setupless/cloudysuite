@@ -78,4 +78,49 @@ export const MIGRATIONS: Migrations = [
       DELETE FROM event_search WHERE rowid = old.rowid;
     END`,
   ],
+  [
+    // Everyone invited to an event, once for all its dates. On a copy, reply is whose
+    // answer this calendar holds and what it is. The revision grows with each change to
+    // the list or an answer on it, so an older list never replaces a newer one.
+    `CREATE TABLE event_people (
+      uid TEXT PRIMARY KEY,
+      attendees TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      reply TEXT
+    ) WITHOUT ROWID`,
+    // On a copy, the organiser called this date, or the whole event, off. Adding a column
+    // keeps each row's rowid, which event_search follows.
+    `ALTER TABLE events ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0`,
+    // Dates removed from a copy here, or this date and every later one. The organiser's
+    // next change rewrites the copy, and these keep them out of it.
+    `CREATE TABLE removed_dates (
+      uid TEXT NOT NULL,
+      recurrence_id TEXT NOT NULL,
+      and_later INTEGER NOT NULL,
+      removed_at INTEGER NOT NULL,
+      PRIMARY KEY (uid, recurrence_id)
+    ) WITHOUT ROWID`,
+    // The organiser's side: this person's calendar needs the event as it is now. Written
+    // in the transaction that changes the event, and sent by the alarm.
+    `CREATE TABLE deliveries (
+      user_id TEXT NOT NULL,
+      uid TEXT NOT NULL,
+      calendar_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tries INTEGER NOT NULL,
+      try_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, uid)
+    ) WITHOUT ROWID`,
+    `CREATE INDEX deliveries_due ON deliveries(try_at)`,
+    // The invitee's side: the organiser's calendar needs this answer.
+    `CREATE TABLE answer_notices (
+      uid TEXT PRIMARY KEY,
+      calendar_id TEXT NOT NULL,
+      attendee TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      tries INTEGER NOT NULL,
+      try_at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+  ],
 ];

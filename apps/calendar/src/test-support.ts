@@ -11,6 +11,7 @@ import {
   createTestDatabase,
   testWorkerEnv,
 } from "../../../src/db/test-database";
+import type { Delivery } from "./invitations";
 import type {
   CivilDate,
   EventDraft,
@@ -50,6 +51,7 @@ export const draft = (time: EventTime, more: Partial<EventDraft> = {}) =>
     notes: "",
     time,
     repeat: null,
+    people: [],
     ...more,
   }) satisfies EventDraft;
 
@@ -59,13 +61,38 @@ export async function createCalendarTest() {
   const { sqlite: directory, d1 } = createTestDatabase();
   const objects = new Map<
     string,
-    { sqlite: Database; object: InstanceType<typeof Calendar> }
+    {
+      sqlite: Database;
+      object: InstanceType<typeof Calendar>;
+      alarm: number | null;
+    }
   >();
+  // Calendars that another calendar can't reach, as if the call between them failed.
+  const unreachable = new Set<string>();
+  // Every invitation one object handed another, as it crossed between them.
+  const delivered: { to: string; delivery: Delivery }[] = [];
   const env = {
     DB: d1,
     CALENDAR: {
       idFromName: (name: string) => name,
-      get: (name: string) => instanceOf(name).object,
+      get: (name: string) =>
+        new Proxy(instanceOf(name).object, {
+          get(target, property) {
+            const value = Reflect.get(target, property, target);
+            if (typeof value !== "function") return value;
+            if (
+              unreachable.has(name) &&
+              (property === "receiveInvitation" || property === "receiveAnswer")
+            ) {
+              return () => Promise.reject(new Error("Calendar unreachable"));
+            }
+            if (property !== "receiveInvitation") return value.bind(target);
+            return (delivery: Delivery) => {
+              delivered.push({ to: name, delivery: structuredClone(delivery) });
+              return value.call(target, structuredClone(delivery));
+            };
+          },
+        }),
     },
   } as unknown as Env;
 
@@ -73,18 +100,42 @@ export async function createCalendarTest() {
     const existing = objects.get(name);
     if (existing) return existing;
     const { db, sqlite } = createSqlDriver();
+    const instance = { sqlite, alarm: null as number | null } as {
+      sqlite: Database;
+      object: InstanceType<typeof Calendar>;
+      alarm: number | null;
+    };
     const ctx = {
       storage: {
         sql: { exec: db.exec },
         transactionSync: db.transaction,
+        setAlarm: async (at: number) => {
+          if (at <= 0) throw new Error("setAlarm() needs a time above 0");
+          instance.alarm = at;
+        },
+        deleteAlarm: async () => {
+          instance.alarm = null;
+        },
       },
     };
-    const instance = {
-      sqlite,
-      object: new Calendar(ctx as unknown as DurableObjectState, env),
-    };
+    instance.object = new Calendar(ctx as unknown as DurableObjectState, env);
     objects.set(name, instance);
     return instance;
+  }
+
+  // Runs every alarm that is due, in every calendar, until none is, as the runtime would.
+  async function settle() {
+    for (let round = 0; round < 20; round++) {
+      const due = [...objects.values()].filter(
+        (instance) => instance.alarm !== null && instance.alarm <= Date.now(),
+      );
+      if (due.length === 0) return;
+      for (const instance of due) {
+        instance.alarm = null;
+        await instance.object.alarm();
+      }
+    }
+    throw new Error("the alarms never settled");
   }
 
   for (const [id, name] of [
@@ -151,6 +202,13 @@ export async function createCalendarTest() {
     join,
     as,
     arrive,
+    settle,
+    unreachable,
+    delivered,
+    // Hands a delivery to a calendar again, as a retry or a late copy would.
+    deliverAgain: (to: string, delivery: Delivery) =>
+      instanceOf(to).object.receiveInvitation(structuredClone(delivery)),
+    alarmOf: (calendarId: CalendarId) => instanceOf(calendarId).alarm,
     sqlite: (calendarId: CalendarId = TEAM) => instanceOf(calendarId).sqlite,
   };
 }

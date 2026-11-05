@@ -6,9 +6,12 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { SearchTerm } from "@cloudysuite/search";
+import type { AnswerNotice, Delivery, DeliveryResult } from "./invitations";
 import type { Actor, ImportGroup, ImportResult } from "./store";
 import { calendarStub } from "./stub";
 import type {
+  Answer,
+  AnswerResult,
   ChangeResult,
   ChangeScope,
   CreateResult,
@@ -17,6 +20,9 @@ import type {
   EventDraft,
   EventSearchResult,
   EventTarget,
+  EventUid,
+  Invitee,
+  Occurrence,
   RangeListing,
   TimeZone,
 } from "./types";
@@ -26,17 +32,25 @@ export type CalendarClient = {
   role: CalendarRole;
   listRange(range: DayRange): Promise<RangeListing>;
   search(terms: SearchTerm[], timeZone: TimeZone): Promise<EventSearchResult>;
-  create(organiserName: string, draft: EventDraft): Promise<CreateResult>;
+  invitations(timeZone: TimeZone): Promise<Occurrence[]>;
+  // `invitable` is who the directory says can be invited now, out of the draft's people.
+  create(
+    organiserName: string,
+    draft: EventDraft,
+    invitable: Invitee[],
+  ): Promise<CreateResult>;
   update(
     target: EventTarget,
     scope: ChangeScope,
     draft: EventDraft,
+    invitable: Invitee[],
   ): Promise<ChangeResult>;
   remove(target: EventTarget, scope: ChangeScope): Promise<ChangeResult>;
   importEvents(
     organiserName: string,
     groups: ImportGroup[],
   ): Promise<ImportResult>;
+  answer(uid: EventUid, answer: Answer): Promise<AnswerResult>;
   countEvents(): Promise<number>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
@@ -47,7 +61,11 @@ export type CalendarClient = {
 // who is asking.
 export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
   const stub = calendarStub(env, grant.calendarId);
-  const actor: Actor = { userId: grant.userId, role: grant.role };
+  const actor: Actor = {
+    userId: grant.userId,
+    role: grant.role,
+    calendarId: grant.calendarId,
+  };
   return {
     calendarId: grant.calendarId,
     role: grant.role,
@@ -55,14 +73,29 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.listRange(actor, range)) as RangeListing,
     search: async (terms, timeZone) =>
       (await stub.searchEvents(actor, terms, timeZone)) as EventSearchResult,
-    create: async (organiserName, draft) =>
-      (await stub.createEvent(actor, organiserName, draft)) as CreateResult,
-    update: async (target, scope, draft) =>
-      (await stub.updateEvent(actor, target, scope, draft)) as ChangeResult,
+    invitations: async (timeZone) =>
+      (await stub.invitations(actor, timeZone)) as Occurrence[],
+    create: async (organiserName, draft, invitable) =>
+      (await stub.createEvent(
+        actor,
+        organiserName,
+        draft,
+        invitable,
+      )) as CreateResult,
+    update: async (target, scope, draft, invitable) =>
+      (await stub.updateEvent(
+        actor,
+        target,
+        scope,
+        draft,
+        invitable,
+      )) as ChangeResult,
     remove: async (target, scope) =>
       (await stub.removeEvent(actor, target, scope)) as ChangeResult,
     importEvents: async (organiserName, groups) =>
       (await stub.importEvents(actor, organiserName, groups)) as ImportResult,
+    answer: async (uid, answer) =>
+      (await stub.answerEvent(actor, uid, answer)) as AnswerResult,
     countEvents: () => stub.countEvents(actor),
     erase: async () => (await stub.erase(actor)) as EraseResult,
   };
@@ -77,4 +110,19 @@ export async function openCalendarAsPerson(
 ): Promise<CalendarClient | null> {
   const access = await checkCalendarAccess(env.DB, userId, calendarId);
   return access.allowed ? openCalendar(env, access.grant) : null;
+}
+
+// For one Calendar object to hand another an invitation copy or an answer. It grants no
+// person anything, and can't write an event of that calendar's own, only a copy of one
+// organised on the calendar that sends it. boundaries.test.ts allows only the Calendar
+// object to call it, so no server function can.
+export function invitationReceiver(env: Env, calendarId: CalendarId) {
+  const stub = calendarStub(env, calendarId);
+  return {
+    deliver: async (delivery: Delivery) =>
+      (await stub.receiveInvitation(delivery)) as DeliveryResult,
+    answer: async (notice: AnswerNotice) => {
+      await stub.receiveAnswer(notice);
+    },
+  };
 }

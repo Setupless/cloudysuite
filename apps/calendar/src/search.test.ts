@@ -74,6 +74,7 @@ async function add(
   const result = await client.create(
     "Alice Stone",
     draft(time, { title, ...more }),
+    [],
   );
   if (result.status !== "created") throw new Error(result.status);
   return result.uid;
@@ -253,6 +254,7 @@ test("a changed date is found by its own details, and the series skips it", asyn
       { uid, occurrenceId: thisWeek },
       "this",
       draft(at("2026-11-05", "15:00"), { title: "Standup with guests" }),
+      [],
     ),
   ).toEqual({ status: "done" });
 
@@ -301,6 +303,7 @@ test("an edit shows at once: the old words stop matching and the new ones start"
         location: "Harbour room",
         notes: "Agenda attached",
       }),
+      [],
     ),
   ).toEqual({ status: "done" });
   expect(await titles("budget")).toEqual([]);
@@ -377,7 +380,7 @@ test("events from before search existed are found, and stay in step afterwards",
   });
   applyMigrations(db, MIGRATIONS);
 
-  const actor = { userId: ALICE, role: "manager" as const };
+  const actor = { userId: ALICE, role: "manager" as const, calendarId: TEAM };
   const found = (text: string) =>
     findEvents(db, actor, termsOf(text), SYDNEY, NOW).occurrences;
   const titles = (text: string) =>

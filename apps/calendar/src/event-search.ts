@@ -4,8 +4,11 @@ import { type Budget, datesOf } from "./repeat";
 import {
   type Actor,
   type EventRow,
+  isRemovedHere,
   occurrenceOf,
   parseRow,
+  readPeople,
+  readRemovals,
   STEPS_PER_CALL,
   type StoredEvent,
 } from "./store";
@@ -20,7 +23,7 @@ import type {
 
 const EVENTS_PER_CALENDAR = 50;
 
-type Found = {
+export type Found = {
   event: StoredEvent;
   occurrenceId: OccurrenceId | null;
   time: EventTime;
@@ -35,7 +38,7 @@ const boundsOf = (time: EventTime, zone: TimeZone) =>
       }
     : time;
 
-const stillToCome = (time: EventTime, zone: TimeZone, now: number) =>
+export const stillToCome = (time: EventTime, zone: TimeZone, now: number) =>
   boundsOf(time, zone).end > now;
 
 // Events still to come first, soonest first, then past ones, newest first. One that has
@@ -55,23 +58,23 @@ export function inSearchOrder(zone: TimeZone, now: number) {
 
 // The series' first date still to come, or else its last date. A series that outruns the
 // budget shows the last date reached, and the answer says it is incomplete.
-function seriesDate(
+export function seriesDate(
   series: StoredEvent & { rule: string },
-  skipped: ReadonlySet<string>,
+  skipped: (id: OccurrenceId) => boolean,
   zone: TimeZone,
   now: number,
   budget: Budget,
 ): Found | null {
   let last: Found | null = null;
   for (const date of datesOf(series.rule, series.time, budget)) {
-    if (skipped.has(date.id)) continue;
+    if (skipped(date.id)) continue;
     last = { event: series, occurrenceId: date.id, time: date.time };
     if (stillToCome(date.time, zone, now)) break;
   }
   return last;
 }
 
-function shownOf(
+export function shownOf(
   found: readonly Found[],
   zone: TimeZone,
   now: number,
@@ -135,6 +138,8 @@ export function findEvents(
     else groups.set(row.uid, [row]);
   }
 
+  const people = readPeople(db, kept);
+  const removals = readRemovals(db, kept);
   const budget: Budget = { steps: STEPS_PER_CALL };
   const occurrences = kept.flatMap((uid) => {
     const rows = groups.get(uid) ?? [];
@@ -157,9 +162,10 @@ export function findEvents(
         ...series.exdates,
         ...changes.map((row) => row.recurrence_id as string),
       ]);
+      const removal = removals.get(uid);
       const date = seriesDate(
         { ...series, rule: series.rule },
-        skipped,
+        (id) => skipped.has(id) || isRemovedHere(removal, id),
         zone,
         now,
         budget,
@@ -175,6 +181,7 @@ export function findEvents(
             shown.event,
             shown.occurrenceId,
             shown.time,
+            people.get(uid),
           ),
         ]
       : [];

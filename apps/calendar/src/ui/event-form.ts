@@ -1,4 +1,4 @@
-import { levelOfRole } from "@cloudysuite/access";
+import { levelOfRole, type UserId } from "@cloudysuite/access";
 import {
   addDays,
   dateOfWall,
@@ -51,7 +51,11 @@ export type EventForm = {
   notes: string;
   // The event's own time zone, which a repeat keeps to. A new event takes the device's.
   timeZone: TimeZone;
+  // Who's invited, in the order they were added.
+  people: Guest[];
 };
+
+export type Guest = { userId: UserId; name: string };
 
 export type FormField = keyof EventForm;
 
@@ -131,6 +135,7 @@ export function newForm(start: FormStart, zone: TimeZone): EventForm {
     location: "",
     notes: "",
     timeZone: zone,
+    people: [],
   };
 }
 
@@ -153,6 +158,7 @@ export function formOf(event: Occurrence, zone: TimeZone): EventForm {
     ...repeatFields(event.repeat),
     location: event.location,
     notes: event.notes,
+    people: event.people.map(({ userId, name }) => ({ userId, name })),
   };
   if (time.kind === "allDay") {
     return {
@@ -285,6 +291,7 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
       notes: form.notes,
       time: timed.time,
       repeat: repeated.repeat,
+      people: form.people.map((guest) => guest.userId),
     },
   };
 }
@@ -292,14 +299,21 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
 const sameRepeat = (a: Occurrence["repeat"], b: Repeat | null) =>
   JSON.stringify(repeatFields(a)) === JSON.stringify(repeatFields(b));
 
+const samePeople = (event: Occurrence, draft: EventDraft) =>
+  event.people.length === draft.people.length &&
+  event.people.every((person) => draft.people.includes(person.userId));
+
 // Null when there is nothing to ask, because the event doesn't repeat. "Only this one"
-// leaves the repeat as it was, so it isn't offered when the repeat changed.
+// leaves the repeat and the people as they were, so it isn't offered when either changed.
 export function scopesFor(
   event: Occurrence,
   draft: EventDraft | null,
 ): ChangeScope[] | null {
   if (event.occurrenceId === null) return null;
-  if (draft && !sameRepeat(event.repeat, draft.repeat)) {
+  if (
+    draft &&
+    (!sameRepeat(event.repeat, draft.repeat) || !samePeople(event, draft))
+  ) {
     return ["thisAndLater", "all"];
   }
   return ["this", "thisAndLater", "all"];
