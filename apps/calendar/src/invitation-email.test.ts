@@ -839,6 +839,31 @@ test("a colleague with no mailbox gets their copy and no email", async () => {
   expect(objects.alarmOf(TEAM)).toBeNull();
 });
 
+test("an event takes a hundred colleagues besides its organiser, and a team takes a hundred at once", async () => {
+  const many = Array.from({ length: 100 }, (_, index) => {
+    const id = `person-${index}` as UserId;
+    kit.sqlite.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
+      id,
+      `Person ${index}`,
+      `person${index}@example.com`,
+    ]);
+    return id;
+  });
+  const uid = await invite(many);
+  const shown = await organisersView();
+  expect(shown.organiser).toMatchObject({ userId: people.manager });
+  expect(shown.people).toHaveLength(100);
+  await change(uid, { title: "Planning, moved", people: many });
+  expect((await organisersView()).people).toHaveLength(100);
+
+  await as(people.manager).addMembers({
+    data: { calendarId: TEAM, people: many, role: "viewer" },
+  });
+  expect(
+    await as(people.manager).getMembers({ data: { calendarId: TEAM } }),
+  ).toHaveLength(103);
+});
+
 test("deleting a team calendar sends everyone invited one cancellation", async () => {
   const uid = await invite([people.colleague, outside(OUTSIDE)]);
   await as(people.manager).deleteTeamCalendar({ data: { calendarId: TEAM } });

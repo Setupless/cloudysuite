@@ -1,6 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
-import { ensurePersonalCalendar } from "@cloudysuite/access";
+import { ensurePersonalCalendar, type UserId } from "@cloudysuite/access";
 import {
+  readAddable,
+  readInvitable,
   readMyCalendars,
   removeMember,
   setHidden,
@@ -76,4 +78,27 @@ test("a team calendar always keeps a manager", async () => {
   kit.join(BOB, "manager");
   expect(await removeMember(kit.d1, TEAM, ALICE)).toBe("done");
   expect(await removeMember(kit.d1, TEAM, ALICE)).toBe("notOnIt");
+});
+
+// D1 binds at most 100 values in a statement, and a list from an event or a team can be
+// longer.
+test("more than a hundred people are found at once, leaving out anyone suspended", async () => {
+  const ids = Array.from({ length: 250 }, (_, index) => {
+    const id = `person-${index}` as UserId;
+    kit.directory.run("INSERT INTO user (id, name, email) VALUES (?, ?, ?)", [
+      id,
+      `Person ${index}`,
+      `person${index}@example.com`,
+    ]);
+    return id;
+  });
+  kit.directory.run("UPDATE user SET banned = 1 WHERE id = ?", [ids[200]!]);
+  const asked = [...ids, "user-gone" as UserId];
+
+  const invitable = await readInvitable(kit.d1, asked);
+  expect(invitable).toHaveLength(249);
+  expect(invitable).toContainEqual({ userId: ids[249]!, name: "Person 249" });
+  expect((await readAddable(kit.d1, asked)).toSorted()).toEqual(
+    ids.filter((id) => id !== ids[200]).toSorted(),
+  );
 });
