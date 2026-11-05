@@ -24,20 +24,24 @@ export function peopleChoices(
             (person.name.toLowerCase().includes(wanted) ||
               person.email.toLowerCase().includes(wanted)),
         );
-  // A colleague's own address finds the colleague instead.
-  const address = addresses && parseEmailAddress(wanted);
-  const offered =
-    address &&
-    !skip.has(address) &&
-    !colleagues.some((person) => person.email === address)
-      ? address
-      : null;
+  // A full address chooses only itself, or the colleague it belongs to, never someone
+  // whose address it's part of.
+  const typed = parseEmailAddress(wanted);
+  const owner =
+    typed && colleagues.find((person) => person.email.toLowerCase() === typed);
+  const address = addresses && typed;
+  const offered = address && !owner && !skip.has(address) ? address : null;
   const unfinished = addresses !== null && !address && wanted.includes("@");
-  const [first] = people;
-  const onEnter: Choice | null = first
-    ? { kind: "person", person: first }
-    : offered && !addresses?.refused
-      ? { kind: "address", address: offered }
-      : null;
+  const onEnter = ((): Choice | null => {
+    if (owner)
+      return skip.has(owner.id) ? null : { kind: "person", person: owner };
+    if (typed) {
+      return offered && !addresses?.refused
+        ? { kind: "address", address: offered }
+        : null;
+    }
+    const [first] = people;
+    return first ? { kind: "person", person: first } : null;
+  })();
   return { wanted, people, offered, unfinished, onEnter };
 }
