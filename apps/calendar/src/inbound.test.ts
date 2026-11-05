@@ -4,6 +4,7 @@ import {
   expect,
   mock,
   setSystemTime,
+  spyOn,
   test,
 } from "bun:test";
 import {
@@ -645,6 +646,53 @@ test("the mail is kept when Calendar can't be reached, and the invitation lands 
   setSystemTime(new Date(NOW));
   expect((await schedule()).map((one) => one.title)).toEqual([
     "Supplier review",
+  ]);
+});
+
+test("an invitation to more than a hundred people arrives, with all of them on People", async () => {
+  const guests = Array.from(
+    { length: 120 },
+    (_, index) =>
+      [`guest${index}@big.example.org`, "NEEDS-ACTION"] as [string, string],
+  );
+  await arrive(
+    google({
+      guests: [
+        [DANA, "ACCEPTED", "Dana Wright"],
+        ["boss@example.com", "NEEDS-ACTION"],
+        ...guests,
+      ],
+    }),
+  );
+  const [event] = await schedule();
+  expect(event?.title).toBe("Supplier review");
+  expect(event?.people).toHaveLength(121);
+});
+
+test("an invitation Calendar never takes is given up after its last try, and the log says why", async () => {
+  const personal = await ensurePersonalCalendar(kit.database, kit.admin);
+  calendars.unreachable.add(personal);
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await arrive(google());
+    for (let retry = 0; retry < 40; retry++) {
+      const at = mail.instanceOf(mailboxes.boss).alarm;
+      if (at === null) break;
+      setSystemTime(new Date(at));
+      await handOver();
+    }
+    const gaveUp = logged.mock.calls.filter(([message]) =>
+      String(message).includes("Gave up"),
+    );
+    expect(gaveUp).toHaveLength(1);
+    expect(String(gaveUp[0]?.[1])).toContain("Calendar unreachable");
+  } finally {
+    logged.mockRestore();
+    setSystemTime(new Date(NOW));
+  }
+  expect(mail.instanceOf(mailboxes.boss).alarm).toBeNull();
+  expect(folderOf(mailboxes.boss, "inbox")).toEqual([
+    "Invitation: Supplier review",
   ]);
 });
 
