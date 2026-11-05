@@ -350,14 +350,15 @@ test("someone not on a team calendar can't even see who's on it", async () => {
     people.viewer,
   ]);
   for (const attempt of [
-    as(people.viewer).getMembers({ data: { calendarId: TEAM } }),
-    as(people.viewer).countCalendarEvents({ data: { calendarId: TEAM } }),
-    as(people.viewer).leaveTeamCalendar({ data: { calendarId: TEAM } }),
-    as(people.viewer).renameTeamCalendar({
-      data: { calendarId: TEAM, name: "Mine now" },
-    }),
+    () => as(people.viewer).getMembers({ data: { calendarId: TEAM } }),
+    () => as(people.viewer).countCalendarEvents({ data: { calendarId: TEAM } }),
+    () => as(people.viewer).leaveTeamCalendar({ data: { calendarId: TEAM } }),
+    () =>
+      as(people.viewer).renameTeamCalendar({
+        data: { calendarId: TEAM, name: "Mine now" },
+      }),
   ]) {
-    expect(await refused(attempt)).toEqual({
+    expect(await refused(attempt())).toEqual({
       status: 403,
       message: NO_ACCESS_MESSAGE,
     });
