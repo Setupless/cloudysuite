@@ -315,6 +315,39 @@ test("an edit shows at once: the old words stop matching and the new ones start"
   ).toEqual([{ n: 0 }]);
 });
 
+test("when one calendar holds more matches than it answers with, the nearest stay", async () => {
+  await add("Sync last week", at("2026-10-29"));
+  for (let day = 1; day <= 52; day += 1) {
+    const start = NOW + day * 86_400_000;
+    await add(`Sync ${day}`, {
+      kind: "timed",
+      start,
+      end: start + 3_600_000,
+      timeZone: SYDNEY,
+    });
+  }
+  const { occurrences, more } = await alice.search(termsOf("sync"), SYDNEY);
+  expect(more).toBe(true);
+  expect(occurrences).toHaveLength(50);
+  expect(occurrences[0]?.title).toBe("Sync 1");
+  expect(occurrences.at(-1)?.title).toBe("Sync 50");
+});
+
+test("repeats that take too long to work out say the answer is incomplete", async () => {
+  for (const title of ["Ancient one", "Ancient two", "Ancient three"]) {
+    await add(title, at("1900-01-01"), {
+      repeat: { frequency: "daily", end: { kind: "never" } },
+    });
+  }
+  expect((await alice.search(termsOf("ancient"), SYDNEY)).complete).toBe(false);
+  const answer = await searchAll("ancient");
+  expect(answer.incomplete).toBe(true);
+
+  expect((await alice.search(termsOf("ancient one"), SYDNEY)).complete).toBe(
+    true,
+  );
+});
+
 test("events from before search existed are found, and stay in step afterwards", () => {
   const { db } = createSqlDriver();
   const insert = (uid: string, title: string, organiser: object) =>

@@ -24,6 +24,7 @@ export async function searchCalendars(
     const result = await (await open(calendarId)).search(terms, zone);
     return {
       more: result.more,
+      complete: result.complete,
       occurrences: result.occurrences.map((occurrence) => ({
         ...occurrence,
         calendarId,
@@ -38,6 +39,6 @@ export async function searchCalendars(
     occurrences: sorted.slice(0, RESULTS_SHOWN),
     more:
       answers.some((answer) => answer.more) || sorted.length > RESULTS_SHOWN,
-    incomplete,
+    incomplete: incomplete || answers.some((answer) => !answer.complete),
   };
 }

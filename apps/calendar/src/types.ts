@@ -132,6 +132,8 @@ export type EventSearchResult = {
   occurrences: Occurrence[];
   // Whether more matched than are here.
   more: boolean;
+  // False when the repeats took too long to work out, so some may be missing.
+  complete: boolean;
 };
 
 export type EventSearchAnswer =

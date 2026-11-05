@@ -54,7 +54,7 @@ export function inSearchOrder(zone: TimeZone, now: number) {
 }
 
 // The series' first date still to come, or else its last date. A series that outruns the
-// budget shows the last date reached.
+// budget shows the last date reached, and the answer says it is incomplete.
 function seriesDate(
   series: StoredEvent & { rule: string },
   skipped: ReadonlySet<string>,
@@ -94,18 +94,25 @@ export function findEvents(
   now: number,
 ): EventSearchResult {
   const expression = toPrefixMatch(terms);
-  if (expression === null) return { occurrences: [], more: false };
-  // When more match than one answer holds, the ones that end latest stay, so nothing
-  // still to come gives way to something long past.
+  if (expression === null) {
+    return { occurrences: [], more: false, complete: true };
+  }
+  // When more match than one answer holds, the ones kept are those the results would list
+  // first: still to come by earliest start, then past by latest end. The spans are loose
+  // and a repeat still going counts from its first date, so this only decides the cut.
   const uids = db
     .exec<{ uid: string }>(
-      `SELECT uid FROM events
+      `SELECT uid, max(coalesce(span_end, ?)) <= ? AS ended,
+         max(coalesce(span_end, ?)) AS latest, min(span_start) AS earliest
+       FROM events
        WHERE rowid IN (SELECT rowid FROM event_search WHERE event_search MATCH ?)
        GROUP BY uid
-       ORDER BY max(coalesce(span_end, ?)) DESC, uid
+       ORDER BY ended, CASE WHEN ended THEN -latest ELSE earliest END, uid
        LIMIT ?`,
-      expression,
       Number.MAX_SAFE_INTEGER,
+      now,
+      Number.MAX_SAFE_INTEGER,
+      expression,
       EVENTS_PER_CALENDAR + 1,
     )
     .toArray()
@@ -123,7 +130,9 @@ export function findEvents(
       JSON.stringify(kept),
     )
     .toArray()) {
-    groups.set(row.uid, [...(groups.get(row.uid) ?? []), row]);
+    const group = groups.get(row.uid);
+    if (group) group.push(row);
+    else groups.set(row.uid, [row]);
   }
 
   const budget: Budget = { steps: STEPS_PER_CALL };
@@ -172,5 +181,9 @@ export function findEvents(
   });
 
   occurrences.sort(inSearchOrder(zone, now));
-  return { occurrences, more: uids.length > EVENTS_PER_CALENDAR };
+  return {
+    occurrences,
+    more: uids.length > EVENTS_PER_CALENDAR,
+    complete: budget.steps >= 0,
+  };
 }

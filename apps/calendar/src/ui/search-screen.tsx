@@ -105,12 +105,13 @@ function Results({ text }: { text: string }) {
   const calendars = useQuery(calendarsQuery());
   const now = Date.now();
   const today = todayIn(zone, now);
+  const failure = query.error ?? (calendars.data ? null : calendars.error);
 
   if (!parsed.ok) return <Hint>{parsed.problem}</Hint>;
-  if (query.isError) {
+  if (failure) {
     return (
       <div className="px-4">
-        <Notice tone="danger">{query.error.message}</Notice>
+        <Notice tone="danger">{failure.message}</Notice>
       </div>
     );
   }
