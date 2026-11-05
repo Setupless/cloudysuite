@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { SearchTerm } from "@cloudysuite/search";
+import { isAppOff } from "../../../src/app-on";
 import { invitationReceiver } from "./client";
 import { findPersonalCalendar, makePersonalCalendar } from "./directory";
 import { findEvents } from "./event-search";
@@ -10,6 +11,7 @@ import {
   copyUidOf,
   type Delivery,
   type DeliveryResult,
+  retryAt,
 } from "./invitations";
 import { MIGRATIONS } from "./migrations";
 import {
@@ -177,10 +179,29 @@ export class Calendar extends DurableObject<Env> {
         this.ctx.storage.setAlarm(Math.max(due, 1));
   }
 
+  // With Calendar off nothing new happens, so copies and answers wait in their queues,
+  // untouched, and go once an admin turns it back on.
   override async alarm(): Promise<void> {
+    if (await this.#calendarOff()) {
+      await this.ctx.storage.setAlarm(retryAt(Date.now(), 0));
+      return;
+    }
     await this.#sendDeliveries();
     await this.#sendAnswers();
     await this.#scheduleNextWakeUp();
+  }
+
+  // A directory that can't say waits the same way, so nothing goes without an answer.
+  async #calendarOff(): Promise<boolean> {
+    try {
+      return await isAppOff(this.env.DB, "calendar");
+    } catch (error) {
+      console.error(
+        "Could not check that Calendar is on. Trying again.",
+        error,
+      );
+      return true;
+    }
   }
 
   // Someone removed from the organisation has no personal calendar any more, so their

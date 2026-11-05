@@ -992,6 +992,34 @@ test("while Calendar is off, invitations and answers wait, and go once it's back
   }
 });
 
+test("when the directory can't say whether Calendar is on, invitations wait, then go", async () => {
+  const objectsEnv = objects.env as unknown as Record<string, unknown>;
+  await as(people.manager).createEvent({
+    data: { calendarId: TEAM, draft: planning({ people: [people.outsider] }) },
+  });
+  objectsEnv.DB = {
+    prepare: () => {
+      throw new Error("D1 is down");
+    },
+  };
+  try {
+    await objects.settle();
+  } finally {
+    objectsEnv.DB = kit.database;
+  }
+  const next = objects.alarmOf(TEAM);
+  expect(next).toBeGreaterThan(Date.now());
+  try {
+    setSystemTime(new Date(next!));
+    await objects.settle();
+  } finally {
+    setSystemTime();
+  }
+  expect((await seen(people.outsider)).map((entry) => entry.title)).toEqual([
+    "Weekly planning",
+  ]);
+});
+
 test("someone whose calendar can't be reached is tried again every hour, and nobody else waits", async () => {
   const theirs = await as(people.outsider).ensureMyCalendar();
   objects.unreachable.add(theirs);
