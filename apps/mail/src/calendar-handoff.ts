@@ -14,7 +14,11 @@ import type { MessageId, NewMessage } from "./types";
 // message is safe, so nothing Calendar does can lose or hold up mail.
 
 const CALENDAR_TYPES = ["text/calendar", "application/ics"];
-const HANDOFFS_PER_WAKE_UP = 10;
+// Each hand-off waits on the directory and on calendars, so a run hands over a few and
+// starts none after its budget. The alarm comes straight back for the rest, and the
+// mailbox takes other mail in between.
+const HANDOFFS_PER_WAKE_UP = 3;
+const RUN_BUDGET_MS = 1_000;
 // Calendar's answer changes nothing twice, so trying again costs nothing. These tries
 // reach an hour apart after an hour, and cover about a day without Calendar.
 const MAX_TRIES = 30;
@@ -141,6 +145,7 @@ export async function runDueHandoffs(
   now: number,
 ): Promise<void> {
   for (const handoff of store.due(now)) {
+    if (Date.now() - now >= RUN_BUDGET_MS) return;
     try {
       const parts = await Promise.all(
         store.partKeys(handoff.messageId).map(async (key) => {

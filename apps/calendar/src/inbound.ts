@@ -27,6 +27,7 @@ import {
   type EmailAddress,
   type GivenAnswer,
   keyOfPerson,
+  MAX_EVENTS_PER_EMAIL,
   MAX_INVITATION_EVENTS,
   MAX_INVITATION_PART_BYTES,
   MAX_INVITATION_PARTS,
@@ -65,9 +66,37 @@ const ANSWERS: Record<InvitedPerson["answer"], Answer> = {
   needsAction: "needsAnswer",
 };
 
+type Taken<Method extends CalendarMethod> = {
+  method: Method;
+  group: EventGroup;
+};
+
+// Google sends the same file twice, as the invitation and as invite.ics, so the parts
+// are read together and each event counts once for each method.
+function eventsOf(parts: string[]): Taken<CalendarMethod>[] {
+  const byMethod = new Map<CalendarMethod, OutsideEvent[]>();
+  for (const text of new Set(parts)) {
+    const reading = readCalendarFile(text, UTC, LIMITS);
+    if (reading.status !== "read" || !reading.method) continue;
+    byMethod.set(reading.method, [
+      ...(byMethod.get(reading.method) ?? []),
+      ...reading.events,
+    ]);
+  }
+  return [...byMethod]
+    .flatMap(([method, events]) =>
+      groupByEvent(events).map((group) => ({ method, group })),
+    )
+    .slice(0, MAX_EVENTS_PER_EMAIL);
+}
+
+const isReply = (taken: Taken<CalendarMethod>): taken is Taken<"reply"> =>
+  taken.method === "reply";
+
 // The one way Mail reaches Calendar, from Mail's alarm. Mail stored the message before
 // this runs, so nothing here can lose or hold up mail. A throw asks Mail to try again
-// later, which changes nothing twice, because UID and sequence decide.
+// later, which changes nothing twice, because UID and sequence decide. The directory is
+// asked once for the whole email, whatever it holds.
 export async function receiveCalendarMail(
   env: Env,
   mail: CalendarMail,
@@ -76,20 +105,15 @@ export async function receiveCalendarMail(
   const person = await personOfMailbox(env.DB, mail.mailboxId);
   if (!person) return;
   const from = parseEmailAddress(mail.from);
-  for (const text of new Set(mail.parts)) {
-    const reading = readCalendarFile(text, UTC, LIMITS);
-    if (reading.status !== "read" || !reading.method) continue;
-    const { method, events } = reading;
-    if (method === "reply") {
-      if (from && mail.proved) await takeReplies(env, person, from, events);
-      continue;
-    }
-    for (const group of groupByEvent(events)) {
-      await takeInvitation(env, person, method, group, {
-        from,
-        proved: mail.proved,
-      });
-    }
+  const events = eventsOf(mail.parts);
+  await takeInvitations(
+    env,
+    person,
+    events.filter((one): one is Taken<"request" | "cancel"> => !isReply(one)),
+    { from, proved: mail.proved },
+  );
+  if (from && mail.proved) {
+    await takeReplies(env, person, from, events.filter(isReply));
   }
 }
 
@@ -134,40 +158,50 @@ function peopleOf(
   });
 }
 
-async function takeInvitation(
+async function takeInvitations(
   env: Env,
   person: UserId,
-  method: Exclude<CalendarMethod, "reply">,
-  group: EventGroup,
+  taken: Taken<"request" | "cancel">[],
   sender: { from: EmailAddress | null; proved: boolean },
 ): Promise<void> {
-  const shown = group.series ?? group.changes[0];
-  const organiser = shown?.organiser;
-  if (!shown || !organiser) return;
-  const colleagues = await colleaguesAt(env.DB, [
-    organiser.email,
-    ...shown.attendees.map((one) => one.email),
-  ]);
+  const shown = taken.flatMap(({ method, group }) => {
+    const event = group.series ?? group.changes[0];
+    const organiser = event?.organiser;
+    return event && organiser ? [{ method, group, event, organiser }] : [];
+  });
+  if (shown.length === 0) return;
+  const colleagues = await colleaguesAt(
+    env.DB,
+    shown.flatMap(({ event, organiser }) => [
+      organiser.email,
+      ...event.attendees.map((one) => one.email),
+    ]),
+  );
   // A colleague's invitation reaches the calendar straight from theirs, under a UID of
   // its own, and its email adds nothing beside it.
-  if (colleagues.has(organiser.email)) return;
+  const outside = shown.filter(
+    ({ organiser }) => !colleagues.has(organiser.email),
+  );
+  if (outside.length === 0) return;
   // The first invitation that reaches someone makes their calendar. Nothing else does.
-  const calendarId =
-    method === "request"
-      ? await makePersonalCalendar(env.DB, person)
-      : await findPersonalCalendar(env.DB, person);
+  const calendarId = outside.some(({ method }) => method === "request")
+    ? await makePersonalCalendar(env.DB, person)
+    : await findPersonalCalendar(env.DB, person);
   if (!calendarId) return;
-  const invitation: OutsideInvitation = {
-    method,
-    to: person,
-    uid: group.uid,
-    organiser,
-    series: group.series && partOf(group.series),
-    changes: group.changes.map(partOf),
-    people: peopleOf(shown.attendees, organiser.email, colleagues, person),
-    fromOrganiser: sender.proved && sender.from === organiser.email,
-  };
-  await mailReceiver(env, calendarId).invitation(invitation);
+  const receiver = mailReceiver(env, calendarId);
+  for (const { method, group, event, organiser } of outside) {
+    const invitation: OutsideInvitation = {
+      method,
+      to: person,
+      uid: group.uid,
+      organiser,
+      series: group.series && partOf(group.series),
+      changes: group.changes.map(partOf),
+      people: peopleOf(event.attendees, organiser.email, colleagues, person),
+      fromOrganiser: sender.proved && sender.from === organiser.email,
+    };
+    await receiver.invitation(invitation);
+  }
 }
 
 const GIVEN: Partial<Record<InvitedPerson["answer"], GivenAnswer>> = {
@@ -183,25 +217,30 @@ async function takeReplies(
   env: Env,
   organiser: UserId,
   from: EmailAddress,
-  events: OutsideEvent[],
+  taken: Taken<"reply">[],
 ): Promise<void> {
-  for (const event of events) {
-    const theirs = event.attendees.find((one) => one.email === from);
+  const replies = taken.flatMap(({ group }): OutsideReply[] => {
+    const theirs = group.series?.attendees.find((one) => one.email === from);
     const answer = theirs && GIVEN[theirs.answer];
-    if (event.recurrenceId !== null || !theirs || !answer) continue;
-    const reply: OutsideReply = {
-      organiser,
-      uid: event.uid,
-      attendee: { email: from, name: theirs.name },
-      stamp: event.stamp,
-      answer,
-    };
-    const personal = await findPersonalCalendar(env.DB, organiser);
-    const teams = await editableTeams(env.DB, organiser);
-    const rounds: CalendarId[][] = personal ? [[personal]] : [];
-    for (let first = 0; first < teams.length; first += CALENDARS_AT_ONCE) {
-      rounds.push(teams.slice(first, first + CALENDARS_AT_ONCE));
-    }
+    if (!group.series || !theirs || !answer) return [];
+    return [
+      {
+        organiser,
+        uid: group.uid,
+        attendee: { email: from, name: theirs.name },
+        stamp: group.series.stamp,
+        answer,
+      },
+    ];
+  });
+  if (replies.length === 0) return;
+  const personal = await findPersonalCalendar(env.DB, organiser);
+  const teams = await editableTeams(env.DB, organiser);
+  const rounds: CalendarId[][] = personal ? [[personal]] : [];
+  for (let first = 0; first < teams.length; first += CALENDARS_AT_ONCE) {
+    rounds.push(teams.slice(first, first + CALENDARS_AT_ONCE));
+  }
+  for (const reply of replies) {
     for (const round of rounds) {
       const found = await Promise.all(
         round.map((calendarId) => mailReceiver(env, calendarId).reply(reply)),

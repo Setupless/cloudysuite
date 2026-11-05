@@ -269,6 +269,9 @@ export const MAX_IMPORT_EVENTS = 10_000;
 export const MAX_INVITATION_PART_BYTES = 256 * 1024;
 export const MAX_INVITATION_PARTS = 3;
 export const MAX_INVITATION_EVENTS = 200;
+// Each event an email adds, changes, or answers costs a call to a calendar from Mail's
+// alarm. A real invitation is one, with its changed dates, so the rest are left.
+export const MAX_EVENTS_PER_EMAIL = 20;
 
 export const SKIP_REASONS = [
   "unreadable",
