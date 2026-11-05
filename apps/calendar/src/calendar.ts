@@ -217,8 +217,11 @@ export class Calendar extends DurableObject<Env> {
   // Only Mail's alarm calls these, through mailReceiver, once inbound.ts has checked the
   // mailbox, the sender, and that Calendar is on. The store decides what an email may
   // change, so there is nobody to check by then.
-  receiveOutsideInvitation(invitation: OutsideInvitation): OutsideResult {
-    return this.#store.receiveOutsideInvitation(invitation, Date.now());
+  async receiveOutsideInvitation(
+    invitation: OutsideInvitation,
+  ): Promise<OutsideResult> {
+    const uid = await copyUidOf(invitation.organiser.email, invitation.uid);
+    return this.#store.receiveOutsideInvitation(invitation, uid, Date.now());
   }
 
   async receiveOutsideReply(

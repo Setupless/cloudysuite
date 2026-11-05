@@ -1572,43 +1572,54 @@ export class EventStore {
     });
   }
 
-  // An invitation emailed from outside, under the UID it came with. Anyone can send a new
-  // one, which arrives unanswered. Only its organiser, with the proof Mail checked, can
-  // change or call off one held here, and a removed event or date stays removed.
+  // An invitation emailed from outside. `uid` is the copy's own here, from copyUidOf with
+  // the organiser's address. Anyone can send a new one, which arrives unanswered. Only its
+  // organiser, with the proof Mail checked, can change or call off one held here, and a
+  // removed event or date stays removed.
   receiveOutsideInvitation(
     invitation: OutsideInvitation,
+    uid: EventUid,
     now: number,
   ): OutsideResult {
-    const { uid, series } = invitation;
+    const { series } = invitation;
     if (this.#rows("SELECT 1 FROM removed_events WHERE uid = ?", uid).length) {
       return "unchanged";
     }
     const held = this.#series(uid);
     if (
       held &&
-      !(
-        held.organiser.kind === "outside" &&
-        held.organiser.email === invitation.organiser.email &&
-        invitation.fromOrganiser
-      )
+      (held.organiser.kind !== "outside" || !invitation.fromOrganiser)
     ) {
       return "refused";
     }
-    const organiser: Organiser = { kind: "outside", ...invitation.organiser };
+    const organiser: Organiser = {
+      kind: "outside",
+      ...invitation.organiser,
+      uid: invitation.uid,
+      fromOrganiser: invitation.fromOrganiser,
+    };
     const copyOf = (part: OutsidePart): StoredEvent => ({
       ...part,
       uid,
       organiser,
     });
     const callsOff = invitation.method === "cancel" || series?.cancelled;
-    if (!held) {
+    // Anyone can send the first one, naming any organiser and any sequence, so a copy
+    // that came without the organiser's proof gives way to their own invitation, whole.
+    const unproved =
+      held?.organiser.kind === "outside" && !held.organiser.fromOrganiser;
+    if (!held || (unproved && !callsOff && series)) {
       // There's nothing to call off, or to change only some dates of.
       if (callsOff || !series) return "unchanged";
       this.db.transaction(() => {
+        if (held) {
+          this.db.exec("DELETE FROM events WHERE uid = ?", uid);
+          this.db.exec("DELETE FROM event_people WHERE uid = ?", uid);
+        }
         this.#takeParts(null, copyOf, series, invitation.changes, now);
-        this.#takePeople(invitation, undefined);
+        this.#takePeople(invitation, uid, undefined);
       });
-      return "added";
+      return held ? "updated" : "added";
     }
     const changed = this.db.transaction(() => {
       if (callsOff) return this.#callOffCopy(held, invitation, now);
@@ -1628,14 +1639,18 @@ export class EventStore {
       const people =
         series !== null &&
         series.sequence >= held.sequence &&
-        this.#takePeople(invitation, this.#people(uid));
+        this.#takePeople(invitation, uid, this.#people(uid));
       return parts || people;
     });
     return changed ? "updated" : "unchanged";
   }
 
   // The list as the organiser sent it. This person's answer is the one they gave here.
-  #takePeople(invitation: OutsideInvitation, held: People | undefined) {
+  #takePeople(
+    invitation: OutsideInvitation,
+    uid: EventUid,
+    held: People | undefined,
+  ) {
     const reply: Reply = held?.reply ?? {
       for: invitation.to,
       answer: "needsAnswer",
@@ -1652,7 +1667,7 @@ export class EventStore {
     if (held && JSON.stringify(held.attendees) === JSON.stringify(attendees)) {
       return false;
     }
-    this.#writePeople(invitation.uid, {
+    this.#writePeople(uid, {
       attendees,
       revision: (held?.revision ?? 0) + 1,
       reply,
@@ -1949,7 +1964,7 @@ export class EventStore {
     const series = this.#series(queued.uid);
     if (series?.organiser.kind === "outside") {
       const { reply, attendees } = this.#people(queued.uid) ?? {};
-      const { email, name } = series.organiser;
+      const { email, name, uid } = series.organiser;
       if (
         !reply ||
         reply.answer === "needsAnswer" ||
@@ -1962,7 +1977,7 @@ export class EventStore {
       );
       return {
         method: "reply",
-        uid: queued.uid,
+        uid,
         by: reply.for,
         byName: named?.name ?? null,
         organiser: { email, name },

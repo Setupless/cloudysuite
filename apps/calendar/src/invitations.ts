@@ -185,10 +185,11 @@ export type EmailPlan =
   | { method: "none" };
 
 // Where a copy lives in the calendar it's sent to. Anyone can import a file with any UID,
-// so two calendars can each send one with the same UID, and a copy is named by both. One
-// calendar's copy can then never take the place of another's.
+// and anyone who was sent an invitation can send another with its UID, so two calendars
+// or two organisers can each send one with the same UID. A copy is named by where it
+// came from and the UID together, so one's copy can never take the place of another's.
 export async function copyUidOf(
-  from: CalendarId,
+  from: CalendarId | EmailAddress,
   uid: EventUid,
 ): Promise<EventUid> {
   const digest = await crypto.subtle.digest(

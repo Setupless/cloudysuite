@@ -61,10 +61,17 @@ export type Organiser =
       calendarId: CalendarId;
       uid: EventUid;
     }
-  // A copy of an invitation emailed from outside, which keeps the UID it came with. It
-  // can be answered, by an email to that address, or removed. Only mail from that
-  // address that proves it was sent from there can change it.
-  | { kind: "outside"; email: EmailAddress; name: string | null };
+  // A copy of an invitation emailed from outside. It can be answered, by an email to that
+  // address, or removed. Only mail from that address that proves it was sent from there
+  // can change it. The copy has a UID of its own here, from the organiser's address and
+  // the UID they sent, which is this one. `fromOrganiser` says that proof came with it.
+  | {
+      kind: "outside";
+      email: EmailAddress;
+      name: string | null;
+      uid: EventUid;
+      fromOrganiser: boolean;
+    };
 
 export const ANSWERS = ["needsAnswer", "yes", "maybe", "no"] as const;
 export type Answer = (typeof ANSWERS)[number];

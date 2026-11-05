@@ -226,13 +226,16 @@ const folderOf = (mailboxId: MailboxId, folder: "inbox" | "spam" | "archive") =>
 
 const sydney = (text: string) => Date.parse(`${text}+11:00`);
 
+// The copy's own UID in the person's calendar, which the invitation's UID and organiser
+// name together.
+const copyUid = async () => (await schedule())[0]!.uid;
+
 test("an invitation from Google lands unanswered in the person's own calendar, with Join Google Meet", async () => {
   await arrive(google());
 
   const [event, ...rest] = await schedule();
   expect(rest).toEqual([]);
   expect(event).toMatchObject({
-    uid: GOOGLE_INVITE_UID,
     title: "Supplier review",
     time: {
       kind: "timed",
@@ -240,7 +243,13 @@ test("an invitation from Google lands unanswered in the person's own calendar, w
       end: sydney("2026-11-10T11:00:00"),
       timeZone: SYDNEY,
     },
-    organiser: { kind: "outside", email: DANA, name: "Dana Wright" },
+    organiser: {
+      kind: "outside",
+      email: DANA,
+      name: "Dana Wright",
+      uid: GOOGLE_INVITE_UID,
+      fromOrganiser: true,
+    },
     answer: "needsAnswer",
     changeable: false,
     cancelled: false,
@@ -368,7 +377,7 @@ test("a cancelled invitation takes no answer, and only a newer version brings it
     .answerInvitation({
       data: {
         calendarId: await personalOf(),
-        uid: GOOGLE_INVITE_UID,
+        uid: await copyUid(),
         answer: "yes",
       },
     })
@@ -472,7 +481,7 @@ test("a removed invitation stays removed when its organiser changes it", async (
   await as().deleteEvent({
     data: {
       calendarId: await personalOf(),
-      target: { uid: GOOGLE_INVITE_UID, occurrenceId: null },
+      target: { uid: await copyUid(), occurrenceId: null },
       scope: "all",
     },
   });
@@ -631,7 +640,7 @@ test("answering an invitation from outside emails one reply, from the person's o
   await arrive(google());
   const calendarId = await personalOf();
   await as().answerInvitation({
-    data: { calendarId, uid: GOOGLE_INVITE_UID, answer: "yes" },
+    data: { calendarId, uid: await copyUid(), answer: "yes" },
   });
   await calendars.settle();
 
@@ -672,7 +681,7 @@ test("with Mail off, an answer is saved, the organiser isn't told, and the butto
   await as().answerInvitation({
     data: {
       calendarId: await personalOf(),
-      uid: GOOGLE_INVITE_UID,
+      uid: await copyUid(),
       answer: "no",
     },
   });
@@ -689,7 +698,7 @@ test("an invitation that arrives again changes nothing, not even the answer give
   await as().answerInvitation({
     data: {
       calendarId: await personalOf(),
-      uid: GOOGLE_INVITE_UID,
+      uid: await copyUid(),
       answer: "maybe",
     },
   });
@@ -953,7 +962,7 @@ test("a line break in an invitation can't add a line to the reply", async () => 
   await as().answerInvitation({
     data: {
       calendarId: await personalOf(),
-      uid: GOOGLE_INVITE_UID,
+      uid: await copyUid(),
       answer: "yes",
     },
   });

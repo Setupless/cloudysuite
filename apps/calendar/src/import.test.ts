@@ -17,7 +17,7 @@ import {
   LONDON,
   SYDNEY,
 } from "./test-support";
-import type { EmailAddress, Occurrence, TimeZone } from "./types";
+import type { EmailAddress, EventUid, Occurrence, TimeZone } from "./types";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
 
@@ -217,6 +217,8 @@ test("an invitation organised somewhere else stays as it is", async () => {
       kind: "outside",
       email: "jo@example.net" as EmailAddress,
       name: "Jo",
+      uid: GOOGLE_UID as EventUid,
+      fromOrganiser: true,
     },
   });
   const before = rows();

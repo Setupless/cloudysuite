@@ -16,6 +16,7 @@ import {
 import type {
   EmailAddress,
   EventTime,
+  EventUid,
   Occurrence,
   OccurrenceId,
   Repeat,
@@ -528,6 +529,8 @@ test("an invitation from someone else can be removed but not changed", async () 
       kind: "outside",
       email: "jo@example.net" as EmailAddress,
       name: "Jo",
+      uid: "invite@example.net" as EventUid,
+      fromOrganiser: true,
     },
   });
   const alice = await kit.as(ALICE);

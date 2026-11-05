@@ -23,6 +23,7 @@ import {
   type ChangeScope,
   type EmailAddress,
   type EventTime,
+  type EventUid,
   IMPORT_NOT_CALENDAR_MESSAGE,
   IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
@@ -661,6 +662,8 @@ test("an invitation copy has no Edit, is refused a change, and can be removed", 
       kind: "outside",
       email: "jo@example.net" as EmailAddress,
       name: "Jo",
+      uid: "supplier@example.net" as EventUid,
+      fromOrganiser: true,
     },
   });
   const editor = as(people.editor);
