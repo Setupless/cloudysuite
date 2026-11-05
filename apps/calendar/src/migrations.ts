@@ -92,13 +92,14 @@ export const MIGRATIONS: Migrations = [
     // keeps each row's rowid, which event_search follows.
     `ALTER TABLE events ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0`,
     // Dates removed from a copy here, or this date and every later one. The organiser's
-    // next change rewrites the copy, and these keep them out of it.
+    // next change rewrites the copy, and these keep them out of it. Each is the day the
+    // date was on, in the event's own time zone, so a new time for the series keeps it out.
     `CREATE TABLE removed_dates (
       uid TEXT NOT NULL,
-      recurrence_id TEXT NOT NULL,
+      date TEXT NOT NULL,
       and_later INTEGER NOT NULL,
       removed_at INTEGER NOT NULL,
-      PRIMARY KEY (uid, recurrence_id)
+      PRIMARY KEY (uid, date)
     ) WITHOUT ROWID`,
     // The organiser's side: this person's calendar needs the event as it is now. Written
     // in the transaction that changes the event, and sent by the alarm.

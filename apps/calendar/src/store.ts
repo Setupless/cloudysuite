@@ -250,11 +250,23 @@ type PeopleRow = SqlRow & {
 };
 
 // Dates removed from a copy here, which no later change from its organiser brings back.
-export type Removal = { dates: ReadonlySet<string>; from: string | null };
+// Each is the day it was first on, so moving every date to a new time keeps it removed.
+export type Removal = {
+  dates: ReadonlySet<CivilDate>;
+  from: CivilDate | null;
+};
 
-export const isRemovedHere = (removal: Removal | undefined, id: OccurrenceId) =>
-  removal !== undefined &&
-  (removal.dates.has(id) || (removal.from !== null && id >= removal.from));
+export function isRemovedHere(
+  removal: Removal | undefined,
+  series: StoredEvent,
+  id: OccurrenceId,
+): boolean {
+  if (removal === undefined) return false;
+  const day = startDateOf(timeOfDate(series, id));
+  return (
+    removal.dates.has(day) || (removal.from !== null && day >= removal.from)
+  );
+}
 
 const inUids = "uid IN (SELECT value FROM json_each(?))";
 
@@ -286,20 +298,19 @@ export function readRemovals(
 ): Map<string, Removal> {
   const removals = new Map<
     string,
-    { dates: Set<string>; from: string | null }
+    { dates: Set<CivilDate>; from: CivilDate | null }
   >();
   for (const row of db
-    .exec<{ uid: string; recurrence_id: string; and_later: number }>(
-      `SELECT uid, recurrence_id, and_later FROM removed_dates WHERE ${inUids}`,
+    .exec<{ uid: string; date: string; and_later: number }>(
+      `SELECT uid, date, and_later FROM removed_dates WHERE ${inUids}`,
       JSON.stringify(uids),
     )
     .toArray()) {
     const removal = removals.get(row.uid) ?? { dates: new Set(), from: null };
     removals.set(row.uid, removal);
-    if (!row.and_later) removal.dates.add(row.recurrence_id);
-    else if (removal.from === null || row.recurrence_id < removal.from) {
-      removal.from = row.recurrence_id;
-    }
+    const day = row.date as CivilDate;
+    if (!row.and_later) removal.dates.add(day);
+    else if (removal.from === null || day < removal.from) removal.from = day;
   }
   return removals;
 }
@@ -693,7 +704,7 @@ export class EventStore {
         if (afterRange(date.time) || shown > MAX_OCCURRENCES) break;
         if (
           !skipped.has(date.id) &&
-          !isRemovedHere(removal, date.id) &&
+          !isRemovedHere(removal, series, date.id) &&
           overlaps(date.time)
         ) {
           show(series, series, date.id, date.time);
@@ -992,12 +1003,12 @@ export class EventStore {
     const andLater = scope === "thisAndLater";
     this.db.transaction(() => {
       this.db.exec(
-        `INSERT INTO removed_dates (uid, recurrence_id, and_later, removed_at)
+        `INSERT INTO removed_dates (uid, date, and_later, removed_at)
          VALUES (?, ?, ?, ?)
-         ON CONFLICT (uid, recurrence_id) DO UPDATE SET
+         ON CONFLICT (uid, date) DO UPDATE SET
            and_later = max(and_later, excluded.and_later)`,
         series.uid,
-        id,
+        startDateOf(timeOfDate(series, id)),
         andLater ? 1 : 0,
         now,
       );
@@ -1136,23 +1147,18 @@ export class EventStore {
       organiser,
       cancelled: false,
     });
+    const series = copyOf(seriesPart);
     const removal = readRemovals(this.db, [uid]).get(uid);
     const newerSeries = !held || seriesPart.sequence > held.sequence;
     let changed = false;
     this.db.transaction(() => {
       if (newerSeries) {
         changed = true;
-        this.#replaceCopySeries(
-          held,
-          copyOf(seriesPart),
-          delivery,
-          removal,
-          now,
-        );
+        this.#replaceCopySeries(held, series, delivery, removal, now);
       }
       for (const part of delivery.parts) {
         const id = part.recurrenceId;
-        if (id === null || isRemovedHere(removal, id)) continue;
+        if (id === null || isRemovedHere(removal, series, id)) continue;
         const heldChange = this.#changeOf(uid, id);
         // A newer series comes with the whole event as the organiser has it now, so each
         // changed date with it counts, even one here that was called off with the event.
@@ -1219,7 +1225,7 @@ export class EventStore {
       : [];
     const calledOff = held
       ? series.exdates.flatMap((id): StoredEvent[] => {
-          if (held.exdates.includes(id) || isRemovedHere(removal, id)) {
+          if (held.exdates.includes(id) || isRemovedHere(removal, series, id)) {
             return [];
           }
           const before = heldChanges.find(

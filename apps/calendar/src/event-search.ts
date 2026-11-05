@@ -165,7 +165,7 @@ export function findEvents(
       const removal = removals.get(uid);
       const date = seriesDate(
         { ...series, rule: series.rule },
-        (id) => skipped.has(id) || isRemovedHere(removal, id),
+        (id) => skipped.has(id) || isRemovedHere(removal, series, id),
         zone,
         now,
         budget,
