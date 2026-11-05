@@ -712,6 +712,19 @@ test("an invitation that arrives again changes nothing, not even the answer give
   ]);
 });
 
+test("an invitation moved to Spam before it's handed over adds nothing", async () => {
+  await deliver(google());
+  const box = mail.instanceOf(mailboxes.boss).object;
+  const [thread] = box.listThreads({ view: { folder: "inbox" } }).threads;
+  box.moveToFolder({ threadIds: [thread!.id] }, "spam");
+  await handOver();
+
+  expect(await schedule()).toEqual([]);
+  expect(folderOf(mailboxes.boss, "spam")).toEqual([
+    "Invitation: Supplier review",
+  ]);
+});
+
 test("the mail is kept when its notification or its hand-off to Calendar can't be queued", async () => {
   const box = mail.instanceOf(mailboxes.boss);
   const logged = spyOn(console, "error").mockImplementation(() => {});
