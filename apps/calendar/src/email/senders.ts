@@ -87,6 +87,34 @@ export async function readSendingFacts(
   };
 }
 
+// Whose own mailbox each address reaches, primary or alias. A personal mailbox's person is
+// the manager given it first, as for their own address.
+export async function colleaguesAt(
+  database: D1Database,
+  wanted: EmailAddress[],
+): Promise<Map<EmailAddress, UserId>> {
+  const db = drizzle(database);
+  const rows = await db
+    .select({ address: addresses.address, userId: mailboxAccess.userId })
+    .from(addresses)
+    .innerJoin(mailboxes, eq(mailboxes.id, addresses.mailboxId))
+    .innerJoin(mailboxAccess, eq(mailboxAccess.mailboxId, mailboxes.id))
+    .where(
+      and(
+        inArray(addresses.address, wanted),
+        eq(mailboxes.kind, "personal"),
+        eq(mailboxAccess.role, "manager"),
+      ),
+    )
+    .orderBy(asc(mailboxAccess.createdAt), asc(mailboxAccess.userId));
+  const found = new Map<EmailAddress, UserId>();
+  for (const row of rows) {
+    const address = row.address as EmailAddress;
+    if (!found.has(address)) found.set(address, row.userId);
+  }
+  return found;
+}
+
 // For the event dialog, and for a change that adds an address.
 export async function outsideInviting(
   database: D1Database,

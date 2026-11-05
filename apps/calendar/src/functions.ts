@@ -27,7 +27,7 @@ import {
   setMemberRole,
   type TeamChange,
 } from "./directory";
-import { outsideInviting } from "./email/senders";
+import { colleaguesAt, outsideInviting } from "./email/senders";
 import { readCalendarFile } from "./outside/ics";
 import {
   addSummary,
@@ -48,6 +48,7 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   IMPORT_TOO_MANY_MESSAGE,
   type ImportSummary,
+  keyOfPerson,
   LAST_MANAGER_MESSAGE,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
@@ -302,6 +303,27 @@ export const listInvitations = createServerFn({ method: "GET" })
     }));
   });
 
+// An address of a colleague's own mailbox invites that colleague, so they get their copy
+// and one email, not a second place on the list.
+async function withColleagues(draft: EventDraft): Promise<EventDraft> {
+  const typed = draft.people.flatMap((person) =>
+    typeof person === "string" ? [] : [person.email],
+  );
+  if (typed.length === 0) return draft;
+  const found = await colleaguesAt(env.DB, typed);
+  const people = draft.people.map((person) =>
+    typeof person === "string" ? person : (found.get(person.email) ?? person),
+  );
+  return {
+    ...draft,
+    people: [
+      ...new Map(
+        people.map((person) => [keyOfPerson(person), person]),
+      ).values(),
+    ],
+  };
+}
+
 // Names come from the directory, never from the request.
 const invitableIn = (draft: EventDraft) =>
   readInvitable(
@@ -318,10 +340,11 @@ export const createEvent = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<EventUid> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
+    const draft = await withColleagues(data.draft);
     const result = await calendar.create(
       organiserName(person),
-      data.draft,
-      await invitableIn(data.draft),
+      draft,
+      await invitableIn(draft),
     );
     switch (result.status) {
       case "created":
@@ -339,12 +362,13 @@ export const updateEvent = createServerFn({ method: "POST" })
   .validator(parseEventChangeInput)
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
+    const draft = await withColleagues(data.draft);
     answerChange(
       await calendar.update(
         data.target,
         data.scope,
-        data.draft,
-        await invitableIn(data.draft),
+        draft,
+        await invitableIn(draft),
       ),
     );
   });
