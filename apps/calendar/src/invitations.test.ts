@@ -1046,3 +1046,95 @@ test("someone whose calendar can't be reached is tried again every hour, and nob
     setSystemTime();
   }
 });
+
+test("someone handed a removed person's calendar still sees the team's own event", async () => {
+  await invite([people.outsider]);
+  await handOver(kit.database, people.outsider, "Jo Okafor", people.viewer);
+  await kit.auth.api.removeUser({
+    headers: new Headers({ cookie: cookies.get(people.manager)! }),
+    body: { userId: people.outsider },
+  });
+  // Ravi now has Jo's old calendar, with Jo's copy in it, and still sees the team's.
+  expect(
+    (await seen(people.viewer)).map((entry) => [
+      entry.calendarId === TEAM ? "team" : "Jo's",
+      entry.organiser.kind,
+    ]),
+  ).toContainEqual(["team", "madeHere"]);
+});
+
+test("a copy with every later date removed doesn't stop search finishing", async () => {
+  // Weekly from 6 October, so every date left is in the past.
+  const uid = await invite([people.outsider], {
+    time: timed("2026-10-06T09:00:00+11:00", "2026-10-06T10:00:00+11:00"),
+    repeat: WEEKLY,
+  });
+  await as(people.outsider).deleteEvent({
+    data: {
+      calendarId: await personalOf(people.outsider),
+      target: {
+        uid: await copyIn(people.outsider, uid),
+        occurrenceId: "20261012T220000Z" as OccurrenceId,
+      },
+      scope: "thisAndLater",
+    },
+  });
+  const found = (await as(people.outsider).searchEvents({
+    data: { text: "planning", timeZone: SYDNEY },
+  })) as { occurrences: CalendarOccurrence[]; incomplete: boolean };
+  expect(found.incomplete).toBe(false);
+  expect(found.occurrences.map((entry) => entry.occurrenceId)).toEqual([
+    "20261005T220000Z",
+  ]);
+});
+
+test("an older delivery arriving late doesn't bring back a changed date", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await changeSecondDate(uid);
+  const older = objects.delivered.at(-1)!;
+  await change(uid, { time: LATER, repeat: WEEKLY, people: [people.outsider] });
+  const dates = async () =>
+    (await seen(people.outsider)).map((entry) => [
+      entry.occurrenceId,
+      entry.title,
+    ]);
+  const now = await dates();
+  await objects.deliverAgain(older.to, older.delivery);
+  expect(await dates()).toEqual(now);
+});
+
+test("a later file still changes an event after a file called off one of its dates", async () => {
+  await importToTeam(...WEEKLY_IN_A_FILE);
+  await change(FROM_A_FILE, { repeat: WEEKLY, people: [people.outsider] });
+  await importToTeam(
+    `RECURRENCE-ID:${SECOND}`,
+    `DTSTART:${SECOND}`,
+    "SEQUENCE:5",
+    "STATUS:CANCELLED",
+  );
+  await importToTeam(
+    "SEQUENCE:3",
+    "DTSTART:20261109T220000Z",
+    "DTEND:20261109T230000Z",
+    "RRULE:FREQ=WEEKLY",
+    "SUMMARY:Weekly planning, renamed",
+  );
+  await objects.settle();
+  const entries = await seen(people.outsider);
+  expect(
+    entries.map((entry): [string | null, boolean] => [
+      entry.occurrenceId,
+      entry.cancelled,
+    ]),
+  ).toEqual([
+    ["20261109T220000Z", false],
+    [SECOND, true],
+    [THIRD, false],
+    ["20261130T220000Z", false],
+  ]);
+  expect(
+    entries
+      .filter((entry) => !entry.cancelled)
+      .every((entry) => entry.title === "Weekly planning, renamed"),
+  ).toBe(true);
+});
