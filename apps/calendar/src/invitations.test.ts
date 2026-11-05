@@ -10,6 +10,7 @@ import {
   PASSWORD,
   signIn,
 } from "../../auth/src/admin/test-kit";
+import { calendarFile } from "./outside/test-support";
 import { createCalendarTest, SYDNEY, TEAM } from "./test-support";
 import {
   type Answer,
@@ -127,7 +128,9 @@ const timed = (start: string, end: string): EventTime =>
   }) as EventTime;
 
 const TUESDAY = timed("2026-11-10T09:00:00+11:00", "2026-11-10T10:00:00+11:00");
+const LATER = timed("2026-11-10T11:00:00+11:00", "2026-11-10T12:00:00+11:00");
 const WEEKLY = { frequency: "weekly", end: { kind: "never" } } as const;
+const DAILY = { frequency: "daily", end: { kind: "never" } } as const;
 // The second and third Tuesdays, as RECURRENCE-IDs.
 const SECOND = "20261116T220000Z" as OccurrenceId;
 const THIRD = "20261123T220000Z" as OccurrenceId;
@@ -153,15 +156,12 @@ async function invite(
   return uid;
 }
 
-async function change(
-  uid: EventUid,
-  more: Partial<EventDraft>,
-  target: { occurrenceId: OccurrenceId | null; scope: ChangeScope } = {
-    occurrenceId: null,
-    scope: "all",
-  },
-) {
-  await as(people.manager).updateEvent({
+type Target = { occurrenceId: OccurrenceId | null; scope: ChangeScope };
+const ALL: Target = { occurrenceId: null, scope: "all" };
+
+// A change whose deliveries haven't gone yet, so the next one joins them.
+const unsent = (uid: EventUid, more: Partial<EventDraft>, target = ALL) =>
+  as(people.manager).updateEvent({
     data: {
       calendarId: TEAM,
       target: { uid, occurrenceId: target.occurrenceId },
@@ -169,6 +169,9 @@ async function change(
       draft: planning(more),
     },
   });
+
+async function change(uid: EventUid, more: Partial<EventDraft>, target = ALL) {
+  await unsent(uid, more, target);
   await objects.settle();
 }
 
@@ -187,9 +190,24 @@ async function seen(userId: UserId): Promise<CalendarOccurrence[]> {
   return occurrences;
 }
 
+// The person's own copy of the organiser's event, as their calendar lists it.
+async function copyIn(userId: UserId, uid: EventUid): Promise<EventUid> {
+  const listed = [
+    ...(await seen(userId)),
+    ...(await as(userId).listInvitations({ data: { timeZone: SYDNEY } })),
+  ];
+  const copy = listed.find((entry) => entry.uid === uid);
+  if (!copy) throw new Error("expected a copy");
+  return copy.uid;
+}
+
 async function answer(userId: UserId, uid: EventUid, given: Answer) {
   await as(userId).answerInvitation({
-    data: { calendarId: await personalOf(userId), uid, answer: given },
+    data: {
+      calendarId: await personalOf(userId),
+      uid: await copyIn(userId, uid),
+      answer: given,
+    },
   });
   await objects.settle();
 }
@@ -246,7 +264,7 @@ test("a removed copy stays removed when the organiser changes the event", async 
   await as(people.outsider).deleteEvent({
     data: {
       calendarId: await personalOf(people.outsider),
-      target: { uid, occurrenceId: null },
+      target: { uid: await copyIn(people.outsider, uid), occurrenceId: null },
       scope: "all",
     },
   });
@@ -413,12 +431,13 @@ test("Can view can't invite anyone", async () => {
 test("removing a repeating copy covers only this one, this and later ones, or all of them", async () => {
   const uid = await invite([people.outsider], { repeat: WEEKLY });
   const mine = await personalOf(people.outsider);
+  const copy = await copyIn(people.outsider, uid);
   const [first] = await seen(people.outsider);
   expect(scopesFor(first!, null)).toEqual(["this", "thisAndLater", "all"]);
 
   const remove = (occurrenceId: OccurrenceId, scope: ChangeScope) =>
     as(people.outsider).deleteEvent({
-      data: { calendarId: mine, target: { uid, occurrenceId }, scope },
+      data: { calendarId: mine, target: { uid: copy, occurrenceId }, scope },
     });
   const dates = async () =>
     (await seen(people.outsider)).map((entry) => [
@@ -573,6 +592,390 @@ test("Today lists unanswered invitations, even from a hidden calendar", async ()
     expect(
       await as(people.outsider).listInvitations({ data: { timeZone: SYDNEY } }),
     ).toEqual([]);
+  } finally {
+    setSystemTime();
+  }
+});
+
+// The second date changed three times, so a copy holds it at a higher sequence than the
+// series.
+async function changeSecondDate(uid: EventUid) {
+  for (const title of ["Moved", "Moved again", "Moved once more"]) {
+    await change(
+      uid,
+      {
+        title,
+        time: timed("2026-11-17T14:00:00+11:00", "2026-11-17T15:00:00+11:00"),
+        repeat: WEEKLY,
+        people: [people.outsider],
+      },
+      { occurrenceId: SECOND, scope: "this" },
+    );
+  }
+}
+
+test("deleting an event reaches a copy that missed the change before it", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await changeSecondDate(uid);
+  // Every date moves, which drops the changed one, then the event goes, all before the
+  // alarm runs. Jo's copy only hears the deletion.
+  await unsent(uid, { time: LATER, repeat: WEEKLY, people: [people.outsider] });
+  await as(people.manager).deleteEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid, occurrenceId: null },
+      scope: "all",
+    },
+  });
+  await objects.settle();
+  const entries = await seen(people.outsider);
+  expect(entries).toHaveLength(4);
+  expect(entries.every((entry) => entry.cancelled)).toBe(true);
+});
+
+test("a date changed again after every date moved reaches a copy that missed the move", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await changeSecondDate(uid);
+  await unsent(uid, { repeat: DAILY, people: [people.outsider] });
+  await unsent(
+    uid,
+    {
+      title: "Fresh",
+      time: timed("2026-11-17T16:00:00+11:00", "2026-11-17T17:00:00+11:00"),
+      repeat: DAILY,
+      people: [people.outsider],
+    },
+    { occurrenceId: SECOND, scope: "this" },
+  );
+  await objects.settle();
+  const second = (await seen(people.outsider)).find(
+    (entry) => entry.occurrenceId === SECOND,
+  );
+  expect(second).toMatchObject({ title: "Fresh", cancelled: false });
+});
+
+const FROM_A_FILE = "planning-from-a-file" as EventUid;
+
+// One event with FROM_A_FILE's UID, imported into the team calendar.
+const importToTeam = (...lines: string[]) =>
+  as(people.manager).importCalendarFile({
+    data: {
+      calendarId: TEAM,
+      file: calendarFile(
+        "BEGIN:VEVENT",
+        `UID:${FROM_A_FILE}`,
+        ...lines,
+        "END:VEVENT",
+      ),
+      timeZone: SYDNEY,
+    },
+  });
+
+const WEEKLY_IN_A_FILE = [
+  "DTSTART:20261109T220000Z",
+  "DTEND:20261109T230000Z",
+  "RRULE:FREQ=WEEKLY",
+  "SUMMARY:Weekly planning",
+];
+
+test("deleting an event reaches a copy after a newer file replaced its changed dates", async () => {
+  await importToTeam(...WEEKLY_IN_A_FILE);
+  await change(FROM_A_FILE, { repeat: WEEKLY, people: [people.outsider] });
+  await changeSecondDate(FROM_A_FILE);
+  await importToTeam("SEQUENCE:2", ...WEEKLY_IN_A_FILE);
+  await as(people.manager).deleteEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid: FROM_A_FILE, occurrenceId: null },
+      scope: "all",
+    },
+  });
+  await objects.settle();
+  const entries = await seen(people.outsider);
+  expect(entries).toHaveLength(4);
+  expect(entries.every((entry) => entry.cancelled)).toBe(true);
+});
+
+test("a file that calls off one date reaches every copy", async () => {
+  await importToTeam(...WEEKLY_IN_A_FILE);
+  await change(FROM_A_FILE, { repeat: WEEKLY, people: [people.outsider] });
+  await importToTeam(
+    `RECURRENCE-ID:${SECOND}`,
+    `DTSTART:${SECOND}`,
+    "SEQUENCE:5",
+    "STATUS:CANCELLED",
+  );
+  await objects.settle();
+  expect(
+    (await seen(people.outsider)).map((entry) => [
+      entry.occurrenceId,
+      entry.cancelled,
+    ]),
+  ).toEqual([
+    ["20261109T220000Z", false],
+    [SECOND, true],
+    [THIRD, false],
+    ["20261130T220000Z", false],
+  ]);
+});
+
+test("someone taken off the list and invited again finds every date back on", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await change(
+    uid,
+    {
+      title: "Moved",
+      time: timed("2026-11-17T14:00:00+11:00", "2026-11-17T15:00:00+11:00"),
+      repeat: WEEKLY,
+      people: [people.outsider],
+    },
+    { occurrenceId: SECOND, scope: "this" },
+  );
+  await change(uid, { repeat: WEEKLY, people: [] });
+  expect((await seen(people.outsider)).every((entry) => entry.cancelled)).toBe(
+    true,
+  );
+
+  await change(uid, { repeat: WEEKLY, people: [people.outsider] });
+  expect(
+    (await seen(people.outsider)).map((entry) => [
+      entry.title,
+      entry.cancelled,
+    ]),
+  ).toEqual([
+    ["Weekly planning", false],
+    ["Moved", false],
+    ["Weekly planning", false],
+    ["Weekly planning", false],
+  ]);
+});
+
+test("someone invited again is asked again, and their answer reaches the organiser", async () => {
+  const uid = await invite([people.outsider]);
+  await answer(people.outsider, uid, "yes");
+  await change(uid, { people: [] });
+  await change(uid, { people: [people.outsider] });
+
+  const [jos] = await seen(people.outsider);
+  expect(jos).toMatchObject({ answer: "needsAnswer", cancelled: false });
+  expect(answers(jos)).toEqual({ "Jo Okafor": "needsAnswer" });
+  expect(answers((await seen(people.manager))[0])).toEqual({
+    "Jo Okafor": "needsAnswer",
+  });
+  await answer(people.outsider, uid, "yes");
+  expect(answers((await seen(people.manager))[0])).toEqual({
+    "Jo Okafor": "yes",
+  });
+});
+
+test("someone taken off and put back before their copy heard is asked again too", async () => {
+  const uid = await invite([people.editor, people.outsider]);
+  await answer(people.outsider, uid, "yes");
+  await unsent(uid, { people: [people.editor] });
+  await change(uid, { people: [people.editor, people.outsider] });
+
+  const expected = { "Maya Chen": "needsAnswer", "Jo Okafor": "needsAnswer" };
+  const [jos] = await seen(people.outsider);
+  expect(jos?.answer).toBe("needsAnswer");
+  expect(answers(jos)).toEqual(expected);
+  expect(answers((await seen(people.manager))[0])).toEqual(expected);
+});
+
+test("an answer given again still reaches the organiser", async () => {
+  const uid = await invite([people.outsider]);
+  await answer(people.outsider, uid, "yes");
+  // As if the organiser's calendar were restored to before Jo answered.
+  objects
+    .sqlite(TEAM)
+    .run(
+      "UPDATE event_people SET attendees = json_set(attendees, '$[0].answer', 'needsAnswer', '$[0].revision', 0)",
+    );
+  await answer(people.outsider, uid, "yes");
+  expect(answers((await seen(people.manager))[0])).toEqual({
+    "Jo Okafor": "yes",
+  });
+});
+
+test("someone invited from two calendars with the same UID gets both invitations", async () => {
+  // Maya sees the UID of the event she's invited to, and makes one of her own with it.
+  const uid = await invite([people.editor]);
+  const theirs = await as(people.editor).createTeamCalendar({
+    data: { name: "Maya's team" },
+  });
+  await as(people.editor).importCalendarFile({
+    data: {
+      calendarId: theirs,
+      file: calendarFile(
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        "DTSTART:20261109T220000Z",
+        "DTEND:20261109T230000Z",
+        "SUMMARY:Pay the invoice",
+        "END:VEVENT",
+      ),
+      timeZone: SYDNEY,
+    },
+  });
+  await as(people.editor).updateEvent({
+    data: {
+      calendarId: theirs,
+      target: { uid, occurrenceId: null },
+      scope: "all",
+      draft: planning({ title: "Pay the invoice", people: [people.outsider] }),
+    },
+  });
+  await objects.settle();
+  await change(uid, { people: [people.editor, people.outsider] });
+
+  const organisers = (await seen(people.outsider)).map((entry) => [
+    entry.title,
+    entry.organiser.kind === "colleague" ? entry.organiser.calendarId : null,
+  ]);
+  expect(organisers).toEqual([
+    ["Pay the invoice", theirs],
+    ["Weekly planning", TEAM],
+  ]);
+  await answer(people.outsider, uid, "yes");
+  expect(answers((await seen(people.manager))[0])).toEqual({
+    "Maya Chen": "needsAnswer",
+    "Jo Okafor": "yes",
+  });
+});
+
+test("someone's own imported event can share a UID with an invitation, and both show", async () => {
+  const uid = await invite([people.outsider]);
+  const summary = await as(people.outsider).importCalendarFile({
+    data: {
+      calendarId: await personalOf(people.outsider),
+      file: calendarFile(
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        "DTSTART:20261110T220000Z",
+        "DTEND:20261110T230000Z",
+        "SUMMARY:My own planning",
+        "END:VEVENT",
+      ),
+      timeZone: SYDNEY,
+    },
+  });
+  expect(summary).toMatchObject({ added: 1 });
+  expect(
+    (await seen(people.outsider)).map((entry) => [
+      entry.title,
+      entry.organiser.kind,
+    ]),
+  ).toEqual([
+    ["Weekly planning", "colleague"],
+    ["My own planning", "madeHere"],
+  ]);
+});
+
+test("a date removed from a copy stays removed when the organiser moves every date", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  const mine = await personalOf(people.outsider);
+  const remove = async (occurrenceId: OccurrenceId, scope: ChangeScope) =>
+    as(people.outsider).deleteEvent({
+      data: {
+        calendarId: mine,
+        target: { uid: await copyIn(people.outsider, uid), occurrenceId },
+        scope,
+      },
+    });
+  const dates = async () =>
+    (await seen(people.outsider)).map((entry) => entry.occurrenceId);
+
+  await remove(SECOND, "this");
+  await change(uid, { time: LATER, repeat: WEEKLY, people: [people.outsider] });
+  expect(await dates()).toEqual([
+    "20261110T000000Z",
+    "20261124T000000Z",
+    "20261201T000000Z",
+  ]);
+
+  await remove("20261124T000000Z" as OccurrenceId, "thisAndLater");
+  await change(uid, { repeat: WEEKLY, people: [people.outsider] });
+  expect(await dates()).toEqual(["20261109T220000Z"]);
+});
+
+test("while Calendar is off, invitations and answers wait, and go once it's back on", async () => {
+  const calendarOn = (on: boolean) =>
+    kit.sqlite.run(
+      on
+        ? "DELETE FROM app_settings WHERE app = 'calendar'"
+        : "INSERT INTO app_settings (app, enabled) VALUES ('calendar', 0)",
+    );
+  // Runs this calendar's next wake-up, which must be later, not now.
+  const wakeLater = async (calendarId: CalendarId) => {
+    const next = objects.alarmOf(calendarId);
+    expect(next).toBeGreaterThan(Date.now());
+    setSystemTime(new Date(next!));
+    await objects.settle();
+  };
+  try {
+    const uid = await as(people.manager).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: planning({ people: [people.outsider] }),
+      },
+    });
+    calendarOn(false);
+    await objects.settle();
+    expect(
+      kit.sqlite
+        .query("SELECT id FROM calendars WHERE owner_id = ?")
+        .all(people.outsider),
+    ).toEqual([]);
+    calendarOn(true);
+    await wakeLater(TEAM);
+    expect((await seen(people.outsider)).map((entry) => entry.title)).toEqual([
+      "Weekly planning",
+    ]);
+
+    const mine = await personalOf(people.outsider);
+    await as(people.outsider).answerInvitation({
+      data: {
+        calendarId: mine,
+        uid: await copyIn(people.outsider, uid),
+        answer: "yes",
+      },
+    });
+    calendarOn(false);
+    await objects.settle();
+    calendarOn(true);
+    expect(answers((await seen(people.manager))[0])).toEqual({
+      "Jo Okafor": "needsAnswer",
+    });
+    await wakeLater(mine);
+    expect(answers((await seen(people.manager))[0])).toEqual({
+      "Jo Okafor": "yes",
+    });
+  } finally {
+    setSystemTime();
+  }
+});
+
+test("someone whose calendar can't be reached is tried again every hour, and nobody else waits", async () => {
+  const theirs = await as(people.outsider).ensureMyCalendar();
+  objects.unreachable.add(theirs);
+  try {
+    const uid = await invite([people.outsider, people.editor]);
+    for (let tries = 0; tries < 12; tries++) {
+      const retry = objects.alarmOf(TEAM)!;
+      expect(retry - Date.now()).toBeLessThanOrEqual(60 * 60_000);
+      setSystemTime(new Date(retry));
+      await objects.settle();
+    }
+    await change(uid, {
+      title: "Planning, moved",
+      people: [people.outsider, people.editor],
+    });
+    await invite([people.editor], { title: "Board review" });
+    expect((await seen(people.editor)).map((entry) => entry.title)).toEqual([
+      "Board review",
+      "Planning, moved",
+    ]);
+    expect(await seen(people.outsider)).toEqual([]);
+    expect(objects.alarmOf(TEAM)).toBeGreaterThan(Date.now());
   } finally {
     setSystemTime();
   }
