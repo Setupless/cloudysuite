@@ -409,18 +409,21 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 
 **Built so far:** nothing yet.
 
-**Not built yet:** Today, Schedule with Day, Week, and Month, personal calendars, team calendars and their members, events and repeats, invitations inside the organisation and answering them, invitation emails to and from people outside, the invitation card in Mail, Join buttons, event search, `.ics` import, handing over a removed person's calendar, and the wizard adding the `calendar.` address. A control appears only once it works, so none of these has a button yet.
+**Not built yet:** Today, Schedule with Day, Week, and Month, personal calendars, team calendars and their members, events and repeats, invitations inside the organisation and answering them, invitation emails to and from people outside, the invitation card in Mail, Join buttons, event search, `.ics` import, handing over a removed person's calendar, reminders, and the wizard adding the `calendar.` address. A control appears only once it works, so none of these has a button yet.
+
+**To check before building:** the exact name of Outlook's online-meeting property, from a real Outlook invitation file, and that real Google and Outlook invitation emails pass the [domain check](#invitations-from-outside) for updates and replies.
 
 #### Today and Schedule
 
-- **Today shows what's next.** At the top is the next event, with how long until it starts, who's coming, and who hasn't replied. Below it are a This week strip, the rest of today, tomorrow, and invitations from the person's mail. Events that have ended fold into "N finished earlier", so the rest of today starts with what's still to come.
+- **Today shows what's next.** At the top is the next event, with how long until it starts, who's coming, and who hasn't replied. Below it are a This week strip, the rest of today, tomorrow, and Invitations. Events that have ended fold into "N finished earlier", so the rest of today starts with what's still to come.
+- **Invitations on Today are the unanswered invitations in the person's own calendar,** however they arrived. Today doesn't scan mailboxes, so the section still works when Mail is off.
 - **Schedule is the full calendar,** with Day, Week, and Month views. In Week and Month, an event opens in a small card beside it, so the grid keeps its width. Open details on the card goes to Day view, with the full panel.
 - **The toolbar has Go to today, previous and next, and a date title that opens a month picker.** There is no mini month in the sidebar, because the title picker does the same job without taking room from the list of calendars.
 - **Clicking an empty slot starts a new event at that time.** Overlapping events sit side by side, so none hides another.
 - **Keys.** T goes to today, D, W, and M switch to Day, Week, and Month, N starts a new event, the left and right arrows move to the previous or next day, week, or month, and Esc closes what's open. They use TanStack Hotkeys, which is already in the stack.
 - **The sidebar holds Today, Schedule, then a list of calendars, then New team calendar.** Each calendar on the list has a checkbox that shows or hides its events.
-- **A hidden calendar stays hidden for that person,** on every device, because it's a flag on their own `calendar_access` row. It hides the calendar from their own view only.
-- **Search finds events by title, place, and notes,** from the search box in the header. It looks across the calendars the person can see, past and future. Matching works like [Storage's](#storage): each word must start a word, in any order, whatever the case or accents. Each result shows its date and calendar. Events still to come show first, soonest first, then past events, newest first, so what's coming up leads. Search text is parsed into words, so no text can cause an error.
+- **A hidden calendar stays hidden for that person,** on every device, because it's a flag on their own `calendar_access` row. It hides the calendar from their own view only. A hidden calendar is left out of Schedule, search, and Today. The one exception is unanswered invitations, which always show on Today, so an invitation can't be missed.
+- **Search finds events by title, place, and notes,** from the search box in the header. It looks across the calendars the person can see and hasn't hidden, past and future. Matching works like [Storage's](#storage): each word must start a word, in any order, whatever the case or accents. Each result shows its date and calendar. Events still to come show first, soonest first, then past events, newest first, so what's coming up leads. Calendars are asked five at a time, and asking stops 5 seconds after it starts, the same as Storage. If any calendar couldn't be searched, a note says so. Search text is parsed into words, so no text can cause an error.
 
 #### Personal and team calendars
 
@@ -433,14 +436,20 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 - **One event shows once.** If a person sees a team calendar and was also invited to one of its events, the event shows once, as their own copy with their answer, so they never see it twice with two answers.
 - **Removing a person hands over their personal calendar, and deletes nothing.** It becomes a team calendar named after them, managed by the person the admin chose to receive their files. This mirrors how My files is handed over, so the admin makes one choice for both.
 - **A team calendar the removed person managed alone is handed over like a team folder.** If others are on it, it stays with them, so nobody new sees its events. The person there longest with Can edit becomes manager. If everyone left has Can view, the person there longest becomes manager. If nobody else is on it, it goes to the person the admin chose.
-- **Events the removed person organised stay in other people's calendars,** with their name as organiser, so nobody loses a meeting they were invited to. Those people can remove them. No further updates will come, because there's no organiser left to send them.
+- **Events the removed person organised stay in other people's calendars,** with their name as organiser, so nobody loses a meeting they were invited to. Those people can remove them. Their events now sit on team calendars, so anyone with Can edit there can still change them, under the [rule for a removed organiser](#events).
 
 #### Events
 
-- **An event has a title, a day, a start and an end or all day, a repeat, a place, notes, and people.** The repeat is one of doesn't repeat, every day, every weekday, every week, every month, and every year.
-- **Changing or deleting a repeating event asks how far it goes.** The choices are "Only this one", "This and later ones", and "All of them", the same for both, so a person learns them once.
+- **An event has a title, a day, a start and an end or all day, a repeat, a place, notes, and people.** The repeat is one of doesn't repeat, every day, every weekday, every week, every month, and every year. A repeat ends never, on a day, or after a number of times.
+- **Changing or deleting a repeating event asks how far it goes.** The choices are "Only this one", "This and later ones", and "All of them", the same for both, so a person learns them once. "This and later ones" ends the old series the day before the chosen date and starts a new one, so the dates before it stay as they were.
+- **A repeat rule from outside that the dialog can't show is kept exactly as written,** whether it came in an invitation or an import, so its dates stay the ones the organiser chose. The event shows it read-only, and the person can still answer or remove it.
+- **A repeat's dates are worked out only for the range on screen,** and at most 1,000 in one range, so an unbounded or huge series from outside can't stall a page.
 - **An event can span several days, timed or all day,** so a conference or a trip is one event rather than one for each day. The new event dialog shows an end day when the end falls on another day. In Day and Week, an event that spans days shows in the all-day row, as one bar across those days. In Month, it shows as one bar across the days it covers.
-- **Each event keeps its own time zone, and shows in the viewer's device time zone.** A weekly meeting at 9:00 in Sydney stays at 9:00 in Sydney across a daylight-saving change, and someone in another city sees it at their own local time.
+- **A timed event keeps its own time zone, and shows in the viewer's device time zone.** A weekly meeting at 9:00 in Sydney stays at 9:00 in Sydney across a daylight-saving change, and someone in another city sees it at their own local time.
+- **An all-day event is a date, not a time.** It stays on the same days in every time zone, so a public holiday on the 25th is on the 25th for everyone.
+- **The person who makes an event on a team calendar is its organiser,** and its invitations go from their personal mailbox.
+- **Anyone with Can edit on a team calendar can change or delete its events.** A change goes out from the organiser's address with a higher sequence, whoever made it, because other suites trust updates only from the organiser.
+- **If the organiser has been removed or has no personal mailbox,** changes still reach people inside the organisation. People outside aren't told, and the dialog says so.
 - **Notes and places are plain text.** Only `https` links in them are clickable, and each opens in a new tab with no referrer, so the linked site doesn't learn the calendar's address. An invitation from outside writes these fields, so they are treated like message content.
 
 #### Invitations
@@ -451,38 +460,41 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 - **Invitations and replies go from the primary address of the sender's personal mailbox,** the organiser's for an invitation and the person answering's for a reply. That's the address people know them by, and a shared mailbox belongs to no one person. Someone with no personal mailbox can still invite people in the organisation, but not people outside, and the invite dialog says why.
 - **People in the organisation also get the event straight in their personal calendar,** unanswered and shown dashed, so it's there before they open their mail. Their copy of the email shows an invitation card in Mail, and the card reads from their calendar, so an answer given in either place shows in both.
 - **A copy is never added twice.** The event's UID and sequence decide. The UID names the event, together with the `RECURRENCE-ID` when a change covers one date of a repeat, and the sequence says which version is newer. A copy whose sequence is no higher than the one held for that event or date changes nothing, so mail arriving again changes nothing.
-- **A removed event stays removed.** Removing an event from a calendar keeps its UID and sequence there, so the same invitation arriving again doesn't bring it back, and neither does a newer version from the organiser, because the person chose to remove it. The card in Mail still offers "Add to my calendar". A cancellation of a removed event changes nothing.
+- **A removed event stays removed.** Removing an event from a calendar keeps its UID and sequence there, so the same invitation arriving again doesn't bring it back, and neither does a newer version from the organiser, because the person chose to remove it. "Add to my calendar" on the card in Mail overrides the removal, because that's the person's own choice too. It adds the version in that message, and after that the usual UID and sequence rule applies. A cancellation of a removed event changes nothing.
 - **Answering is Yes, Maybe, or No,** from Calendar, Today, or the card in Mail. The organiser is told directly when they're inside the organisation, and by an iMIP reply email when they're outside it.
 - **Changes and cancellations from the organiser reach everyone the same way.** A cancelled event stays on the calendar marked as cancelled, with "Remove from my calendar", so someone who looks sees it was called off rather than finding it gone.
-- **An event someone else organised can't be edited or deleted.** The person can answer it and remove it from their own calendar. The organiser's event is the one everyone follows, so a change made in one person's copy would leave the others out of step.
-- **Invitation emails go through the organiser's mailbox send queue,** so [Mail's sending rules](#mail) apply. Each attempt is checked first, and nothing is resent by guesswork. They don't appear in Sent, because the event's People list is the record of who was invited.
+- **An invitation in a personal calendar can't be edited or deleted** when its organiser isn't on that calendar. The person can answer it and remove it from their own calendar. The organiser's event is the one everyone follows, so a change made in one person's copy would leave the others out of step.
+- **Invitation emails go through the organiser's mailbox send queue,** so [Mail's sending rules](#mail) apply, with three exceptions. They skip the 10-second undo, and make no draft and no Sent copy, because the event's People list is the record of who was invited. Each attempt is checked first, so a retry never sends twice. A refused email shows in the People list as "Not sent to" and that person's name, with Try again. If it's unclear whether an email went, the list says to check with that person, because a duplicate is worse than asking.
 - **With Mail off, invitations inside the organisation still work.** The invite dialog says that people outside won't get an email. An answer is still saved in the person's calendar. An organiser outside the organisation isn't told, and the answer buttons say so before the person chooses.
+- **With Calendar off, the invitation card in Mail shows the invitation as plain details.** It has no answer buttons and no "Add to my calendar", and it says Calendar is off.
+- **Every server function checks that its own app is on.** One that reaches into the other app, such as answering from the card in Mail, checks that app too and refuses in plain words, because a server function answers on every app's hostname.
 
 #### Invitations from outside
 
 - **An email to a person's own address that carries an iCalendar invitation adds the event to their personal calendar,** unanswered.
 - **Some invitations add nothing.** Mail to a shared mailbox such as `support@` adds nothing to any calendar, because the mailbox belongs to no one person. Mail sorted into Spam adds nothing, because the filter judged it unwanted. A new invitation needs no proof of its sender, so one that reaches the Inbox from a stranger is still added. While Calendar is off, nothing is added, and the email still arrives, because mail is never dropped. Imported mail adds nothing, because import brings in history, and Mail's rules don't run on imported mail either. The invitation card in Mail still shows on imported mail, with "Add to my calendar".
 - **Invitations don't catch up later.** Marking mail Not spam, or turning Calendar back on, adds nothing by itself, so a person isn't handed a pile of old events at once. The invitation card in Mail offers "Add to my calendar" for any invitation that isn't in the person's calendar.
-- **A change or cancellation to an event already on the calendar counts only from that event's organiser address, on mail whose sender passed authentication.** It uses the authentication results Mail stored when the message arrived, and passing means what [Spam filtering](#spam-filtering) calls proving the sender: DMARC passed, or DKIM passed for the `From` domain or a parent of it. Anyone can write an organiser's address into an invitation, so only mail that proves it came from that address may change the event.
-- **A reply updates only the answer of the attendee address it came from, on authenticated mail.** Anything else stays an ordinary email, and the card says the sender couldn't be confirmed.
+- **A change or cancellation to an event already on the calendar counts only on mail that proves it comes from the domain of the organiser's address.** Anyone can write an organiser's address into an invitation, so mail that can't prove that domain doesn't change the event.
+- **A reply updates only the answer of the attendee it names, on mail that proves it comes from the domain of that attendee's address.**
+- **Proving a domain uses Mail's existing check,** the authentication results stored when the message arrived, as in [Spam filtering](#spam-filtering): DMARC passed, or DKIM passed for that domain or a parent of it. The exact `From` address isn't required, because Google and Outlook often send on someone's behalf through their own servers but sign with the person's domain, so requiring it would drop many real updates.
+- **Mail that doesn't count stays an ordinary email,** and the card says the sender couldn't be confirmed.
 - **Everything in an invitation is hostile,** like message content.
 
 #### Join buttons
 
 - **An event shows "Join Google Meet", "Join Microsoft Teams", "Join Zoom", or "Join Webex"** when it carries a link on that service's own host: `meet.google.com`, `teams.microsoft.com`, `teams.live.com`, `zoom.us` or `*.zoom.us`, or `webex.com` or `*.webex.com`.
-- **The link comes from the invitation's conference field first, then the place, then the notes.** The first match wins, because the conference field is the one the meeting service wrote itself. The conference field is Google's `X-GOOGLE-CONFERENCE` or the online-meeting property Outlook writes. That property's exact name is to be confirmed against a real Outlook invitation file before Join buttons are built, not guessed.
+- **The link comes from the invitation's conference field first, then the place, then the notes.** The first match wins. The conference field leads because it's where meeting services put the link, not because it can be trusted, since anyone can write an invitation. The exact-host check below is what protects people. The conference field is Google's `X-GOOGLE-CONFERENCE` or the online-meeting property Outlook writes, whose exact name is on the checks before building.
 - **Only `https` links on those exact hosts count.** Any other link gets no Join button, so an invitation can't dress up any address as "Join".
 - **No Google or Microsoft account is needed, and no API.** People can paste a meeting link into Where for their own events.
 
 #### Import
 
-A `.ics` file can be imported into a calendar the person can edit. An event already there, matched by UID, is updated rather than copied, under the same sequence rule as invitations, so importing the same file twice changes nothing and an older file can't undo a later change. Import can't change what the person couldn't change by hand, so an event someone else organised stays as it is.
+A `.ics` file can be imported into a calendar the person can edit. An event already there, matched by UID, is updated rather than copied, under the same sequence rule as invitations, so importing the same file twice changes nothing and an older file can't undo a later change. Import can't change what the person couldn't change by hand, so an invitation in a personal calendar whose organiser isn't on that calendar stays as it is.
 
 #### Not in the first release
 
 - **Phone sync.** CalDAV needs app passwords. See [Open questions](#open-questions).
 - **Who's free.** Showing a colleague's busy times is a privacy decision. See [Open questions](#open-questions).
-- **Reminders,** unless they're built before the release.
 - **Attaching Storage files to events.**
 - **Links for people outside the organisation,** for the same reason as [Storage](#storage): a link that works without signing in would have no access check behind it.
 
