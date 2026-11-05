@@ -22,6 +22,7 @@ import type { CivilDate, TimeZone } from "../types";
 import { calendarFill } from "./colours";
 import { controlsFor } from "./event-form";
 import { repeatText, whoCanSee, withLinks } from "./event-text";
+import { JoinButton, meetingOf } from "./join-button";
 import { type ShownEvent, whenOf } from "./shown-event";
 
 const FOCUS = "outline-accent focus-visible:outline-2";
@@ -237,6 +238,7 @@ export function EventCard({
 }) {
   const card = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const meeting = meetingOf(event);
   const [position, setPosition] = useState<{
     left: number;
     top: number;
@@ -289,6 +291,7 @@ export function EventCard({
         onClose={() => onClose(true)}
       />
       <EventFacts event={event} zone={zone} today={today} />
+      {meeting && <JoinButton link={meeting} />}
       <div className="flex flex-wrap gap-1.5">
         <Button
           variant="toolbar"
@@ -317,6 +320,7 @@ export function EventPanel({
 }) {
   const titleId = useId();
   const panel = useRef<HTMLElement>(null);
+  const meeting = meetingOf(event);
   // On a narrow screen the panel covers the grid, so focus moves here from the event.
   useEffect(() => {
     panel.current?.focus();
@@ -330,6 +334,12 @@ export function EventPanel({
     >
       <EventHeading event={event} titleId={titleId} onClose={onClose} />
       <EventFacts event={event} zone={zone} today={today} />
+      {meeting && (
+        <div className="flex flex-col gap-1.5">
+          <JoinButton link={meeting} />
+          <p className="text-xs break-all text-secondary">{meeting.url}</p>
+        </div>
+      )}
       {event.notes && (
         <p dir="auto" className="text-[13px] break-words whitespace-pre-wrap">
           <LinkedText text={event.notes} />

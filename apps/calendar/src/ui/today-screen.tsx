@@ -17,6 +17,7 @@ import { searchOf, todayIn } from "../schedule";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
 import { dayNumber, dayTitle, timeText, weekdayShort } from "./event-text";
+import { JoinButton, meetingOf } from "./join-button";
 import { deviceZone } from "./schedule-screen";
 import { type ShownEvent, shownEvents, spokenLabel } from "./shown-event";
 import {
@@ -119,42 +120,50 @@ function NextCard({
     next.kind === "today"
       ? `Next, ${untilText(next.start, now)}`
       : `Nothing else today. Next, tomorrow at ${timeText(next.start)}`;
+  const meeting = meetingOf(event);
+  // The event link covers the whole card, and Join sits above it, because one link
+  // can't hold another.
   return (
-    <EventLink
-      event={event}
-      day={day}
-      label={`${heading}. ${spokenLabel(event, zone, plan.today)}`}
-      className={`flex min-w-0 flex-col gap-2.5 rounded border border-l-4 border-y-line border-r-line p-3.5 hover:bg-field ${calendarBorder(event.calendar.colour)} ${FOCUS}`}
+    <div
+      className={`relative flex min-w-0 flex-col gap-2.5 rounded border border-l-4 border-y-line border-r-line p-3.5 hover:bg-field ${calendarBorder(event.calendar.colour)}`}
     >
-      <span className="text-xs font-semibold text-accent">{heading}</span>
-      <span className="text-lg font-semibold break-words">{event.title}</span>
-      <span className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] text-secondary">
-        <span className="flex items-center gap-1.5">
-          <IconClock size={15} stroke={1.75} aria-hidden />
-          {hoursText(hoursOnDay(event.time, day, zone))}
-        </span>
-        {event.location && (
+      <EventLink
+        event={event}
+        day={day}
+        label={`${heading}. ${spokenLabel(event, zone, plan.today)}`}
+        className="flex min-w-0 flex-col gap-2.5 outline-none after:absolute after:-inset-px after:rounded after:outline-accent focus-visible:after:outline-2"
+      >
+        <span className="text-xs font-semibold text-accent">{heading}</span>
+        <span className="text-lg font-semibold break-words">{event.title}</span>
+        <span className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] text-secondary">
+          <span className="flex items-center gap-1.5">
+            <IconClock size={15} stroke={1.75} aria-hidden />
+            {hoursText(hoursOnDay(event.time, day, zone))}
+          </span>
+          {event.location && (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <IconMapPin
+                size={15}
+                stroke={1.75}
+                className="flex-none"
+                aria-hidden
+              />
+              <span className="truncate">{event.location}</span>
+            </span>
+          )}
           <span className="flex min-w-0 items-center gap-1.5">
-            <IconMapPin
+            <IconCalendar
               size={15}
               stroke={1.75}
               className="flex-none"
               aria-hidden
             />
-            <span className="truncate">{event.location}</span>
+            <span className="truncate">{event.calendar.name}</span>
           </span>
-        )}
-        <span className="flex min-w-0 items-center gap-1.5">
-          <IconCalendar
-            size={15}
-            stroke={1.75}
-            className="flex-none"
-            aria-hidden
-          />
-          <span className="truncate">{event.calendar.name}</span>
         </span>
-      </span>
-    </EventLink>
+      </EventLink>
+      {meeting && <JoinButton link={meeting} />}
+    </div>
   );
 }
 
