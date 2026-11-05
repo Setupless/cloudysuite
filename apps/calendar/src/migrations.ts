@@ -159,4 +159,9 @@ export const MIGRATIONS: Migrations = [
     // Join button prefers to one in the place or notes. Null for everything else.
     `ALTER TABLE events ADD COLUMN conference TEXT`,
   ],
+  [
+    // The name the person had on the list when the email was due, so one taken off, or
+    // invited to an event since deleted, can still be named where Try again is.
+    `ALTER TABLE invitation_emails ADD COLUMN name TEXT`,
+  ],
 ];

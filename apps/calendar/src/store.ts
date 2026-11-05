@@ -66,7 +66,6 @@ import {
   keyOfPerson,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
-  type NotSent,
   type NotSentReason,
   type Occurrence,
   type OccurrenceId,
@@ -83,6 +82,8 @@ import {
   SKIP_REASONS,
   type SkipReason,
   type TimeZone,
+  type UnsentCancellation,
+  type UnsentTo,
 } from "./types";
 
 export type Actor = {
@@ -282,7 +283,7 @@ export type People = {
 
 // As read, with the invitation emails that didn't go, which only the organiser's
 // calendar has.
-export type HeldPeople = People & { notSent: ReadonlyMap<PersonKey, NotSent> };
+export type HeldPeople = People & { unsent: readonly UnsentTo[] };
 
 type PeopleRow = SqlRow & {
   uid: string;
@@ -346,26 +347,43 @@ export const isRemovedOnward = (
 
 const inUids = "uid IN (SELECT value FROM json_each(?))";
 
+type UnsentRow = SqlRow & {
+  uid: string;
+  recipient: string;
+  state: string;
+  reason: string | null;
+  name: string | null;
+};
+
+const UNSENT = "state IN ('refused', 'unclear')";
+
+// An email queued before names were kept names an address by itself.
+const unsentTo = (row: UnsentRow): UnsentTo => ({
+  key: row.recipient as PersonKey,
+  name:
+    row.name ??
+    (row.recipient.startsWith("mailto:")
+      ? row.recipient.slice("mailto:".length)
+      : "A colleague"),
+  notSent:
+    row.state === "unclear"
+      ? { kind: "unclear" }
+      : { kind: "refused", reason: row.reason as NotSentReason },
+});
+
 export function readPeople(
   db: SqlDriver,
   uids: readonly string[],
 ): Map<string, HeldPeople> {
-  const notSent = new Map<string, Map<PersonKey, NotSent>>();
+  const unsent = new Map<string, UnsentTo[]>();
   for (const row of db
-    .exec<{ uid: string; recipient: string; state: string; reason: string }>(
-      `SELECT uid, recipient, state, reason FROM invitation_emails
-       WHERE state IN ('refused', 'unclear') AND ${inUids}`,
+    .exec<UnsentRow>(
+      `SELECT uid, recipient, state, reason, name FROM invitation_emails
+       WHERE ${UNSENT} AND ${inUids}`,
       JSON.stringify(uids),
     )
     .toArray()) {
-    const forEvent = notSent.get(row.uid) ?? new Map();
-    notSent.set(row.uid, forEvent);
-    forEvent.set(
-      row.recipient as PersonKey,
-      row.state === "unclear"
-        ? { kind: "unclear" }
-        : { kind: "refused", reason: row.reason as NotSentReason },
-    );
+    unsent.set(row.uid, [...(unsent.get(row.uid) ?? []), unsentTo(row)]);
   }
   return new Map(
     db
@@ -381,7 +399,7 @@ export function readPeople(
           revision: row.revision,
           reply: row.reply === null ? null : (JSON.parse(row.reply) as Reply),
           // A copy's own queue holds only its answer to an organiser outside.
-          notSent: (row.reply === null && notSent.get(row.uid)) || new Map(),
+          unsent: (row.reply === null && unsent.get(row.uid)) || [],
         },
       ]),
   );
@@ -419,8 +437,15 @@ const deliveredPeople = (people: People): Attendee[] =>
 const shownPeople = (people: HeldPeople | undefined): Occurrence["people"] =>
   (people?.attendees ?? []).map((attendee) => ({
     ...attendeeOf(attendee),
-    notSent: people?.notSent.get(keyOfPerson(attendee)) ?? null,
+    notSent:
+      people?.unsent.find((one) => one.key === keyOfPerson(attendee))
+        ?.notSent ?? null,
   }));
+
+const takenOff = (people: HeldPeople | undefined): UnsentTo[] => {
+  const on = new Set(people?.attendees.map(keyOfPerson));
+  return (people?.unsent ?? []).filter((one) => !on.has(one.key));
+};
 
 const canEdit = (actor: Actor) => levelOfRole(actor.role) === "edit";
 
@@ -456,6 +481,7 @@ export const occurrenceOf = (
   organiser: series.organiser,
   changeable: mayChange(actor, series),
   people: shownPeople(people),
+  takenOff: takenOff(people),
   answer:
     people?.reply && people.reply.for === actor.userId
       ? people.reply.answer
@@ -750,20 +776,25 @@ export class EventStore {
       actor.calendarId,
       now,
     );
-    for (const recipient of new Set([...keysOf(before), ...keysOf(after)])) {
+    const names = new Map(
+      [...before, ...after].map((person) => [keyOfPerson(person), person.name]),
+    );
+    for (const [recipient, name] of names) {
       this.db.exec(
         `INSERT INTO invitation_emails (uid, recipient, calendar_id, changed_by, version,
-           state, tries, try_at)
-         VALUES (?, ?, ?, ?, 1, 'queued', 0, ?)
+           state, tries, try_at, name)
+         VALUES (?, ?, ?, ?, 1, 'queued', 0, ?, ?)
          ON CONFLICT (uid, recipient) DO UPDATE SET version = version + 1,
            state = 'queued', tries = 0, try_at = excluded.try_at, reason = NULL,
            calendar_id = excluded.calendar_id, changed_by = excluded.changed_by,
+           name = excluded.name,
            cancelled_date = CASE WHEN state = 'sent' AND sent = 'request' THEN ? END`,
         uid,
         recipient,
         actor.calendarId,
         actor.userId,
         now,
+        name,
         cancelledDate && JSON.stringify(cancelledDate),
       );
     }
@@ -2196,6 +2227,24 @@ export class EventStore {
       recipient,
     );
     return { status: "done" };
+  }
+
+  // A deleted event has no People list left to show these on.
+  unsentCancellations(): UnsentCancellation[] {
+    return this.#rows<UnsentRow & { gone: string }>(
+      `SELECT uid, recipient, state, reason, name, gone FROM invitation_emails
+       WHERE ${UNSENT} AND gone IS NOT NULL
+         AND uid NOT IN (SELECT uid FROM events)
+       ORDER BY uid, recipient`,
+    ).map((row) => {
+      const { series } = JSON.parse(row.gone) as GoneEvent;
+      return {
+        uid: row.uid as EventUid,
+        title: series.title,
+        time: series.time,
+        to: unsentTo(row),
+      };
+    });
   }
 
   organiserOf(uid: EventUid): UserId | null {

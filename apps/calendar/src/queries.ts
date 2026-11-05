@@ -13,6 +13,7 @@ import {
   getPeopleChoices,
   listEvents,
   listInvitations,
+  listUnsentCancellations,
 } from "./functions";
 import {
   type DayWindow,
@@ -86,7 +87,16 @@ export const calendarKeys = {
   search: (text: string, zone: TimeZone) =>
     ["calendar", "search", text, zone] as const,
   invitations: (zone: TimeZone) => ["calendar", "invitations", zone] as const,
+  unsentCancellations: (calendarId: CalendarId) =>
+    ["calendar", "unsentCancellations", calendarId] as const,
 };
+
+export const unsentCancellationsQuery = (calendarId: CalendarId) =>
+  queryOptions({
+    queryKey: calendarKeys.unsentCancellations(calendarId),
+    queryFn: () =>
+      call(() => listUnsentCancellations({ data: { calendarId } })),
+  });
 
 export const invitationsQuery = (timeZone: TimeZone) =>
   queryOptions({

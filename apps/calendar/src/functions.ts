@@ -62,6 +62,7 @@ import {
   PERSONAL_CALENDAR_MESSAGE,
   type Person,
   READ_ONLY_MESSAGE,
+  type UnsentCancellation,
   VIEW_ONLY_MESSAGE,
 } from "./types";
 import {
@@ -432,6 +433,14 @@ export const retryInvitationEmail = createServerFn({ method: "POST" })
     if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
     if (result.status === "gone") throw refusal(404, EVENT_GONE_MESSAGE);
   });
+
+export const listUnsentCancellations = createServerFn({ method: "GET" })
+  .validator(parseCalendarInput)
+  .handler(async ({ data }): Promise<UnsentCancellation[]> =>
+    (
+      await openCalendarAs((await me()).id, data.calendarId)
+    ).unsentCancellations(),
+  );
 
 export const answerInvitation = createServerFn({ method: "POST" })
   .validator(parseAnswerInput)
