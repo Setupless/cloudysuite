@@ -913,3 +913,35 @@ test("a colleague's own address, or their alias, invites them as a colleague", a
     }),
   ).toHaveLength(1);
 });
+
+test("one email that can't be read doesn't hold up the others", async () => {
+  await as(people.manager).createEvent({
+    data: {
+      calendarId: TEAM,
+      draft: planning({
+        people: [outside(OUTSIDE), outside("late@partner.example.org")],
+      }),
+    },
+  });
+  objects
+    .sqlite(TEAM)
+    .run(
+      "UPDATE invitation_emails SET cancelled_date = 'not a date', try_at = try_at - 1 WHERE recipient = ?",
+      [`mailto:${OUTSIDE}`],
+    );
+  await objects.settle();
+  expect(email.sent.map((one) => one.to)).toEqual(["late@partner.example.org"]);
+  expect(await notSent()).toEqual({
+    [OUTSIDE]: { kind: "refused", reason: "checkUnavailable" },
+  });
+  expect(objects.alarmOf(TEAM)).toBeNull();
+});
+
+test("an event that ends in the next year says that year", async () => {
+  await invite([outside(OUTSIDE)], {
+    time: timed("2026-12-31T23:00:00+11:00", "2027-01-01T01:00:00+11:00"),
+  });
+  expect(readEmail(email.sent[0]!.raw).subject).toBe(
+    "Invitation: Weekly planning, Thu 31 Dec, 23:00 to Fri 1 Jan 2027, 01:00 (Australia/Sydney)",
+  );
+});
