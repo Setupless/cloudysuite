@@ -248,7 +248,7 @@ test("an invitation from Google lands unanswered in the person's own calendar, w
   });
   expect(
     event!.people.map((person) => [person.kind, person.name, person.answer]),
-  ).toEqual([["colleague", "boss@example.com", "needsAnswer"]]);
+  ).toEqual([["colleague", "Boss", "needsAnswer"]]);
   expect(meetingLink(event!)).toEqual({
     service: "Google Meet",
     url: MEET,
@@ -595,9 +595,7 @@ test("answering an invitation from outside emails one reply, from the person's o
     ["boss@example.com", DANA],
   ]);
   const read = readEmail(email.sent[0]!.raw);
-  expect(read.headers.get("from")).toBe(
-    '"boss@example.com" <boss@example.com>',
-  );
+  expect(read.headers.get("from")).toBe('"Boss" <boss@example.com>');
   expect(read.headers.get("to")).toBe(`"Dana Wright" <${DANA}>`);
   expect(read.subject).toStartWith("Accepted: Supplier review, Tue 10 Nov");
   const calendar = partOfType(read, "text/calendar");

@@ -113,7 +113,7 @@ export async function receiveCalendarMail(
     { from, proved: mail.proved },
   );
   if (from && mail.proved) {
-    await takeReplies(env, person, from, events.filter(isReply));
+    await takeReplies(env, person.id, from, events.filter(isReply));
   }
 }
 
@@ -130,22 +130,34 @@ const partOf = (event: OutsideEvent): OutsidePart => ({
   cancelled: event.cancelled,
 });
 
-// The person whose calendar it is shows as themselves, so their answer is on the list.
-// Google lists the organiser as a guest too, and People already names them.
+type Person = { id: UserId; name: string };
+
+// The person whose calendar it is shows as themselves, by their own name, so their
+// answer is on the list and the sender can't choose what it's sent under. Google lists
+// the organiser as a guest too, and People already names them.
 function peopleOf(
   invited: InvitedPerson[],
   organiser: EmailAddress,
   colleagues: Map<EmailAddress, UserId>,
-  person: UserId,
+  person: Person,
 ): Attendee[] {
   const people = invited.flatMap((one): Attendee[] => {
     if (one.email === organiser) return [];
-    const name = (one.name ?? one.email).slice(0, MAX_PERSON_NAME_LENGTH);
     const answer = ANSWERS[one.answer];
     return [
-      colleagues.get(one.email) === person
-        ? { kind: "colleague", userId: person, name, answer }
-        : { kind: "outside", email: one.email, name, answer },
+      colleagues.get(one.email) === person.id
+        ? {
+            kind: "colleague",
+            userId: person.id,
+            name: person.name.slice(0, MAX_PERSON_NAME_LENGTH),
+            answer,
+          }
+        : {
+            kind: "outside",
+            email: one.email,
+            name: (one.name ?? one.email).slice(0, MAX_PERSON_NAME_LENGTH),
+            answer,
+          },
     ];
   });
   // Their own address and an alias of it are still one person.
@@ -160,7 +172,7 @@ function peopleOf(
 
 async function takeInvitations(
   env: Env,
-  person: UserId,
+  person: Person,
   taken: Taken<"request" | "cancel">[],
   sender: { from: EmailAddress | null; proved: boolean },
 ): Promise<void> {
@@ -185,14 +197,14 @@ async function takeInvitations(
   if (outside.length === 0) return;
   // The first invitation that reaches someone makes their calendar. Nothing else does.
   const calendarId = outside.some(({ method }) => method === "request")
-    ? await makePersonalCalendar(env.DB, person)
-    : await findPersonalCalendar(env.DB, person);
+    ? await makePersonalCalendar(env.DB, person.id)
+    : await findPersonalCalendar(env.DB, person.id);
   if (!calendarId) return;
   const receiver = mailReceiver(env, calendarId);
   for (const { method, group, event, organiser } of outside) {
     const invitation: OutsideInvitation = {
       method,
-      to: person,
+      to: person.id,
       uid: group.uid,
       organiser,
       series: group.series && partOf(group.series),

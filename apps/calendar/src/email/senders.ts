@@ -135,15 +135,17 @@ export async function colleaguesAt(
   return found;
 }
 
-// Whose own mailbox this is, by the same rule. A shared mailbox is no one person's.
+// Whose own mailbox this is, by the same rule. A shared mailbox is no one person's. The
+// name is the directory's, since an email can call them anything.
 export async function personOfMailbox(
   database: D1Database,
   mailboxId: MailboxId,
-): Promise<UserId | null> {
+): Promise<{ id: UserId; name: string } | null> {
   const [row] = await drizzle(database)
-    .select({ userId: mailboxAccess.userId })
+    .select({ id: user.id, name: user.name })
     .from(mailboxAccess)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
+    .innerJoin(user, eq(user.id, mailboxAccess.userId))
     .where(
       and(
         eq(mailboxAccess.mailboxId, mailboxId),
@@ -153,7 +155,7 @@ export async function personOfMailbox(
     )
     .orderBy(asc(mailboxAccess.createdAt), asc(mailboxAccess.userId))
     .limit(1);
-  return row?.userId ?? null;
+  return row ?? null;
 }
 
 // For the event dialog, and for a change that adds an address.
