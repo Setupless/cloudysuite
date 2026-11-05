@@ -20,6 +20,7 @@ async function refusalOf(database: D1Database, app: ToggleableApp) {
 test.each([
   ["mail", "storage", "turned Mail off"],
   ["storage", "mail", "turned Storage off"],
+  ["calendar", "storage", "turned Calendar off"],
 ] as const)(
   "%s is on until its own row says off, then refused in plain words",
   async (app, other, words) => {

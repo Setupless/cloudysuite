@@ -20,6 +20,7 @@ test("a real deployment's origins come from the stored domain, not the request",
     auth: "https://auth.example.com",
     mail: "https://mail.example.com",
     storage: "https://storage.example.com",
+    calendar: "https://calendar.example.com",
   });
 });
 
@@ -42,6 +43,7 @@ test.each([
     "http://auth.dev.localhost:8787",
     "http://mail.dev.localhost:8787",
     "http://storage.dev.localhost:8787",
+    "http://calendar.dev.localhost:8787",
   ],
   [
     "http://auth.dev.localhost/",
@@ -49,12 +51,14 @@ test.each([
     "https://auth.dev.localhost",
     "https://mail.dev.localhost",
     "https://storage.dev.localhost",
+    "https://calendar.dev.localhost",
   ],
-])("local dev server at %s", (url, headers, auth, mail, storage) => {
+])("local dev server at %s", (url, headers, auth, mail, storage, calendar) => {
   expect(appOrigins("dev.localhost", request(url, headers))).toEqual({
     auth,
     mail,
     storage,
+    calendar,
   });
 });
 
@@ -62,6 +66,7 @@ test.each([
   "https://mail.example.com/",
   "https://mail.example.com/inbox/1?q=a#b",
   "https://auth.example.com/",
+  "https://calendar.example.com/schedule",
   "https://MAIL.example.com/inbox",
 ])("%s is an allowed return address", (url) => {
   expect(safeReturnUrl(url, production)).toBe(new URL(url).href);
@@ -71,7 +76,7 @@ test.each([
   "https://evil.net/",
   "https://mail.example.com.evil.net/",
   "https://evilmail.example.com/",
-  "https://calendar.example.com/",
+  "https://docs.example.com/",
   "https://example.com/",
   "http://mail.example.com/",
   "https://mail.example.com:8443/",
@@ -126,6 +131,7 @@ test.each([
     auth: "http://auth.dev.localhost:8787",
     mail: "http://mail.dev.localhost:8787",
     storage: "http://storage.dev.localhost:8787",
+    calendar: "http://calendar.dev.localhost:8787",
   });
 });
 

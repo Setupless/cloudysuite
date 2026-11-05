@@ -6,6 +6,7 @@ import { gate, type HostRoute, resolveHost, type Settings } from "./routing";
 const allOn: Settings = { primaryDomain: "example.com", disabled: new Set() };
 const mailOff: Settings = { ...allOn, disabled: new Set(["mail"]) };
 const storageOff: Settings = { ...allOn, disabled: new Set(["storage"]) };
+const calendarOff: Settings = { ...allOn, disabled: new Set(["calendar"]) };
 const notSetUp: Settings = { primaryDomain: null, disabled: new Set() };
 
 test.each([
@@ -17,6 +18,9 @@ test.each([
   ["storage.example.com", allOn, { kind: "app", app: "storage" }],
   ["storage.example.com", storageOff, { kind: "off", app: "storage" }],
   ["mail.example.com", storageOff, { kind: "app", app: "mail" }],
+  ["calendar.example.com", allOn, { kind: "app", app: "calendar" }],
+  ["calendar.example.com", calendarOff, { kind: "off", app: "calendar" }],
+  ["mail.example.com", calendarOff, { kind: "app", app: "mail" }],
   [
     "mail.EXAMPLE.com",
     { ...allOn, primaryDomain: "Example.com" },
@@ -35,7 +39,7 @@ test.each([
   "mail.example.com.evil.net",
   "evilmail.example.com",
   "example.com",
-  "calendar.example.com",
+  "docs.example.com",
   "a.mail.example.com",
   "mail.evil.example.com",
   "constructor.example.com",
@@ -148,6 +152,27 @@ test.each(STORAGE_REQUESTS)(
     expect(gate(storageIsOff, calling(path, method))).toEqual({
       action: "refuse",
       app: "storage",
+    });
+  },
+);
+
+const calendarIsOff: HostRoute = { kind: "off", app: "calendar" };
+
+test.each([
+  ["GET", "/"],
+  ["GET", "/schedule"],
+  ["GET", "/pwa/session"],
+  ["POST", "/_serverFn/anything"],
+] as const)(
+  "%s %s on Calendar while it is off goes to the off page, or is refused when a page calls it",
+  (method, path) => {
+    expect(gate(calendarIsOff, opening(path, method))).toEqual({
+      action: "redirect",
+      to: "/off",
+    });
+    expect(gate(calendarIsOff, calling(path, method))).toEqual({
+      action: "refuse",
+      app: "calendar",
     });
   },
 );
