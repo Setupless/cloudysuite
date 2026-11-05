@@ -90,6 +90,7 @@ export const heldAfter = (
   plan.method === "cancel" && plan.why !== "dateCancelled"
     ? "cancel"
     : "request";
+
 export type EmailPlanOrganiser = { userId: UserId; name: string | null };
 
 // The event was deleted, or its whole team calendar was.
