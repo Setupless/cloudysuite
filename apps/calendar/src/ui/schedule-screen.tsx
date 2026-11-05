@@ -45,7 +45,7 @@ const VIEW_NAMES: Record<ScheduleView, string> = {
 // place it opened in.
 type OpenCard = { key: OccurrenceKey; anchor: HTMLElement; at: string };
 
-const deviceZone = () =>
+export const deviceZone = () =>
   parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
   ("UTC" as TimeZone);
 
