@@ -56,6 +56,7 @@
         "@cloudysuite/access": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/search": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-hotkeys": "0.20.1",
@@ -93,6 +94,7 @@
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/search": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
@@ -118,6 +120,9 @@
     },
     "packages/object-sql": {
       "name": "@cloudysuite/object-sql",
+    },
+    "packages/search": {
+      "name": "@cloudysuite/search",
     },
     "packages/transfer": {
       "name": "@cloudysuite/transfer",
@@ -210,6 +215,8 @@
     "@cloudysuite/mail": ["@cloudysuite/mail@workspace:apps/mail"],
 
     "@cloudysuite/object-sql": ["@cloudysuite/object-sql@workspace:packages/object-sql"],
+
+    "@cloudysuite/search": ["@cloudysuite/search@workspace:packages/search"],
 
     "@cloudysuite/storage": ["@cloudysuite/storage@workspace:apps/storage"],
 

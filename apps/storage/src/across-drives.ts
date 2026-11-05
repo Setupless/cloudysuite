@@ -1,4 +1,5 @@
 import type { DriveId, UserId } from "@cloudysuite/access";
+import { askEach } from "@cloudysuite/search";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
@@ -11,15 +12,10 @@ import type { DriveClient } from "./client";
 import type { DriveSearch } from "./search-query";
 import type { MoveNotice, SearchLine, StarredLine } from "./types";
 
-// Workers allows six open connections at once, and the rest of the request needs some.
-const DRIVES_AT_ONCE = 5;
 const SEARCH_LINES_PER_DRIVE = 50;
 const SEARCH_LINES_SHOWN = 100;
 const STARRED_PER_DRIVE = 200;
 const STARRED_SHOWN = 200;
-// Long enough for a Drive object that has to wake first, short enough that stuck drives
-// can't leave the page waiting with no results. It covers asking all of them, not each one.
-const DRIVES_DEADLINE_MS = 5_000;
 
 // Null name for a drive this person isn't on, whose name they must not learn.
 type DriveToAsk = { driveId: DriveId; name: string | null };
@@ -53,58 +49,11 @@ async function drivesToAsk(
   ];
 }
 
-// Being refused means this person has no access any more, so there is nothing of theirs to
-// show. A drive that fails, answers after the deadline, or isn't reached by then is missing.
-type Outcome<Answer> = { answer: Answer } | "refused" | "missing";
-
-async function askEach<Answer>(
+const askDrives = <Answer>(
   list: readonly DriveToAsk[],
   open: OpenDrive,
   ask: (drive: DriveClient, entry: DriveToAsk) => Promise<Answer>,
-): Promise<{ answers: Answer[]; incomplete: boolean }> {
-  const outcomes: Outcome<Answer>[] = list.map(() => "missing");
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<"late">((resolve) => {
-    timer = setTimeout(() => resolve("late"), DRIVES_DEADLINE_MS);
-  });
-  let next = 0;
-  const worker = async () => {
-    for (let index = next++; index < list.length; index = next++) {
-      const entry = list[index]!;
-      try {
-        const outcome = await Promise.race([
-          open(entry.driveId)
-            .then((drive) => ask(drive, entry))
-            .then((answer) => ({ answer })),
-          late,
-        ]);
-        if (outcome === "late") return;
-        outcomes[index] = outcome;
-      } catch (thrown) {
-        if (thrown instanceof Response && thrown.status === 403) {
-          outcomes[index] = "refused";
-        } else {
-          console.error("Could not read one drive.", thrown);
-        }
-      }
-    }
-  };
-  try {
-    await Promise.all(Array.from({ length: DRIVES_AT_ONCE }, worker));
-  } finally {
-    clearTimeout(timer);
-  }
-  const missing = outcomes.filter((outcome) => outcome === "missing").length;
-  if (missing > 0) {
-    console.error(`Answered without ${missing} of ${list.length} drives.`);
-  }
-  return {
-    answers: outcomes.flatMap((outcome) =>
-      typeof outcome === "object" ? [outcome.answer] : [],
-    ),
-    incomplete: missing > 0,
-  };
-}
+) => askEach(list, async (entry) => ask(await open(entry.driveId), entry));
 
 export type SearchRow = SearchLine & {
   driveId: DriveId;
@@ -126,7 +75,7 @@ export async function searchDrives(
   open: OpenDrive,
   search: DriveSearch,
 ): Promise<SearchAnswer> {
-  const { answers, incomplete } = await askEach(
+  const { answers, incomplete } = await askDrives(
     await drivesToAsk(database, me),
     open,
     async (drive, { driveId, name }) => {
@@ -166,7 +115,7 @@ export async function moveNoticesAcrossDrives(
     .selectDistinct({ driveId: driveMoveNotices.driveId })
     .from(driveMoveNotices)
     .where(eq(driveMoveNotices.userId, me));
-  const { answers } = await askEach(
+  const { answers } = await askDrives(
     indexed.map(({ driveId }) => ({ driveId, name: null })),
     open,
     async (drive, { driveId }) =>
@@ -185,7 +134,7 @@ export async function starredAcrossDrives(
   me: UserId,
   open: OpenDrive,
 ): Promise<{ rows: StarredRow[]; incomplete: boolean }> {
-  const { answers, incomplete } = await askEach(
+  const { answers, incomplete } = await askDrives(
     await drivesToAsk(database, me),
     open,
     async (drive, { driveId }) =>

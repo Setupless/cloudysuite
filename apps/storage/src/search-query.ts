@@ -1,17 +1,18 @@
 // Shared with the browser, so nothing here may import server code.
 import type { UserId } from "@cloudysuite/access";
+import {
+  MAX_SEARCH_WORDS,
+  phraseTerm,
+  type SearchTerm,
+  wordsOf,
+  wordTerms,
+} from "@cloudysuite/search";
 import { FILE_TYPES, type FileType } from "./file-types";
 
 export const MAX_SEARCH_LENGTH = 200;
-// FTS5 gives up on very deep expressions, and no name holds this many words.
-const MAX_WORDS = 16;
 
 export type ItemType = FileType | "folder";
 export const ITEM_TYPES: readonly ItemType[] = ["folder", ...FILE_TYPES];
-
-// A term holds words of letters, numbers, and marks joined by single spaces, so it can't
-// close the quotes it goes inside or spell an FTS5 operator. A quoted phrase is one term.
-type SearchTerm = string & { readonly __brand: "SearchTerm" };
 
 type Narrowing = {
   terms: SearchTerm[];
@@ -33,13 +34,6 @@ export type ParsedSearch =
   { ok: true; query: SearchQuery } | { ok: false; problem: string };
 
 const TOKEN = /([^\s":]+):(?:"([^"]*)"?|(\S*))|"([^"]*)"?|(\S+)/gu;
-
-// Everything but letters, numbers, and marks splits words, which is what the index does
-// to names. A word of marks alone, which the index holds nothing for, is dropped.
-export const wordsOf = (text: string): string[] =>
-  text
-    .split(/[^\p{L}\p{N}\p{M}\p{Co}]+/u)
-    .filter((word) => /[\p{L}\p{N}\p{Co}]/u.test(word));
 
 export const shown = (value: string) =>
   value.length > 40 ? `${value.slice(0, 40)}…` : value;
@@ -108,10 +102,10 @@ export function parseSearch(text: string, timeZone: string): ParsedSearch {
     changedBefore: null,
   };
   const addWords = (words: string, asPhrase: boolean) => {
-    const found = wordsOf(words);
-    if (found.length === 0) return;
-    const terms = asPhrase ? [found.join(" ")] : found;
-    query.terms.push(...(terms as SearchTerm[]));
+    const phrase = asPhrase ? phraseTerm(words) : null;
+    query.terms.push(
+      ...(asPhrase ? (phrase ? [phrase] : []) : wordTerms(words)),
+    );
   };
 
   for (const match of text.matchAll(TOKEN)) {
@@ -166,10 +160,10 @@ export function parseSearch(text: string, timeZone: string): ParsedSearch {
     }
   }
 
-  if (query.terms.length > MAX_WORDS) {
+  if (query.terms.length > MAX_SEARCH_WORDS) {
     return {
       ok: false,
-      problem: `That search has too many words. Use up to ${MAX_WORDS}.`,
+      problem: `That search has too many words. Use up to ${MAX_SEARCH_WORDS}.`,
     };
   }
   const narrowsSomething =
@@ -187,8 +181,3 @@ export function parseSearch(text: string, timeZone: string): ParsedSearch {
   }
   return { ok: true, query };
 }
-
-// Every term must start a word in the name, in any order, and a phrase's words must
-// come one after another.
-export const toMatchExpression = (terms: readonly SearchTerm[]) =>
-  terms.length === 0 ? null : terms.map((term) => `"${term}"*`).join(" AND ");
