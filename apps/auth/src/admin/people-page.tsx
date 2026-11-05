@@ -32,7 +32,7 @@ import {
 import { AddressField } from "./address-field";
 import { AdminPage } from "./admin-page";
 import type { DriveToClaim } from "./handover";
-import { handedOverName } from "./handover-text";
+import { handedOverName, needsRecipient } from "./handover-text";
 import type { InviteRow, PersonRow } from "./people";
 import { type LimitKey, StorageLimitForm } from "./storage-limit-form";
 
@@ -248,15 +248,52 @@ const ACTIONS: Record<
   },
 };
 
-const folderCount = (count: number) =>
-  count === 1 ? "A team folder" : `${count} team folders`;
+const countOf = (count: number, thing: string) =>
+  count === 1 ? `a ${thing}` : `${count} ${thing}s`;
+
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function handOverText(
+  { name, toHand: { files, calendars } }: PersonRow,
+  recipient: string,
+): string {
+  const parts = [
+    files.personal &&
+      `Their My files arrives for ${recipient} as a new team folder called "${handedOverName("files", name)}", and ${recipient} manages it.`,
+    files.aloneIn > 0 &&
+      `${sentence(countOf(files.aloneIn, "team folder"))} only ${name} was on ${files.aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`,
+    calendars.personal &&
+      `Their calendar arrives for ${recipient} as a new team calendar called "${handedOverName("calendars", name)}", with all its events, and ${recipient} manages it.`,
+    calendars.aloneIn > 0 &&
+      `${sentence(countOf(calendars.aloneIn, "team calendar"))} only ${name} was on ${calendars.aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`,
+  ];
+  return parts.filter(Boolean).join(" ");
+}
+
+function managedAloneText({
+  name,
+  toHand: { files, calendars },
+}: PersonRow): string | null {
+  const total = files.managedAlone + calendars.managedAlone;
+  if (total === 0) return null;
+  const what = [
+    files.managedAlone > 0 && countOf(files.managedAlone, "team folder"),
+    calendars.managedAlone > 0 &&
+      countOf(calendars.managedAlone, "team calendar"),
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  return `${sentence(what)} ${name} managed alone ${total === 1 ? "stays with the people on it" : "stay with the people on them"}, and one of them becomes the manager.`;
+}
 
 function RecipientField({
+  label = "Who receives their files",
   value,
   people,
   disabled,
   onChange,
 }: {
+  label?: string;
   value: string;
   people: readonly PersonRow[];
   disabled: boolean;
@@ -264,7 +301,7 @@ function RecipientField({
 }) {
   return (
     <SelectField
-      label="Who receives their files"
+      label={label}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -291,8 +328,16 @@ function RemoveDialog({
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [recipientId, setRecipientId] = useState("");
-  const { myFiles, aloneIn, managedAlone } = person.filesToHand;
-  const needsRecipient = myFiles || aloneIn > 0;
+  const filesToHand = needsRecipient(person.toHand.files);
+  const calendarsToHand = needsRecipient(person.toHand.calendars);
+  const mustChoose = filesToHand || calendarsToHand;
+  const what =
+    filesToHand && calendarsToHand
+      ? "files and calendars"
+      : filesToHand
+        ? "files"
+        : "calendars";
+  const stayWithTheirPeople = managedAloneText(person);
   const recipient =
     others.find((other) => other.id === recipientId)?.name ??
     "the person you choose";
@@ -307,31 +352,23 @@ function RemoveDialog({
         mailbox. No mail is deleted: their mailbox stays, and you can give
         someone else access under Email addresses.
       </p>
-      {needsRecipient && (
+      {mustChoose && (
         <>
           <RecipientField
+            label={`Who receives their ${what}`}
             value={recipientId}
             people={others}
             disabled={pending !== null}
             onChange={setRecipientId}
           />
           <p className="text-sm text-secondary">
-            None of their files are deleted, and you don't get to see them
-            unless you choose yourself.
-            {myFiles &&
-              ` Their My files arrives for ${recipient} as a new team folder called "${handedOverName(person.name)}", and ${recipient} manages it.`}
-            {aloneIn > 0 &&
-              ` ${folderCount(aloneIn)} only ${person.name} was on ${aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`}
+            None of their {what} are deleted, and you don't get to see them
+            unless you choose yourself. {handOverText(person, recipient)}
           </p>
         </>
       )}
-      {managedAlone > 0 && (
-        <p className="text-sm text-secondary">
-          {folderCount(managedAlone)} {person.name} managed alone{" "}
-          {managedAlone === 1 ? "stays" : "stay"} with the people on{" "}
-          {managedAlone === 1 ? "it" : "them"}, and one of them becomes the
-          manager.
-        </p>
+      {stayWithTheirPeople && (
+        <p className="text-sm text-secondary">{stayWithTheirPeople}</p>
       )}
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end gap-2">
@@ -341,7 +378,7 @@ function RemoveDialog({
         <Button
           variant="danger"
           pending={pending !== null}
-          disabled={needsRecipient && recipientId === ""}
+          disabled={mustChoose && recipientId === ""}
           onClick={() =>
             run("remove", async () => {
               const outcome = await removeMember({

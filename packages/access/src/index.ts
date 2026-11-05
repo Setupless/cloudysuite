@@ -266,6 +266,9 @@ export const ensurePersonalDrive = (db: DrizzleD1Database, userId: UserId) =>
 // Not avatar-1, because a blue personal calendar was hard to tell from a blue team one.
 export const PERSONAL_CALENDAR_COLOUR = 4;
 
+// Each new team calendar takes the next of these, so none looks like a personal one.
+export const TEAM_CALENDAR_COLOURS = [1, 2, 3, 5, 6] as const;
+
 // Safe to repeat for the same reason as ensurePersonalDrive, and one batch, so the
 // calendar is never left without its person on it.
 export async function ensurePersonalCalendar(

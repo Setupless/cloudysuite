@@ -3,13 +3,14 @@ import type { CalendarRole, UserId } from "@cloudysuite/access";
 import * as start from "@tanstack/react-start";
 import * as startServer from "@tanstack/react-start/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { handOver } from "../../auth/src/admin/handover";
 import {
   createKit,
   type Kit,
   PASSWORD,
   signIn,
 } from "../../auth/src/admin/test-kit";
-import { createCalendarTest, draft, SYDNEY, TEAM } from "./test-support";
+import { createCalendarTest, date, draft, SYDNEY, TEAM } from "./test-support";
 import {
   type EventTime,
   LAST_MANAGER_MESSAGE,
@@ -370,4 +371,81 @@ test("everyone on a team calendar sees its new colour", async () => {
     data: { calendarId: TEAM, colour: 5 },
   });
   expect(await teamFor(people.viewer)).toMatchObject({ colour: 5 });
+});
+
+test("removing someone hands their calendar to the person chosen, events and all", async () => {
+  const removed = people.editor;
+  kit.sqlite.run("UPDATE user SET name = 'Sam Rivera' WHERE id = ?", [removed]);
+  const theirs = await as(removed).ensureMyCalendar();
+  await as(removed).createEvent({
+    data: {
+      calendarId: theirs,
+      draft: draft(
+        timed("2026-11-10T15:00:00+11:00", "2026-11-10T16:00:00+11:00"),
+        { title: "Supplier call" },
+      ),
+    },
+  });
+  const planning = await as(removed).createEvent({
+    data: {
+      calendarId: TEAM,
+      draft: draft(
+        timed("2026-11-11T09:00:00+11:00", "2026-11-11T10:00:00+11:00"),
+        { title: "Planning" },
+      ),
+    },
+  });
+
+  await handOver(kit.database, removed, "Sam Rivera", people.viewer);
+  await kit.auth.api.removeUser({
+    headers: new Headers({ cookie: cookies.get(people.manager)! }),
+    body: { userId: removed },
+  });
+
+  const recipient = as(people.viewer);
+  const handed = (await recipient.getCalendars()).find(
+    (entry) => entry.id === theirs,
+  );
+  expect(handed).toMatchObject({
+    kind: "team",
+    name: "Sam Rivera's calendar",
+    role: "manager",
+  });
+  expect(handed?.colour).not.toBe(4);
+  expect(
+    await recipient.getMembers({ data: { calendarId: theirs } }),
+  ).toMatchObject([{ person: { id: people.viewer }, role: "manager" }]);
+  const november = { from: date("2026-11-01"), to: date("2026-12-01") };
+  const { occurrences } = await recipient.listEvents({
+    data: { ...november, timeZone: SYDNEY },
+  });
+  expect(occurrences).toContainEqual(
+    expect.objectContaining({ calendarId: theirs, title: "Supplier call" }),
+  );
+  expect(
+    kit.rows(`SELECT 1 FROM calendar_access WHERE user_id = '${removed}'`),
+  ).toEqual([]);
+
+  // Their event on the team calendar stays, and Can edit there can still change it.
+  await as(people.manager).updateEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid: planning, occurrenceId: null },
+      scope: "all",
+      draft: draft(
+        timed("2026-11-11T10:00:00+11:00", "2026-11-11T11:00:00+11:00"),
+        { title: "Planning, moved" },
+      ),
+    },
+  });
+  const team = await as(people.manager).listEvents({
+    data: { ...november, timeZone: SYDNEY },
+  });
+  expect(team.occurrences).toContainEqual(
+    expect.objectContaining({
+      calendarId: TEAM,
+      title: "Planning, moved",
+      organiser: { kind: "madeHere", userId: removed },
+    }),
+  );
 });

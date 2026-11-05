@@ -1,11 +1,11 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { DriveId, UserId } from "../../../../src/db/schema";
+import type { CalendarId, DriveId, UserId } from "../../../../src/db/schema";
 import {
   appointNextManagers,
   claimDrive,
-  handOverFiles,
+  handOver,
   listDrivesToClaim,
-  readFilesToHand,
+  readToHand,
 } from "./handover";
 import { createKit, type Kit, PASSWORD } from "./test-kit";
 
@@ -18,6 +18,11 @@ const MY_FILES = "11111111-1111-4111-8111-111111111111" as DriveId;
 const ALONE = "22222222-2222-4222-8222-222222222222" as DriveId;
 const MANAGED = "33333333-3333-4333-8333-333333333333" as DriveId;
 const SHARED_OUT = "44444444-4444-4444-8444-444444444444" as DriveId;
+
+const THEIR_CALENDAR = "55555555-5555-4555-8555-555555555555" as CalendarId;
+const CALENDAR_ALONE = "66666666-6666-4666-8666-666666666666" as CalendarId;
+const WITH_AN_EDITOR = "77777777-7777-4777-8777-777777777777" as CalendarId;
+const ALL_VIEWERS = "88888888-8888-4888-8888-888888888888" as CalendarId;
 
 async function person(email: string, name: string) {
   const { user } = await kit.auth.api.createUser({
@@ -39,6 +44,33 @@ const drive = (id: DriveId) =>
       owner_id: string | null;
     }[]
   )[0];
+
+const calendarAccess = (calendarId: CalendarId) =>
+  kit.rows(
+    `SELECT user_id, role FROM calendar_access WHERE calendar_id = '${calendarId}' ORDER BY user_id`,
+  ) as { user_id: string; role: string }[];
+
+const calendar = (id: CalendarId) =>
+  (
+    kit.rows(
+      `SELECT kind, name, owner_id, colour FROM calendars WHERE id = '${id}'`,
+    ) as {
+      kind: string;
+      name: string | null;
+      owner_id: string | null;
+      colour: number;
+    }[]
+  )[0];
+
+const everything = () =>
+  JSON.stringify([
+    drive(MY_FILES),
+    ...[MY_FILES, ALONE, MANAGED, SHARED_OUT].map(access),
+    calendar(THEIR_CALENDAR),
+    ...[THEIR_CALENDAR, CALENDAR_ALONE, WITH_AN_EDITOR, ALL_VIEWERS].map(
+      calendarAccess,
+    ),
+  ]);
 
 beforeEach(async () => {
   kit = await createKit();
@@ -71,20 +103,54 @@ beforeEach(async () => {
   add(MANAGED, ada, "editor", 3);
   add(SHARED_OUT, ada, "manager", 1);
   add(SHARED_OUT, ben, "editor", 2);
+
+  kit.sqlite.run(
+    "INSERT INTO calendars (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+    [THEIR_CALENDAR, ben],
+  );
+  for (const [id, name] of [
+    [CALENDAR_ALONE, "Ben's planning"],
+    [WITH_AN_EDITOR, "Launch"],
+    [ALL_VIEWERS, "Rota"],
+  ] as const) {
+    kit.sqlite.run(
+      "INSERT INTO calendars (id, kind, name, colour) VALUES (?, 'team', ?, 1)",
+      [id, name],
+    );
+  }
+  const join = (id: string, userId: string, role: string, at: number) =>
+    kit.sqlite.run(
+      "INSERT INTO calendar_access (calendar_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
+      [id, userId, role, at],
+    );
+  join(THEIR_CALENDAR, ben, "manager", 1);
+  join(CALENDAR_ALONE, ben, "manager", 1);
+  join(WITH_AN_EDITOR, ben, "manager", 1);
+  join(WITH_AN_EDITOR, cam, "viewer", 2);
+  join(WITH_AN_EDITOR, ada, "editor", 3);
+  join(ALL_VIEWERS, ben, "manager", 1);
+  join(ALL_VIEWERS, cam, "viewer", 2);
+  join(ALL_VIEWERS, ada, "viewer", 3);
 });
 
-test("the dialog learns what would have nobody", async () => {
-  const files = await readFilesToHand(kit.database);
-  expect(files.get(ben)).toEqual({
-    myFiles: true,
-    aloneIn: 1,
-    managedAlone: 1,
+async function remove(personId: UserId) {
+  await kit.auth.api.removeUser({
+    headers: await adminHeaders(),
+    body: { userId: personId },
   });
-  expect(files.get(cam)).toBeUndefined();
+}
+
+test("the dialog learns what would have nobody", async () => {
+  const toHand = await readToHand(kit.database);
+  expect(toHand.get(ben)).toEqual({
+    files: { personal: true, aloneIn: 1, managedAlone: 1 },
+    calendars: { personal: true, aloneIn: 1, managedAlone: 2 },
+  });
+  expect(toHand.get(cam)).toBeUndefined();
 });
 
 test("My files arrives as a team folder named after the person, and managed by the recipient", async () => {
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
   expect(drive(MY_FILES)).toEqual({
     kind: "team",
     name: "Ben Okafor's files",
@@ -94,7 +160,7 @@ test("My files arrives as a team folder named after the person, and managed by t
 });
 
 test("a team folder only they were on goes to the same person", async () => {
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
   await kit.auth.api.removeUser({
     headers: await adminHeaders(),
     body: { userId: ben },
@@ -104,7 +170,7 @@ test("a team folder only they were on goes to the same person", async () => {
 });
 
 test("a team folder they managed alone stays with its people, and Can edit counts first", async () => {
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
   await kit.auth.api.removeUser({
     headers: await adminHeaders(),
     body: { userId: ben },
@@ -122,42 +188,36 @@ test("a team folder with another manager gets no new manager", async () => {
     "UPDATE drive_access SET role = 'manager' WHERE drive_id = ? AND user_id = ?",
     [MANAGED, cam],
   );
-  await handOverFiles(kit.database, ben, "Ben Okafor", kit.admin);
+  await handOver(kit.database, ben, "Ben Okafor", kit.admin);
   expect(access(MANAGED)).toContainEqual({ user_id: ada, role: "editor" });
 });
 
-test("with nothing to hand over, their team folders still get a manager", async () => {
+test("with nothing to hand over, their team folders and calendars still get a manager", async () => {
   await appointNextManagers(kit.database, ben);
   expect(access(MANAGED)).toContainEqual({ user_id: ada, role: "manager" });
+  expect(calendarAccess(WITH_AN_EDITOR)).toContainEqual({
+    user_id: ada,
+    role: "manager",
+  });
   // Not My files, and not the folder only they were on.
   expect(drive(MY_FILES)?.kind).toBe("personal");
   expect(access(ALONE)).toEqual([{ user_id: ben, role: "manager" }]);
 });
 
 test("repeating after the account couldn't be removed changes nothing", async () => {
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
-  const first = JSON.stringify([
-    drive(MY_FILES),
-    access(MY_FILES),
-    access(ALONE),
-    access(MANAGED),
-    access(SHARED_OUT),
-  ]);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  const first = everything();
   // Removing the account failed here, so the admin chooses Remove again.
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
-  expect(
-    JSON.stringify([
-      drive(MY_FILES),
-      access(MY_FILES),
-      access(ALONE),
-      access(MANAGED),
-      access(SHARED_OUT),
-    ]),
-  ).toBe(first);
-  // Even if they choose someone else the second time, the files stay where they went.
-  await handOverFiles(kit.database, ben, "Ben Okafor", kit.admin);
-  expect(access(MY_FILES)).toEqual([{ user_id: cam, role: "manager" }]);
-  expect(access(ALONE).map((row) => row.user_id)).not.toContain(kit.admin);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  expect(everything()).toBe(first);
+  // Even if they choose someone else the second time, everything stays where it went.
+  await handOver(kit.database, ben, "Ben Okafor", kit.admin);
+  expect(everything()).toBe(first);
+
+  await remove(ben);
+  const removed = everything();
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  expect(everything()).toBe(removed);
 });
 
 test("a failure part way leaves nothing changed, and the repeat finishes it", async () => {
@@ -166,9 +226,9 @@ test("a failure part way leaves nothing changed, and the repeat finishes it", as
     `CREATE TRIGGER refuse_promotion BEFORE UPDATE OF role ON drive_access
      BEGIN SELECT raise(ABORT, 'database unavailable'); END`,
   );
-  await expect(
-    handOverFiles(kit.database, ben, "Ben Okafor", cam),
-  ).rejects.toThrow("database unavailable");
+  await expect(handOver(kit.database, ben, "Ben Okafor", cam)).rejects.toThrow(
+    "database unavailable",
+  );
   expect(drive(MY_FILES)).toEqual({
     kind: "personal",
     name: "My files",
@@ -176,11 +236,64 @@ test("a failure part way leaves nothing changed, and the repeat finishes it", as
   });
   expect(access(MY_FILES)).toEqual([{ user_id: ben, role: "manager" }]);
   expect(access(ALONE)).toEqual([{ user_id: ben, role: "manager" }]);
+  expect(calendar(THEIR_CALENDAR)?.kind).toBe("personal");
+  expect(calendarAccess(CALENDAR_ALONE)).toEqual([
+    { user_id: ben, role: "manager" },
+  ]);
 
   kit.sqlite.run("DROP TRIGGER refuse_promotion");
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
   expect(drive(MY_FILES)?.kind).toBe("team");
   expect(access(ALONE)).toContainEqual({ user_id: cam, role: "manager" });
+  expect(calendar(THEIR_CALENDAR)?.kind).toBe("team");
+});
+
+test("their calendar arrives as a team calendar named after them, and managed by the recipient", async () => {
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  await remove(ben);
+  const handed = calendar(THEIR_CALENDAR);
+  expect(handed).toMatchObject({
+    kind: "team",
+    name: "Ben Okafor's calendar",
+    owner_id: null,
+  });
+  // A team calendar never takes a personal calendar's colour.
+  expect([1, 2, 3, 5, 6]).toContain(handed?.colour ?? 0);
+  expect(calendarAccess(THEIR_CALENDAR)).toEqual([
+    { user_id: cam, role: "manager" },
+  ]);
+});
+
+test("each team calendar they managed alone gets a manager, the way a team folder does", async () => {
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  await remove(ben);
+  // Nobody else was on it, so it goes to the person chosen.
+  expect(calendarAccess(CALENDAR_ALONE)).toEqual([
+    { user_id: cam, role: "manager" },
+  ]);
+  expect(calendar(CALENDAR_ALONE)?.name).toBe("Ben's planning");
+  // Can edit counts first, even for someone who joined later.
+  expect(calendarAccess(WITH_AN_EDITOR)).toEqual(
+    [
+      { user_id: ada, role: "manager" },
+      { user_id: cam, role: "viewer" },
+    ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
+  );
+  // With only Can view left, whoever has been on it longest.
+  expect(calendarAccess(ALL_VIEWERS)).toEqual(
+    [
+      { user_id: ada, role: "viewer" },
+      { user_id: cam, role: "manager" },
+    ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
+  );
+  expect(
+    kit.rows(`SELECT 1 FROM calendar_access WHERE user_id = '${ben}'`),
+  ).toEqual([]);
+});
+
+test("their own calendar's name fits the longest name a calendar can have", async () => {
+  await handOver(kit.database, ben, "B".repeat(300), cam);
+  expect(calendar(THEIR_CALENDAR)?.name).toHaveLength(100);
 });
 
 // Storage limits arrive in their own change. Once the column exists this test runs for
@@ -192,7 +305,7 @@ test("handing over clears a limit on My files", async () => {
       MY_FILES,
     ]);
   limited();
-  await handOverFiles(kit.database, ben, "Ben Okafor", cam);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
   expect(
     kit.rows(`SELECT kind, limit_bytes FROM drives WHERE id = '${MY_FILES}'`),
   ).toEqual([{ kind: "team", limit_bytes: null }]);
