@@ -1,4 +1,4 @@
-import { Avatar, Badge, Button, Notice } from "@cloudysuite/ui";
+import { Avatar, Badge, Button, linkify, Notice } from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconChevronDown,
@@ -10,7 +10,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { safeFileName } from "@cloudysuite/transfer";
-import { linkify } from "../email/linkify";
 import type { RenderedBody } from "../email/render-body";
 import { FOLDER_DISPLAY } from "../model";
 import { useOffline } from "../pwa/connectivity";

@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 
+export * from "./linkify";
 export * from "./shell";
 export * from "./toast";
 
