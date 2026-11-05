@@ -45,7 +45,17 @@ export function parseScheduleSearch(
   const search: ScheduleSearch = {};
   if (raw.view === "day" || raw.view === "month") search.view = raw.view;
   const date = typeof raw.date === "string" ? parseCivilDate(raw.date) : null;
-  if (date) search.date = date;
+  // Schedule asks for a day either side of what it shows, and every one must be a date
+  // the server takes, so a page at the edge of the years opens today instead.
+  const shown = date && visibleDays({ view: search.view ?? "week", date });
+  if (
+    date &&
+    shown &&
+    parseCivilDate(addDays(shown.from, -1)) &&
+    parseCivilDate(addDays(shown.to, 1))
+  ) {
+    search.date = date;
+  }
   if (
     search.view === "day" &&
     typeof raw.event === "string" &&

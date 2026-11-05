@@ -1103,6 +1103,49 @@ test("while Calendar is off, invitations and answers wait, and go once it's back
   }
 });
 
+test("while Calendar stays off, a waiting queue checks less and less often, and starts over once it goes", async () => {
+  const calendarOn = (on: boolean) =>
+    kit.sqlite.run(
+      on
+        ? "DELETE FROM app_settings WHERE app = 'calendar'"
+        : "INSERT INTO app_settings (app, enabled) VALUES ('calendar', 0)",
+    );
+  // Runs the held queue's next wake-ups and gives the minutes it waited before each.
+  const waits = async (count: number) => {
+    const minutes: number[] = [];
+    for (let wake = 0; wake < count; wake++) {
+      const next = objects.alarmOf(TEAM)!;
+      minutes.push((next - Date.now()) / 60_000);
+      setSystemTime(new Date(next));
+      await objects.settle();
+    }
+    return minutes;
+  };
+  const unsentInvite = (invited: UserId, title: string) =>
+    as(people.manager).createEvent({
+      data: { calendarId: TEAM, draft: planning({ people: [invited], title }) },
+    });
+  try {
+    await unsentInvite(people.outsider, "Weekly planning");
+    calendarOn(false);
+    await objects.settle();
+    expect(await waits(6)).toEqual([1, 2, 4, 8, 15, 15]);
+
+    calendarOn(true);
+    await waits(1);
+    expect((await seen(people.outsider)).map((entry) => entry.title)).toEqual([
+      "Weekly planning",
+    ]);
+
+    await unsentInvite(people.editor, "Board review");
+    calendarOn(false);
+    await objects.settle();
+    expect(await waits(2)).toEqual([1, 2]);
+  } finally {
+    setSystemTime();
+  }
+});
+
 test("when the directory can't say whether Calendar is on, invitations wait, then go", async () => {
   const objectsEnv = objects.env as unknown as Record<string, unknown>;
   await as(people.manager).createEvent({

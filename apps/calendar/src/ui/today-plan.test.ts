@@ -241,3 +241,56 @@ test("how long until an event starts is rounded up to the minute", () => {
   expect(untilText(start, start - 60 * MINUTE)).toBe("in 1 hour");
   expect(untilText(start, start - 125 * MINUTE)).toBe("in 2 hours 5 minutes");
 });
+
+test("on the night Los Angeles turns its clocks back, Tomorrow and the time until follow the clock", () => {
+  const inLosAngeles = (
+    title: string,
+    day: string,
+    clock: string,
+    minutes: number,
+  ): Shown => {
+    const start = at(day, clock, LOS_ANGELES);
+    return {
+      title,
+      time: {
+        kind: "timed",
+        start,
+        end: start + minutes * MINUTE,
+        timeZone: LOS_ANGELES,
+      },
+    };
+  };
+  const events = [
+    inLosAngeles("Early run", "2026-11-01", "03:00", 60),
+    inLosAngeles("Late call", "2026-11-01", "23:45", 30),
+    inLosAngeles("Monday standup", "2026-11-02", "00:10", 20),
+  ];
+
+  // 23:30 to 03:00 on the clock, but 1:00 comes round twice, so it's an hour longer.
+  const saturdayNow = at("2026-10-31", "23:30", LOS_ANGELES);
+  const saturday = planAt(events, saturdayNow, LOS_ANGELES);
+  expect(saturday.tomorrow).toBe(date("2026-11-01"));
+  expect(saturday.next.kind).toBe("tomorrow");
+  expect(saturday.next.kind !== "none" && saturday.next.event.title).toBe(
+    "Early run",
+  );
+  expect(
+    saturday.next.kind !== "none" &&
+      untilText(saturday.next.start, saturdayNow),
+  ).toBe("in 4 hours 30 minutes");
+  expect(titles(saturday.tomorrowEvents)).toEqual(["Late call"]);
+
+  // The 25-hour Sunday still ends at its own midnight.
+  const sundayNow = at("2026-11-01", "23:30", LOS_ANGELES);
+  const sunday = planAt(events, sundayNow, LOS_ANGELES);
+  expect(sunday.today).toBe(date("2026-11-01"));
+  expect(sunday.tomorrow).toBe(date("2026-11-02"));
+  expect(titles(sunday.finished)).toEqual(["Early run"]);
+  expect(sunday.next.kind !== "none" && sunday.next.event.title).toBe(
+    "Late call",
+  );
+  expect(
+    sunday.next.kind !== "none" && untilText(sunday.next.start, sundayNow),
+  ).toBe("in 15 minutes");
+  expect(titles(sunday.tomorrowEvents)).toEqual(["Monday standup"]);
+});

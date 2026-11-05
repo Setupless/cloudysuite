@@ -11,7 +11,6 @@ import {
   copyUidOf,
   type Delivery,
   type DeliveryResult,
-  retryAt,
 } from "./invitations";
 import { MIGRATIONS } from "./migrations";
 import {
@@ -40,6 +39,9 @@ import type {
 
 const DELIVERIES_PER_WAKE_UP = 25;
 const ANSWERS_PER_WAKE_UP = 25;
+const OFF_HOLDS = "offHolds";
+const FIRST_OFF_HOLD_MS = 60_000;
+const LONGEST_OFF_HOLD_MS = 15 * 60_000;
 
 // One calendar's events. Every call that reads or changes them is told who is asking,
 // and refuses Can view a change, or anyone but a manager emptying it, in the same call
@@ -183,9 +185,16 @@ export class Calendar extends DurableObject<Env> {
   // untouched, and go once an admin turns it back on.
   override async alarm(): Promise<void> {
     if (await this.#calendarOff()) {
-      await this.ctx.storage.setAlarm(retryAt(Date.now(), 0));
+      // Each check reads D1, so a long stretch off checks less often.
+      const holds = this.ctx.storage.kv.get<number>(OFF_HOLDS) ?? 0;
+      this.ctx.storage.kv.put(OFF_HOLDS, holds + 1);
+      await this.ctx.storage.setAlarm(
+        Date.now() +
+          Math.min(FIRST_OFF_HOLD_MS * 2 ** holds, LONGEST_OFF_HOLD_MS),
+      );
       return;
     }
+    this.ctx.storage.kv.delete(OFF_HOLDS);
     await this.#sendDeliveries();
     await this.#sendAnswers();
     await this.#scheduleNextWakeUp();
