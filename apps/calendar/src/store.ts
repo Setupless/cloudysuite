@@ -1624,7 +1624,9 @@ export class EventStore {
       return held ? "updated" : "added";
     }
     const changed = this.db.transaction(() => {
-      if (callsOff) return this.#callOffCopy(held, invitation, now);
+      if (callsOff) {
+        return this.#callOffCopy(held, invitation, unproved && organiser, now);
+      }
       // Email can arrive out of order, so only a version newer than the cancellation
       // brings a cancelled event back.
       if (held.cancelled && (!series || series.sequence <= held.sequence)) {
@@ -1680,12 +1682,23 @@ export class EventStore {
   // The whole event, against the series' sequence, which only grows, or some of its
   // dates, as RFC 5546 calls off a single instance. A called-off date stays on the copy,
   // marked as such. A cancelled event keeps the cancellation's sequence, which only a
-  // newer version can pass.
+  // newer version can pass. A copy without the organiser's proof could name any
+  // sequence, so their own cancellation calls it off whatever it says, and takes it over.
   #callOffCopy(
     held: StoredEvent,
     invitation: OutsideInvitation,
+    takeOver: Organiser | false,
     now: number,
   ): boolean {
+    if (invitation.series && takeOver) {
+      this.db.exec(
+        "UPDATE events SET cancelled = 1, sequence = ?, organiser = ? WHERE uid = ?",
+        invitation.series.sequence,
+        JSON.stringify(takeOver),
+        held.uid,
+      );
+      return true;
+    }
     if (invitation.series) {
       if (held.sequence > invitation.series.sequence) return false;
       const [row] = this.#rows<{ settled: number }>(
@@ -1714,7 +1727,9 @@ export class EventStore {
         heldChange?.cancelled ||
         held.exdates.includes(id) ||
         isRemovedHere(removal, held, id) ||
-        part.sequence < Math.max(held.sequence, heldChange?.sequence ?? -1) ||
+        (!takeOver &&
+          part.sequence <
+            Math.max(held.sequence, heldChange?.sequence ?? -1)) ||
         (!heldChange && indexOf(rule, held.time, id, budget) === null)
       ) {
         continue;
