@@ -16,6 +16,7 @@ import {
 } from "./schedule";
 import { addDays } from "./time";
 import type { TimeZone } from "./types";
+import { todayWindow } from "./ui/today-plan";
 
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";
@@ -129,6 +130,16 @@ export async function prefetchSchedule(search: ScheduleSearch) {
   const client = new QueryClient();
   const place = placeOf(search, todayIn(UTC, Date.now()));
   await client.prefetchQuery(eventsQuery(visibleDays(place)));
+  return dehydrate(client);
+}
+
+// The server's own day stands in for the reader's here too, for the same reason.
+export async function prefetchToday() {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  await client.prefetchQuery(
+    eventsQuery(todayWindow(todayIn(UTC, Date.now()))),
+  );
   return dehydrate(client);
 }
 
