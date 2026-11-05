@@ -442,7 +442,7 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 - **Anyone in the organisation can be invited from the directory, and so can any email address.**
 - **Everyone invited gets an email** from the organiser's own address, with the invitation attached as iCalendar. This is iMIP, the standard way calendars send invitations by email, so any mail app can answer it.
 - **People in the organisation also get the event straight in their personal calendar,** unanswered and shown dashed, so it's there before they open their mail. Their copy of the email shows an invitation card in Mail, and the card reads from their calendar, so an answer given in either place shows in both.
-- **A copy is never added twice.** The event's UID and sequence decide. A copy whose sequence is no higher than the one held changes nothing, so mail arriving again changes nothing.
+- **A copy is never added twice.** The event's UID and sequence decide. The UID names the event, together with the `RECURRENCE-ID` when a change covers one date of a repeat, and the sequence says which version is newer. A copy whose sequence is no higher than the one held for that event or date changes nothing, so mail arriving again changes nothing. Removing an event from a calendar keeps its UID and sequence there, so the same invitation arriving again doesn't bring it back.
 - **Answering is Yes, Maybe, or No,** from Calendar, Today, or the card in Mail. The organiser is told directly when they're inside the organisation, and by an iMIP reply email when they're outside it.
 - **Changes and cancellations from the organiser reach everyone the same way.** A cancelled event stays on the calendar marked as cancelled, with "Remove from my calendar", so someone who looks sees it was called off rather than finding it gone.
 - **An event someone else organised can't be edited or deleted.** The person can answer it and remove it from their own calendar. The organiser's event is the one everyone follows, so a change made in one person's copy would leave the others out of step.
@@ -452,7 +452,7 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 #### Invitations from outside
 
 - **An email to a person's own address that carries an iCalendar invitation adds the event to their personal calendar,** unanswered.
-- **Some invitations add nothing.** Mail to a shared mailbox such as `support@` adds nothing to any calendar, because the mailbox belongs to no one person. Mail sorted into Spam adds nothing, so a stranger can't write onto someone's calendar. While Calendar is off, nothing is added, and the email still arrives, because mail is never dropped.
+- **Some invitations add nothing.** Mail to a shared mailbox such as `support@` adds nothing to any calendar, because the mailbox belongs to no one person. Mail sorted into Spam adds nothing, because the filter judged it unwanted. A new invitation needs no proof of its sender, so one that reaches the Inbox from a stranger is still added. While Calendar is off, nothing is added, and the email still arrives, because mail is never dropped.
 - **A change or cancellation to an event already on the calendar counts only from that event's organiser address, on mail whose sender passed authentication.** It uses the authentication results Mail stored when the message arrived, and passing means what [Spam filtering](#spam-filtering) calls proving the sender: DMARC passed, or DKIM passed for the `From` domain or a parent of it. Anyone can write an organiser's address into an invitation, so only mail that proves it came from that address may change the event.
 - **A reply updates only the answer of the attendee address it came from, on authenticated mail.** Anything else stays an ordinary email, and the card says the sender couldn't be confirmed.
 - **Everything in an invitation is hostile,** like message content.
@@ -466,7 +466,7 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 
 #### Import
 
-A `.ics` file can be imported into a calendar the person can edit. An event already there, matched by UID, is updated rather than copied, so importing the same file twice changes nothing.
+A `.ics` file can be imported into a calendar the person can edit. An event already there, matched by UID, is updated rather than copied, under the same sequence rule as invitations, so importing the same file twice changes nothing and an older file can't undo a later change. Import can't change what the person couldn't change by hand, so an event someone else organised stays as it is.
 
 #### Not in the first release
 
