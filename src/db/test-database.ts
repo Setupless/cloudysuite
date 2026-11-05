@@ -8,6 +8,9 @@ const MIGRATIONS = join(import.meta.dir, "../../migrations");
 // module for the whole run, so every test support has to hand out this one object.
 export const testWorkerEnv = {} as Env;
 
+// D1 refuses a query that binds more than this, which SQLite here would allow.
+const MAX_BOUND_PARAMETERS = 100;
+
 // An in-memory database built from the real migrations, behind the parts of
 // the D1 API that Drizzle calls. It proves query behaviour, not D1 itself.
 export function createTestDatabase(): { sqlite: Database; d1: D1Database } {
@@ -16,19 +19,25 @@ export function createTestDatabase(): { sqlite: Database; d1: D1Database } {
   for (const dir of readdirSync(MIGRATIONS).sort()) {
     sqlite.run(readFileSync(join(MIGRATIONS, dir, "migration.sql"), "utf8"));
   }
+  const query = (sql: string, params: never[]) => {
+    if (params.length > MAX_BOUND_PARAMETERS) {
+      throw new Error("D1_ERROR: too many SQL variables: SQLITE_ERROR");
+    }
+    return sqlite.query(sql);
+  };
   const prepare = (sql: string, params: never[] = []) => ({
     sql,
     params,
     bind: (...next: never[]) => prepare(sql, next),
-    all: async () => ({ results: sqlite.query(sql).all(...params) }),
-    raw: async () => sqlite.query(sql).values(...params),
-    run: async () => sqlite.query(sql).run(...params),
+    all: async () => ({ results: query(sql, params).all(...params) }),
+    raw: async () => query(sql, params).values(...params),
+    run: async () => query(sql, params).run(...params),
   });
   // D1 runs a batch as one transaction, so one failed statement undoes them all.
   const batch = async (statements: ReturnType<typeof prepare>[]) =>
     sqlite.transaction(() =>
       statements.map(({ sql, params }) => ({
-        results: sqlite.query(sql).all(...params),
+        results: query(sql, params).all(...params),
       })),
     )();
   return { sqlite, d1: { prepare, batch } as unknown as D1Database };
