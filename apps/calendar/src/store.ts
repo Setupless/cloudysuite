@@ -594,6 +594,16 @@ export class EventStore {
     );
   }
 
+  // Every change here takes this, read before it drops a changed date, so no copy holds a
+  // sequence for any part of the event as high as the change's.
+  #nextSequence(uid: EventUid): number {
+    const [row] = this.#rows<{ top: number | null }>(
+      "SELECT max(sequence) AS top FROM events WHERE uid = ?",
+      uid,
+    );
+    return (row?.top ?? -1) + 1;
+  }
+
   // Every changed date from this one on, or all of them.
   #dropChanges(uid: EventUid, from: OccurrenceId | null): void {
     this.db.exec(
@@ -606,6 +616,7 @@ export class EventStore {
   #endBefore(series: StoredEvent, id: OccurrenceId, now: number): void {
     const repeat = shownRepeat(series) as Repeat;
     const lastDate = addDays(startDateOf(timeOfDate(series, id)), -1);
+    const sequence = this.#nextSequence(series.uid);
     this.#dropChanges(series.uid, id);
     this.#write(
       {
@@ -615,7 +626,7 @@ export class EventStore {
           series.time,
         ),
         exdates: series.exdates.filter((exdate) => exdate < id),
-        sequence: series.sequence + 1,
+        sequence,
       },
       now,
     );
@@ -798,7 +809,7 @@ export class EventStore {
             time: draft.time,
             rule: null,
             exdates: [],
-            sequence: Math.max(series.sequence, change?.sequence ?? 0) + 1,
+            sequence: this.#nextSequence(series.uid),
           },
           now,
         );
@@ -869,6 +880,7 @@ export class EventStore {
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
+      const sequence = this.#nextSequence(series.uid);
       // A changed date names a date the series may no longer have.
       if (datesMoved) this.#dropChanges(series.uid, null);
       this.#write(
@@ -878,7 +890,7 @@ export class EventStore {
           time,
           rule,
           exdates: datesMoved ? [] : series.exdates,
-          sequence: series.sequence + 1,
+          sequence,
         },
         now,
       );
@@ -924,8 +936,8 @@ export class EventStore {
     const people = this.#people(series.uid)?.attendees ?? [];
 
     if (scope === "this") {
-      const change = this.#changeOf(series.uid, id);
       this.db.transaction(() => {
+        const sequence = this.#nextSequence(series.uid);
         this.db.exec(
           "DELETE FROM events WHERE uid = ? AND recurrence_id = ?",
           series.uid,
@@ -935,7 +947,7 @@ export class EventStore {
           {
             ...series,
             exdates: [...series.exdates, id].sort(),
-            sequence: Math.max(series.sequence, change?.sequence ?? 0) + 1,
+            sequence,
           },
           now,
         );
@@ -1086,14 +1098,14 @@ export class EventStore {
       return "refused";
     }
     if (delivery.kind === "cancelled") {
-      if (!held) return "unchanged";
-      const [row] = this.#rows<{ sequence: number; settled: number }>(
-        "SELECT max(sequence) AS sequence, min(cancelled) AS settled FROM events WHERE uid = ?",
+      // Against the series, whose sequence only grows. A newer file can drop a changed
+      // date whose sequence was higher than any the organiser holds now.
+      if (!held || held.sequence > delivery.sequence) return "unchanged";
+      const [row] = this.#rows<{ settled: number }>(
+        "SELECT min(cancelled) AS settled FROM events WHERE uid = ?",
         uid,
       );
-      if (!row || row.settled === 1 || row.sequence > delivery.sequence) {
-        return "unchanged";
-      }
+      if (row?.settled === 1) return "unchanged";
       this.db.exec("UPDATE events SET cancelled = 1 WHERE uid = ?", uid);
       return "received";
     }
@@ -1261,8 +1273,9 @@ export class EventStore {
     }));
   }
 
-  // The event as it is now. Someone no longer invited, or an event that's gone, is told
-  // it's off, with the sequence it was last sent with.
+  // The event as it is now. Someone no longer invited is told it's off at the series'
+  // sequence, which putting them back raises. An event that's gone is told at the highest
+  // sequence it had.
   deliveryFor(queued: QueuedDelivery): Delivery {
     const { uid, userId, calendarId } = queued;
     const rows = this.#rows<EventRow>(
@@ -1286,10 +1299,7 @@ export class EventStore {
         kind: "cancelled",
         uid,
         from: calendarId,
-        sequence: Math.max(
-          removed?.sequence ?? 0,
-          ...rows.map((row) => row.sequence),
-        ),
+        sequence: series?.sequence ?? removed?.sequence ?? 0,
       };
     }
     return {
@@ -1499,7 +1509,16 @@ export class EventStore {
         uid,
         id,
       );
-      this.#write({ ...before, exdates: [...before.exdates, id].sort() }, now);
+      // The series takes the sequence that called the date off, so a copy of it sees a
+      // newer series and calls the date off too.
+      this.#write(
+        {
+          ...before,
+          exdates: [...before.exdates, id].sort(),
+          sequence: change.sequence,
+        },
+        now,
+      );
     }
     return changed ? "updated" : "unchanged";
   }
