@@ -5,6 +5,7 @@ import {
   type Actor,
   type EventRow,
   isRemovedHere,
+  isRemovedOnward,
   occurrenceOf,
   parseRow,
   readPeople,
@@ -57,16 +58,19 @@ export function inSearchOrder(zone: TimeZone, now: number) {
 }
 
 // The series' first date still to come, or else its last date. A series that outruns the
-// budget shows the last date reached, and the answer says it is incomplete.
+// budget shows the last date reached, and the answer says it is incomplete. Dates removed
+// from one on end the walk there, so they don't use up the budget.
 export function seriesDate(
   series: StoredEvent & { rule: string },
   skipped: (id: OccurrenceId) => boolean,
+  ended: (id: OccurrenceId) => boolean,
   zone: TimeZone,
   now: number,
   budget: Budget,
 ): Found | null {
   let last: Found | null = null;
   for (const date of datesOf(series.rule, series.time, budget)) {
+    if (ended(date.id)) break;
     if (skipped(date.id)) continue;
     last = { event: series, occurrenceId: date.id, time: date.time };
     if (stillToCome(date.time, zone, now)) break;
@@ -166,6 +170,7 @@ export function findEvents(
       const date = seriesDate(
         { ...series, rule: series.rule },
         (id) => skipped.has(id) || isRemovedHere(removal, series, id),
+        (id) => isRemovedOnward(removal, series, id),
         zone,
         now,
         budget,

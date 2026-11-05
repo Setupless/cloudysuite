@@ -268,6 +268,16 @@ export function isRemovedHere(
   );
 }
 
+// This date and every later one were removed here.
+export const isRemovedOnward = (
+  removal: Removal | undefined,
+  series: StoredEvent,
+  id: OccurrenceId,
+) =>
+  removal !== undefined &&
+  removal.from !== null &&
+  startDateOf(timeOfDate(series, id)) >= removal.from;
+
 const inUids = "uid IN (SELECT value FROM json_each(?))";
 
 export function readPeople(
@@ -1149,7 +1159,13 @@ export class EventStore {
     });
     const series = copyOf(seriesPart);
     const removal = readRemovals(this.db, [uid]).get(uid);
-    const newerSeries = !held || seriesPart.sequence > held.sequence;
+    // A file can call a date off without raising the series' sequence, so a series at the
+    // same sequence that has called off more dates is newer too.
+    const newerSeries =
+      !held ||
+      seriesPart.sequence > held.sequence ||
+      (seriesPart.sequence === held.sequence &&
+        seriesPart.exdates.some((id) => !held.exdates.includes(id)));
     let changed = false;
     this.db.transaction(() => {
       if (newerSeries) {
@@ -1162,10 +1178,12 @@ export class EventStore {
         const heldChange = this.#changeOf(uid, id);
         // A newer series comes with the whole event as the organiser has it now, so each
         // changed date with it counts, even one here that was called off with the event.
+        // Otherwise a changed date counts only if it's newer than the series held too,
+        // since that series may have dropped it.
         if (
           !newerSeries &&
-          heldChange &&
-          heldChange.sequence >= part.sequence
+          part.sequence <=
+            Math.max(held?.sequence ?? -1, heldChange?.sequence ?? -1)
         ) {
           continue;
         }
@@ -1549,16 +1567,7 @@ export class EventStore {
         uid,
         id,
       );
-      // The series takes the sequence that called the date off, so a copy of it sees a
-      // newer series and calls the date off too.
-      this.#write(
-        {
-          ...before,
-          exdates: [...before.exdates, id].sort(),
-          sequence: change.sequence,
-        },
-        now,
-      );
+      this.#write({ ...before, exdates: [...before.exdates, id].sort() }, now);
     }
     return changed ? "updated" : "unchanged";
   }

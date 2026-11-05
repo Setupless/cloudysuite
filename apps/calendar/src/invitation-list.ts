@@ -6,6 +6,7 @@ import {
   type EventRow,
   inViewerOrder,
   isRemovedHere,
+  isRemovedOnward,
   occurrenceOf,
   parseRow,
   readPeople,
@@ -71,6 +72,7 @@ export function listInvitations(
       const date = seriesDate(
         { ...series, rule: series.rule },
         (id) => skipped.has(id) || isRemovedHere(removal, series, id),
+        (id) => isRemovedOnward(removal, series, id),
         zone,
         now,
         budget,

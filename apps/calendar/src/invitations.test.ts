@@ -1083,9 +1083,9 @@ test("a copy with every later date removed doesn't stop search finishing", async
     data: { text: "planning", timeZone: SYDNEY },
   })) as { occurrences: CalendarOccurrence[]; incomplete: boolean };
   expect(found.incomplete).toBe(false);
-  expect(found.occurrences.map((entry) => entry.occurrenceId)).toEqual([
-    "20261005T220000Z",
-  ]);
+  expect(
+    found.occurrences.map((entry): string | null => entry.occurrenceId),
+  ).toEqual(["20261005T220000Z"]);
 });
 
 test("an older delivery arriving late doesn't bring back a changed date", async () => {
