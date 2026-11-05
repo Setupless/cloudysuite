@@ -63,8 +63,13 @@ import type {
   ThreadQuery,
 } from "./types";
 
-// A message delivered to this mailbox, and whether anyone may be told of it.
-export type InboundCommit = { to: MailboxId; notify: boolean };
+// A message delivered to this mailbox. Whether anyone may be told of it, and whether
+// Calendar may read it, are decided as it arrives.
+export type InboundCommit = {
+  to: MailboxId;
+  notify: boolean;
+  calendar: boolean;
+};
 
 export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
@@ -112,16 +117,24 @@ export class Mailbox extends DurableObject<Env> {
     message: NewMessage,
     inbound: InboundCommit | null = null,
   ): Promise<CommitResult> {
-    const result = this.#store.commit(message);
-    if (inbound !== null && result.status === "stored") {
-      const now = Date.now();
-      if (inbound.notify && announces(result.folder)) {
-        this.#push.enqueue(result.messageId, inbound.to, now);
-      }
-      if (result.folder !== "spam" && carriesCalendar(message)) {
-        this.#calendar.enqueue(result.messageId, message, inbound.to, now);
-      }
-    }
+    const result = this.#store.commit(
+      message,
+      inbound
+        ? ({ messageId, folder }) => {
+            const now = Date.now();
+            if (inbound.notify && announces(folder)) {
+              this.#push.enqueue(messageId, inbound.to, now);
+            }
+            if (
+              inbound.calendar &&
+              folder !== "spam" &&
+              carriesCalendar(message)
+            ) {
+              this.#calendar.enqueue(messageId, message, inbound.to, now);
+            }
+          }
+        : undefined,
+    );
     await this.#scheduleNextWakeUp();
     return result;
   }

@@ -168,8 +168,13 @@ async function handOver() {
   await calendars.settle();
 }
 
-// Through the Worker's email() handler, as Cloudflare delivers it.
+// Through the Worker's email() handler, as Cloudflare delivers it, and then the alarms.
 async function arrive(raw: string, to = "boss@example.com") {
+  await deliver(raw, to);
+  await handOver();
+}
+
+async function deliver(raw: string, to = "boss@example.com") {
   const rejections: string[] = [];
   await receiveInbound(
     {
@@ -182,7 +187,6 @@ async function arrive(raw: string, to = "boss@example.com") {
     mail.env,
   );
   expect(rejections).toEqual([]);
-  await handOver();
 }
 
 const google = (
@@ -243,10 +247,7 @@ test("an invitation from Google lands unanswered in the person's own calendar, w
   });
   expect(
     event!.people.map((person) => [person.kind, person.name, person.answer]),
-  ).toEqual([
-    ["outside", "Dana Wright", "yes"],
-    ["colleague", "boss@example.com", "needsAnswer"],
-  ]);
+  ).toEqual([["colleague", "boss@example.com", "needsAnswer"]]);
   expect(meetingLink(event!)).toEqual({
     service: "Google Meet",
     url: MEET,
@@ -350,6 +351,41 @@ test("a cancellation from the organiser marks it cancelled, and a forged one doe
   );
 });
 
+test("a cancelled invitation takes no answer, and only a newer version brings it back", async () => {
+  await arrive(google());
+  await arrive(
+    google({ sequence: 2, status: "CANCELLED" }, { method: "CANCEL" }),
+  );
+  // The update sent before the cancellation, arriving after it.
+  await arrive(google({ sequence: 1, title: "Supplier review, moved" }));
+  expect((await schedule())[0]).toMatchObject({
+    title: "Supplier review",
+    cancelled: true,
+  });
+
+  const refused = await as()
+    .answerInvitation({
+      data: {
+        calendarId: await personalOf(),
+        uid: GOOGLE_INVITE_UID,
+        answer: "yes",
+      },
+    })
+    .then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+  expect((refused as Response | null)?.status).toBe(404);
+  await calendars.settle();
+  expect(email.attempts).toEqual([]);
+
+  await arrive(google({ sequence: 3, title: "Supplier review, back on" }));
+  expect((await schedule())[0]).toMatchObject({
+    title: "Supplier review, back on",
+    cancelled: false,
+  });
+});
+
 test("Spam, a shared mailbox, an import, and mail while Calendar is off add nothing", async () => {
   await arrive(
     google({ uid: "spam@google.com" }, { auth: AUTH.spam(PARTNER) }),
@@ -376,9 +412,9 @@ test("Spam, a shared mailbox, an import, and mail while Calendar is off add noth
   kit.sqlite.run(
     "INSERT INTO app_settings (app, enabled) VALUES ('calendar', 0)",
   );
-  await arrive(google({ uid: "off@google.com" }));
+  await deliver(google({ uid: "off@google.com" }));
   kit.sqlite.run("DELETE FROM app_settings");
-  // Turning Calendar back on doesn't hand over what came while it was off.
+  // What came while Calendar was off isn't handed over once it's back on.
   await handOver();
 
   expect(await schedule()).toEqual([]);
@@ -489,6 +525,29 @@ test("a reply to an event on a team calendar finds it there", async () => {
   const [event] = await schedule();
   expect(event?.calendarId).toBe(TEAM);
   expect(peopleOf(event)).toEqual([["Dana Wright", "no"]]);
+});
+
+test("an earlier answer that arrives late doesn't replace a later one", async () => {
+  const uid = await inviteFrom(TEAM, [{ email: DANA as EmailAddress }]);
+  const reply = (partstat: string, stamp: string) =>
+    invitationEmail({
+      from: DANA,
+      auth: AUTH.proved(PARTNER),
+      method: "REPLY",
+      calendar: googleReply(
+        uid,
+        DANA,
+        partstat,
+        "Dana Wright",
+        "boss@example.com",
+        stamp,
+      ),
+    });
+  await arrive(reply("DECLINED", "20261105T030000Z"));
+  await arrive(reply("ACCEPTED", "20261105T020000Z"));
+  expect(peopleOf((await schedule())[0])).toEqual([["Dana Wright", "no"]]);
+  await arrive(reply("TENTATIVE", "20261105T040000Z"));
+  expect(peopleOf((await schedule())[0])).toEqual([["Dana Wright", "maybe"]]);
 });
 
 test("answering an invitation from outside emails one reply, from the person's own address", async () => {

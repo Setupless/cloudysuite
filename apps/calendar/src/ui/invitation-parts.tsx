@@ -97,20 +97,14 @@ export function AnswerButtons({ event }: { event: ShownEvent }) {
 // they choose, since nothing would tell them afterwards.
 function ReplyNote({ organiser }: { organiser: string }) {
   const reach = useQuery(outsideInvitingQuery(null));
-  const why =
-    reach.data === "mailOff"
-      ? "Mail is off"
+  const note = reach.isError
+    ? `We couldn't check whether ${organiser} will be told your answer. It's still saved in your calendar either way.`
+    : reach.data === "mailOff"
+      ? `Mail is off, so ${organiser} won't be told your answer. It's still saved in your calendar.`
       : reach.data === "noSender"
-        ? "You don't have a personal mailbox"
+        ? `You don't have a personal mailbox, so ${organiser} won't be told your answer. It's still saved in your calendar.`
         : null;
-  return (
-    why && (
-      <p className="text-xs text-secondary">
-        {why}, so {organiser} won't be told your answer. It's still saved in
-        your calendar.
-      </p>
-    )
-  );
+  return note && <p className="text-xs text-secondary">{note}</p>;
 }
 
 export function PeopleSummary({ event }: { event: ShownEvent }) {

@@ -51,6 +51,8 @@ export type OutsideReply = {
   uid: EventUid;
   attendee: OutsidePerson;
   answer: GivenAnswer;
+  // When they wrote it, since two answers to one version carry the same sequence.
+  stamp: number | null;
 };
 
 export type OutsideResult = "added" | "updated" | "unchanged" | "refused";

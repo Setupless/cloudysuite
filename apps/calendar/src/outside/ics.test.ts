@@ -66,6 +66,7 @@ test("a Google export keeps its weekly repeat, the date moved, the date removed,
         },
       ],
       conference: "https://meet.google.com/abc-defg-hij",
+      stamp: Date.parse("2026-11-05T01:02:03Z"),
     },
     expect.objectContaining({
       uid: GOOGLE_UID,
@@ -418,8 +419,12 @@ test("a file says whether it invites, cancels, or answers, and anything else say
   expect(methodOf()).toBeNull();
   // A METHOD inside an event isn't the file's.
   expect(methodOf("BEGIN:VEVENT", "METHOD:REQUEST", "END:VEVENT")).toBeNull();
-  const two = `${calendarFile("METHOD:REQUEST")}${calendarFile("METHOD:CANCEL")}`;
-  expect(read(two).method).toBeNull();
+  const both = (second: string) =>
+    read(`${calendarFile("METHOD:REQUEST")}${second}`).method;
+  expect(both(calendarFile("METHOD:REQUEST"))).toBe("request");
+  expect(both(calendarFile("METHOD:CANCEL"))).toBeNull();
+  // A calendar beside it that asks nothing makes the file ask nothing.
+  expect(both(calendarFile())).toBeNull();
 });
 
 test("too many removed dates are refused before ical.js reads them", () => {

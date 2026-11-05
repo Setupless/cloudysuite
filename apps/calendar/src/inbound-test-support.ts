@@ -205,12 +205,13 @@ export function googleReply(
   partstat: string,
   name = "Dana Wright",
   organiser = "boss@example.com",
+  stamp = "20261105T020000Z",
 ): string {
   return googleCalendar("REPLY", [
     "BEGIN:VEVENT",
     "DTSTART;TZID=Australia/Sydney:20261110T100000",
     "DTEND;TZID=Australia/Sydney:20261110T110000",
-    "DTSTAMP:20261105T020000Z",
+    `DTSTAMP:${stamp}`,
     `ORGANIZER;CN=Boss:mailto:${organiser}`,
     `UID:${uid}`,
     `ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=${partstat};CN=${name};X-NUM-GUESTS=0:mailto:${from}`,

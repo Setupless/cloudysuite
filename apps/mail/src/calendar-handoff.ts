@@ -9,15 +9,15 @@ import { provedSenderDomain } from "./spam/signals";
 import type { MessageId, NewMessage } from "./types";
 
 // Calendar reads invitations, updates, cancellations, and replies from inbound mail. Each
-// message with a calendar part waits here, written in the same step that stores it, and
-// the alarm hands it over. Only Calendar's one entry for this is called, after the
+// message with a calendar part waits here, written in the transaction that stores it,
+// and the alarm hands it over. Only Calendar's one entry for this is called, after the
 // message is safe, so nothing Calendar does can lose or hold up mail.
 
 const CALENDAR_TYPES = ["text/calendar", "application/ics"];
 const HANDOFFS_PER_WAKE_UP = 10;
-// Calendar's answer changes nothing twice, so a few tries cost nothing. After them, the
-// invitation card in Mail still offers "Add to my calendar".
-const MAX_TRIES = 6;
+// Calendar's answer changes nothing twice, so trying again costs nothing. These tries
+// reach an hour apart after an hour, and cover about a day without Calendar.
+const MAX_TRIES = 30;
 const FIRST_RETRY_MS = 60_000;
 const LONGEST_RETRY_MS = 60 * 60_000;
 

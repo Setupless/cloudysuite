@@ -107,17 +107,22 @@ const partOf = (event: OutsideEvent): OutsidePart => ({
 });
 
 // The person whose calendar it is shows as themselves, so their answer is on the list.
+// Google lists the organiser as a guest too, and People already names them.
 function peopleOf(
   invited: InvitedPerson[],
+  organiser: EmailAddress,
   colleagues: Map<EmailAddress, UserId>,
   person: UserId,
 ): Attendee[] {
-  const people = invited.map((one): Attendee => {
+  const people = invited.flatMap((one): Attendee[] => {
+    if (one.email === organiser) return [];
     const name = (one.name ?? one.email).slice(0, MAX_PERSON_NAME_LENGTH);
     const answer = ANSWERS[one.answer];
-    return colleagues.get(one.email) === person
-      ? { kind: "colleague", userId: person, name, answer }
-      : { kind: "outside", email: one.email, name, answer };
+    return [
+      colleagues.get(one.email) === person
+        ? { kind: "colleague", userId: person, name, answer }
+        : { kind: "outside", email: one.email, name, answer },
+    ];
   });
   // Their own address and an alias of it are still one person.
   const seen = new Set<string>();
@@ -159,7 +164,7 @@ async function takeInvitation(
     organiser,
     series: group.series && partOf(group.series),
     changes: group.changes.map(partOf),
-    people: peopleOf(shown.attendees, colleagues, person),
+    people: peopleOf(shown.attendees, organiser.email, colleagues, person),
     fromOrganiser: sender.proved && sender.from === organiser.email,
   };
   await mailReceiver(env, calendarId).invitation(invitation);
@@ -188,6 +193,7 @@ async function takeReplies(
       organiser,
       uid: event.uid,
       attendee: { email: from, name: theirs.name },
+      stamp: event.stamp,
       answer,
     };
     const personal = await findPersonalCalendar(env.DB, organiser);

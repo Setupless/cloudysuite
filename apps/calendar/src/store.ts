@@ -1264,19 +1264,21 @@ export class EventStore {
   // Only the person the copy was sent to answers it, even once their calendar has been
   // handed to someone else. The answer stays here. A notice takes it to a colleague who
   // organised it, and an email to an organiser outside, even when it's the answer already
-  // shown, so pressing it again always reaches them.
+  // shown, so pressing it again always reaches them. An event called off asks nothing.
   answer(
     actor: Actor,
     uid: EventUid,
     answer: Answer,
     now: number,
   ): AnswerResult {
-    const organiser = this.#series(uid)?.organiser;
+    const series = this.#series(uid);
+    const organiser = series?.organiser;
     const held = this.#people(uid);
     const reply = held?.reply;
     if (
       !organiser ||
       organiser.kind === "madeHere" ||
+      series.cancelled ||
       !held ||
       !reply ||
       reply.for !== actor.userId
@@ -1610,6 +1612,11 @@ export class EventStore {
     }
     const changed = this.db.transaction(() => {
       if (callsOff) return this.#callOffCopy(held, invitation, now);
+      // Email can arrive out of order, so only a version newer than the cancellation
+      // brings a cancelled event back.
+      if (held.cancelled && (!series || series.sequence <= held.sequence)) {
+        return false;
+      }
       const parts = this.#takeParts(
         held,
         copyOf,
@@ -1655,7 +1662,8 @@ export class EventStore {
 
   // The whole event, against the series' sequence, which only grows, or some of its
   // dates, as RFC 5546 calls off a single instance. A called-off date stays on the copy,
-  // marked as such.
+  // marked as such. A cancelled event keeps the cancellation's sequence, which only a
+  // newer version can pass.
   #callOffCopy(
     held: StoredEvent,
     invitation: OutsideInvitation,
@@ -1667,8 +1675,14 @@ export class EventStore {
         "SELECT min(cancelled) AS settled FROM events WHERE uid = ?",
         held.uid,
       );
-      if (row?.settled === 1) return false;
-      this.db.exec("UPDATE events SET cancelled = 1 WHERE uid = ?", held.uid);
+      if (row?.settled === 1 && held.sequence >= invitation.series.sequence) {
+        return false;
+      }
+      this.db.exec(
+        "UPDATE events SET cancelled = 1, sequence = max(sequence, ?) WHERE uid = ?",
+        invitation.series.sequence,
+        held.uid,
+      );
       return true;
     }
     if (held.rule === null) return false;
@@ -1728,12 +1742,24 @@ export class EventStore {
         person.kind === "outside" && person.email === reply.attendee.email,
     );
     if (!attendee) return false;
+    // Someone outside keeps the stamp of the answer held as its revision, so an earlier
+    // answer that arrives late changes nothing.
+    if (reply.stamp !== null && reply.stamp < attendee.revision) return true;
     // Their name is their address until an answer from them says more.
     const name =
       reply.attendee.name?.slice(0, MAX_PERSON_NAME_LENGTH) || attendee.name;
-    if (attendee.answer === reply.answer && attendee.name === name) return true;
+    const revision = reply.stamp ?? attendee.revision;
+    if (
+      attendee.answer === reply.answer &&
+      attendee.name === name &&
+      attendee.revision === revision
+    ) {
+      return true;
+    }
     const attendees = held.attendees.map((person) =>
-      person === attendee ? { ...person, answer: reply.answer, name } : person,
+      person === attendee
+        ? { ...person, answer: reply.answer, name, revision }
+        : person,
     );
     this.db.transaction(() => {
       this.#writePeople(reply.uid, {

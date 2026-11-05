@@ -80,6 +80,7 @@ const READ_PROPERTIES = new Set([
   "LOCATION",
   "DESCRIPTION",
   "SEQUENCE",
+  "DTSTAMP",
   "STATUS",
   "ORGANIZER",
   "ATTENDEE",
@@ -106,6 +107,8 @@ export type OutsideEvent = EventDetails & {
   attendees: Attendee[];
   // Plain text, as hostile as the rest. A Join button checks its host.
   conference: string | null;
+  // When the sender wrote it, which orders two answers to the same version.
+  stamp: number | null;
 };
 
 // iTIP's METHOD, from RFC 5546, for the three an email from outside can carry. Any
@@ -186,6 +189,7 @@ function blocksOf(
   const stack: string[] = [];
   let events = 0;
   let calendars = 0;
+  let stated = false;
   let current: Block | null = null;
   for (const line of lines) {
     if (line.trim() === "") continue;
@@ -195,7 +199,10 @@ function blocksOf(
       if (stack.length === 0 && begin !== "VCALENDAR") return "notCalendar";
       if (stack.length >= MAX_DEPTH) return "notCalendar";
       stack.push(begin);
-      if (stack.length === 1) calendars++;
+      if (stack.length === 1) {
+        calendars++;
+        stated = false;
+      }
       if (stack.length === 2) {
         if (begin === "VEVENT" && ++events > maxEvents) {
           return "tooManyEvents";
@@ -216,12 +223,15 @@ function blocksOf(
         blocks.push(current);
         current = null;
       }
+      // RFC 5545: with no METHOD, no scheduling transaction may be assumed.
+      if (stack.length === 1 && !stated) methods.add("");
       stack.pop();
       continue;
     }
     if (stack.length === 0) return "notCalendar";
     if (stack.length === 1 && nameOf(line) === "METHOD") {
       methods.add(valueOf(line).trim().toUpperCase());
+      stated = true;
     }
     if (current && (stack.length === 2 || current.name === "VTIMEZONE")) {
       current.lines.push(line);
@@ -583,7 +593,18 @@ function readEvent(block: Block, zones: Zones): OutsideEvent {
     organiser: organiser ? personOf(organiser) : null,
     attendees: attendeesOf(event),
     conference: conference ?? null,
+    stamp: stampOf(event, zones),
   };
+}
+
+// A stamp that can't be read orders nothing, and loses nothing else of the event.
+function stampOf(event: ICAL.Component, zones: Zones): number | null {
+  try {
+    const moment = firstMoment(event, "dtstamp", zones);
+    return moment?.kind === "wall" ? instantOf(moment.wall, moment.zone) : null;
+  } catch {
+    return null;
+  }
 }
 
 // `floating` is the zone for a time the file gives without one, the importer's own.
