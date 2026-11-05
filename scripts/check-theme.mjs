@@ -6,8 +6,18 @@ const AA_TEXT = 4.5;
 
 const AVATARS = [1, 2, 3, 4, 5, 6].map((n) => [`on-avatar`, `avatar-${n}`]);
 
+const EVENTS = [1, 2, 3, 4, 5, 6].map((n) => `event-${n}`);
+
 const TEXT_PAIRS = [
-  ...["page", "sidebar", "panel", "field", "selected"].flatMap((surface) => [
+  ...[
+    "page",
+    "sidebar",
+    "panel",
+    "field",
+    "selected",
+    "weekend",
+    ...EVENTS,
+  ].flatMap((surface) => [
     ["text", surface],
     ["secondary", surface],
   ]),
