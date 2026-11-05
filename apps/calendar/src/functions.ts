@@ -77,7 +77,7 @@ import {
   parseMemberRoleInput,
   parseNewEventInput,
   parseNewTeamCalendarInput,
-  parseOrganiserInput,
+  parseOutsideInvitingInput,
   parseRangeInput,
   parseRenameInput,
   parseRetryEmailInput,
@@ -384,13 +384,20 @@ export const importCalendarFile = createServerFn({ method: "POST" })
     return summary;
   });
 
-// Whether the dialog may offer addresses for an event whose emails go from this
-// organiser's address. It reads D1 only.
+// Whether the dialog may offer addresses, which go from the organiser's address: the
+// person's own for a new event, or that of an event they can edit.
 export const getOutsideInviting = createServerFn({ method: "GET" })
-  .validator(parseOrganiserInput)
+  .validator(parseOutsideInvitingInput)
   .handler(async ({ data }): Promise<OutsideInviting> => {
-    await me();
-    return outsideInviting(env.DB, data.organiser);
+    const { id } = await me();
+    if (!data.event) return outsideInviting(env.DB, id);
+    const calendar = await openCalendarAs(id, data.event.calendarId);
+    if (levelOfRole(calendar.role) !== "edit") {
+      throw refusal(403, VIEW_ONLY_MESSAGE);
+    }
+    const organiser = await calendar.organiserOf(data.event.uid);
+    if (!organiser) throw refusal(404, EVENT_GONE_MESSAGE);
+    return outsideInviting(env.DB, organiser);
   });
 
 export const retryInvitationEmail = createServerFn({ method: "POST" })

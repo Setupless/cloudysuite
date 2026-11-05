@@ -4,7 +4,7 @@ import {
   QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
-import type { CalendarId, UserId } from "@cloudysuite/access";
+import type { CalendarId } from "@cloudysuite/access";
 import {
   countCalendarEvents,
   getCalendars,
@@ -23,7 +23,7 @@ import {
 } from "./schedule";
 import { searchEvents } from "./search-functions";
 import { addDays } from "./time";
-import type { TimeZone } from "./types";
+import type { EventUid, TimeZone } from "./types";
 import { todayWindow } from "./ui/today-plan";
 
 const CANNOT_REACH =
@@ -122,10 +122,18 @@ export const peopleChoicesQuery = () =>
   });
 
 // Asked each time the dialog opens, since Mail can be turned off at any time.
-export const outsideInvitingQuery = (organiser: UserId) =>
+// No event asks about the person's own address, for a new one.
+export const outsideInvitingQuery = (
+  event: { calendarId: CalendarId; uid: EventUid } | null,
+) =>
   queryOptions({
-    queryKey: ["calendar", "outsideInviting", organiser] as const,
-    queryFn: () => call(() => getOutsideInviting({ data: { organiser } })),
+    queryKey: [
+      "calendar",
+      "outsideInviting",
+      event?.calendarId ?? null,
+      event?.uid ?? null,
+    ] as const,
+    queryFn: () => call(() => getOutsideInviting({ data: { event } })),
     staleTime: 0,
   });
 const UTC = "UTC" as TimeZone;

@@ -56,6 +56,8 @@ export type CalendarClient = {
   answer(uid: EventUid, answer: Answer): Promise<AnswerResult>;
   retryEmail(uid: EventUid, recipient: PersonKey): Promise<RetryResult>;
   countEvents(): Promise<number>;
+  // Null for an event that's gone, or a copy of one organised elsewhere.
+  organiserOf(uid: EventUid): Promise<UserId | null>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
 };
@@ -103,6 +105,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
     retryEmail: async (uid, recipient) =>
       (await stub.retryEmail(actor, uid, recipient)) as RetryResult,
     countEvents: () => stub.countEvents(actor),
+    organiserOf: async (uid) =>
+      (await stub.organiserOf(actor, uid)) as UserId | null,
     erase: async () => (await stub.erase(actor)) as EraseResult,
   };
 }

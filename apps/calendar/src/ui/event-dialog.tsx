@@ -186,12 +186,15 @@ function outsideNote(
 
 function InviteField({
   guests,
+  event,
   organiser,
   organiserName,
   disabled,
   onChange,
 }: {
   guests: Guest[];
+  // The event being changed, or null for a new one.
+  event: { calendarId: CalendarId; uid: EventUid } | null;
   // Whose address the emails go from, who is never one of their own guests.
   organiser: UserId;
   organiserName: string | null;
@@ -200,7 +203,7 @@ function InviteField({
 }) {
   const headingId = useId();
   const me = useMe();
-  const query = useQuery(outsideInvitingQuery(organiser));
+  const query = useQuery(outsideInvitingQuery(event));
   const inviting = query.isPending
     ? "checking"
     : query.isError
@@ -315,6 +318,10 @@ export function EventDialog({
   const organiserName =
     editing && editing.organiser.kind !== "invitation"
       ? editing.organiser.name
+      : null;
+  const organised =
+    place && editing && editing.organiser.kind !== "invitation"
+      ? { calendarId: place.calendarId, uid: place.target.uid }
       : null;
   const chosen = writable.find((entry) => choiceOf(entry) === choice);
   const [endDayAsked, setEndDayAsked] = useState(false);
@@ -674,6 +681,7 @@ export function EventDialog({
         )}
         <InviteField
           guests={form.people}
+          event={organised}
           organiser={organiser}
           organiserName={organiserName}
           disabled={pending}

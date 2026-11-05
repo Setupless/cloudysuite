@@ -594,7 +594,7 @@ test("an address can't be invited while Mail is off, or by someone with no mailb
   kit.sqlite.run("INSERT INTO app_settings (app, enabled) VALUES ('mail', 0)");
   expect(
     await as(people.manager).getOutsideInviting({
-      data: { organiser: people.manager },
+      data: { event: null },
     }),
   ).toBe("mailOff");
   expect(
@@ -623,7 +623,7 @@ test("an address can't be invited while Mail is off, or by someone with no mailb
   ]);
   expect(
     await as(people.editor).getOutsideInviting({
-      data: { organiser: people.editor },
+      data: { event: null },
     }),
   ).toBe("noSender");
   expect(
@@ -863,7 +863,11 @@ test("only the person, or someone who can edit the event, learns whether emails 
     await refused(
       as(people.colleague).getOutsideInviting({ data: { event: about } }),
     ),
-  ).toMatchObject({ status: 404 });
+  ).toEqual({
+    status: 403,
+    message:
+      "You don't have access to this calendar. Ask one of its managers if you need it.",
+  });
   kit.sqlite.run("UPDATE user SET banned = 1 WHERE id = ?", [people.manager]);
   expect(
     await as(people.editor).getOutsideInviting({ data: { event: about } }),

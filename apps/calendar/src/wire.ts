@@ -364,9 +364,17 @@ export function parseAnswerInput(raw: unknown) {
   };
 }
 
-export const parseOrganiserInput = (raw: unknown) => ({
-  organiser: requireUserId(record(raw).organiser),
-});
+// No event asks about the person themselves, for a new one.
+export function parseOutsideInvitingInput(raw: unknown) {
+  const { event } = record(raw);
+  if (event === null) return { event: null };
+  return {
+    event: {
+      ...parseCalendarInput(event),
+      uid: parseTarget({ uid: record(event).uid, occurrenceId: null }).uid,
+    },
+  };
+}
 
 export function parseRetryEmailInput(raw: unknown) {
   const { recipient } = record(raw);

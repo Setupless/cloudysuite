@@ -187,6 +187,11 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.countEvents();
   }
 
+  // Everyone on the calendar sees who organised its events.
+  organiserOf(_actor: Actor, uid: EventUid): UserId | null {
+    return this.#store.organiserOf(uid);
+  }
+
   async erase(actor: Actor): Promise<EraseResult> {
     const result = this.#store.erase(actor, Date.now());
     await this.#scheduleNextWakeUp();
