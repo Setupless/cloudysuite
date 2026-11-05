@@ -189,8 +189,18 @@ export function EventCard({
     top: number;
   } | null>(null);
 
+  // The grid scrolls under the card, so the card follows its event.
   useLayoutEffect(() => {
-    if (card.current) setPosition(besideAnchor(card.current, anchor));
+    const place = () => {
+      if (card.current) setPosition(besideAnchor(card.current, anchor));
+    };
+    place();
+    window.addEventListener("resize", place);
+    document.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      document.removeEventListener("scroll", place, true);
+    };
   }, [anchor]);
 
   // A hidden card can't take focus, so it waits until the card is placed.
@@ -252,10 +262,9 @@ export function EventPanel({
 }) {
   const titleId = useId();
   const panel = useRef<HTMLElement>(null);
-  // Open details closes the card it was pressed in, so focus moves here instead of to
-  // the top of the page.
+  // On a narrow screen the panel covers the grid, so focus moves here from the event.
   useEffect(() => {
-    if (document.activeElement === document.body) panel.current?.focus();
+    panel.current?.focus();
   }, []);
   return (
     <aside

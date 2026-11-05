@@ -137,7 +137,7 @@ function AllDayRow({
 }) {
   return (
     <div
-      className={`grid min-h-7 auto-rows-[1.5rem] gap-y-0.5 border-b border-line py-0.5 ${columns}`}
+      className={`grid max-h-[6.75rem] min-h-7 auto-rows-[1.5rem] gap-y-0.5 overflow-y-auto border-b border-line py-0.5 ${columns}`}
     >
       <span
         className="col-start-1 self-center pr-2 text-right text-[11px] text-secondary"

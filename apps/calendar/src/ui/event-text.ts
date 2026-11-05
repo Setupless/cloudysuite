@@ -15,14 +15,18 @@ const onDay = (date: CivilDate) => new Date(wallOfDate(date));
 const dayFormat = (options: Intl.DateTimeFormatOptions) =>
   new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" });
 
-const yearOf = (date: CivilDate) => date.slice(0, 4);
+// The year shows only when a date falls outside this one.
+const yearUnlessThisOne = (today: CivilDate, ...dates: CivilDate[]) =>
+  dates.every((date) => date.slice(0, 4) === today.slice(0, 4))
+    ? undefined
+    : "numeric";
 
-const longDay = (date: CivilDate, today: CivilDate) =>
+const longDay = (today: CivilDate, ...dates: CivilDate[]) =>
   dayFormat({
     weekday: "long",
     day: "numeric",
     month: "long",
-    year: yearOf(date) === yearOf(today) ? undefined : "numeric",
+    year: yearUnlessThisOne(today, ...dates),
   });
 
 // "2 to 8 November", in the reader's own order of day and month.
@@ -45,16 +49,16 @@ function rangeText(
 }
 
 export const dayTitle = (date: CivilDate, today: CivilDate) =>
-  longDay(date, today).format(onDay(date));
+  longDay(today, date).format(onDay(date));
 
 export function weekTitle({ from, to }: DayWindow, today: CivilDate): string {
   const last = addDays(to, -1);
-  const year =
-    yearOf(from) === yearOf(last) && yearOf(from) === yearOf(today)
-      ? undefined
-      : "numeric";
   return rangeText(
-    dayFormat({ day: "numeric", month: "long", year }),
+    dayFormat({
+      day: "numeric",
+      month: "long",
+      year: yearUnlessThisOne(today, from, last),
+    }),
     onDay(from),
     onDay(last),
   );
@@ -98,7 +102,7 @@ export function whenText(
       days:
         first === last
           ? dayTitle(first, today)
-          : rangeText(longDay(first, today), onDay(first), onDay(last)),
+          : rangeText(longDay(today, first, last), onDay(first), onDay(last)),
       hours: "All day",
     };
   }
@@ -112,6 +116,7 @@ export function whenText(
     weekday: "long",
     day: "numeric",
     month: "long",
+    year: yearUnlessThisOne(today, first, last),
     hour: "numeric",
     minute: "2-digit",
   });

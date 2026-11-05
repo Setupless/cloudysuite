@@ -41,7 +41,9 @@ const VIEW_NAMES: Record<ScheduleView, string> = {
   month: "Month",
 };
 
-type OpenCard = { key: OccurrenceKey; anchor: HTMLElement };
+// Back and Forward change the place without closing anything, so a card belongs to the
+// place it opened in.
+type OpenCard = { key: OccurrenceKey; anchor: HTMLElement; at: string };
 
 const deviceZone = () =>
   parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
@@ -72,13 +74,15 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   );
   const days = useMemo(() => daysIn(window), [window]);
   const navigate = useNavigate({ from: "/calendar/schedule" });
-  const { data: calendars } = useQuery(calendarsQuery());
+  const calendars = useQuery(calendarsQuery());
   const listing = useQuery(eventsQuery(window));
   const events = useMemo(
-    () => shownEvents(listing.data, calendars),
-    [listing.data, calendars],
+    () => shownEvents(listing.data, calendars.data),
+    [listing.data, calendars.data],
   );
-  const [card, setCard] = useState<OpenCard | null>(null);
+  const at = `${place.view}/${place.date}`;
+  const [openCard, setCard] = useState<OpenCard | null>(null);
+  const card = openCard?.at === at ? openCard : null;
   const [picking, setPicking] = useState(false);
   const titleButton = useRef<HTMLButtonElement>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
@@ -160,13 +164,16 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
         panelOpener.current = anchor;
         showPanel(event.key === search.event ? undefined : event.key);
       } else {
-        setCard(card?.key === event.key ? null : { key: event.key, anchor });
+        setCard(
+          card?.key === event.key ? null : { key: event.key, anchor, at },
+        );
       }
     },
     onOpenDay: (date) => go("day", date),
   };
   const cardEvent =
     card && !inDay ? events.find((event) => event.key === card.key) : undefined;
+  const failure = calendars.error ?? listing.error;
   const panelEvent = inDay
     ? events.find((event) => event.key === search.event)
     : undefined;
@@ -230,22 +237,23 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
           ))}
         </div>
       </div>
-      {listing.isError && (
+      {failure && (
         <div className="px-4 pb-2">
-          <Notice tone="danger">{listing.error.message}</Notice>
+          <Notice tone="danger">{failure.message}</Notice>
         </div>
       )}
       {listing.data && !listing.data.complete && (
         <div className="px-4 pb-2">
           <Notice tone="info">
-            There are too many events here to show them all. Switch to a shorter
-            view to see the rest.
+            {inDay
+              ? "There are too many events here to show them all."
+              : "There are too many events here to show them all. Switch to a shorter view to see the rest."}
           </Notice>
         </div>
       )}
       <div
         className="relative flex min-h-0 flex-1 border-t border-line"
-        aria-busy={listing.isPending || undefined}
+        aria-busy={listing.isPending || calendars.isPending || undefined}
       >
         {place.view === "month" ? (
           <MonthGrid
