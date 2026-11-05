@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import {
   calendarAccess,
@@ -142,6 +142,26 @@ export function isBanned(person: {
 }): boolean {
   if (!person.banned) return false;
   return !person.banExpires || person.banExpires.getTime() >= Date.now();
+}
+
+// Everyone a person could add to a team folder or a team calendar. A suspended person
+// can't open anything, so they aren't offered, and the rest are the same few people
+// everyone at a small organisation knows.
+export async function readOthers(database: D1Database, me: UserId) {
+  const rows = await drizzle(database)
+    .select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      banned: user.banned,
+      banExpires: user.banExpires,
+    })
+    .from(user)
+    .where(ne(user.id, me))
+    .orderBy(asc(user.name));
+  return rows
+    .filter((row) => !isBanned(row))
+    .map(({ banned: _banned, banExpires: _banExpires, ...person }) => person);
 }
 
 export async function checkMailboxAccess(

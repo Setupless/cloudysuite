@@ -546,6 +546,14 @@ export class EventStore {
     return { status: "done" };
   }
 
+  // A series counts once, however many dates it has or how many of them were changed.
+  countEvents(): number {
+    const [row] = this.#rows<{ total: number }>(
+      "SELECT count(DISTINCT uid) AS total FROM events",
+    );
+    return row?.total ?? 0;
+  }
+
   // Only a manager, and only once D1 no longer has the calendar.
   erase(actor: Actor): EraseResult {
     if (actor.role !== "manager") return { status: "noAccess" };

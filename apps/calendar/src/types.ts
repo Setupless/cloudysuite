@@ -138,3 +138,5 @@ export const LAST_MANAGER_MESSAGE =
 export const NOT_ON_IT_MESSAGE = "That person isn't on this calendar.";
 export const NOT_A_PERSON_MESSAGE =
   "One of those people can't be added. They may have been removed or suspended.";
+export const PERSONAL_CALENDAR_MESSAGE =
+  "Your own calendar is just for you. It can't be deleted or left, and nobody else can be added to it.";

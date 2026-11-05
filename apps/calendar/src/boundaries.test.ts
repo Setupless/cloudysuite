@@ -57,7 +57,7 @@ test("every Calendar method that touches events is told who is asking", () => {
   ].filter(([, name]) => name !== "constructor");
   expect(methods.length).toBeGreaterThan(3);
   for (const [, name, parameters] of methods) {
-    expect([name, /\bactor: Actor\b/.test(parameters as string)]).toEqual([
+    expect([name, /\b_?actor: Actor\b/.test(parameters as string)]).toEqual([
       name,
       true,
     ]);

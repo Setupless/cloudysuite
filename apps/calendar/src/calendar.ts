@@ -54,6 +54,11 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.remove(actor, target, scope, Date.now());
   }
 
+  // Anyone on the calendar sees its events, so anyone on it may know how many there are.
+  countEvents(_actor: Actor): number {
+    return this.#store.countEvents();
+  }
+
   erase(actor: Actor): EraseResult {
     return this.#store.erase(actor);
   }

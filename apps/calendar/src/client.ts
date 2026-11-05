@@ -29,6 +29,7 @@ export type CalendarClient = {
     draft: EventDraft,
   ): Promise<ChangeResult>;
   remove(target: EventTarget, scope: ChangeScope): Promise<ChangeResult>;
+  countEvents(): Promise<number>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
 };
@@ -50,6 +51,7 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.updateEvent(actor, target, scope, draft)) as ChangeResult,
     remove: async (target, scope) =>
       (await stub.removeEvent(actor, target, scope)) as ChangeResult,
+    countEvents: () => stub.countEvents(actor),
     erase: async () => (await stub.erase(actor)) as EraseResult,
   };
 }

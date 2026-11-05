@@ -1,10 +1,5 @@
-import {
-  type DriveId,
-  type DriveRole,
-  isBanned,
-  type UserId,
-} from "@cloudysuite/access";
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { type DriveId, type DriveRole, type UserId } from "@cloudysuite/access";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { driveAccess, drives, user } from "../../../src/db/schema";
 import type { Person } from "./types";
@@ -143,23 +138,4 @@ export async function readDriveKind(database: D1Database, driveId: DriveId) {
     .from(drives)
     .where(eq(drives.id, driveId));
   return row ?? null;
-}
-
-// Everyone a person could add. A suspended person can't open anything, so they aren't
-// offered, and the rest are the same few people everyone at a small organisation knows.
-export async function readOthers(database: D1Database, me: UserId) {
-  const rows = await drizzle(database)
-    .select({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      banned: user.banned,
-      banExpires: user.banExpires,
-    })
-    .from(user)
-    .where(ne(user.id, me))
-    .orderBy(asc(user.name));
-  return rows
-    .filter((row) => !isBanned(row))
-    .map(({ banned: _banned, banExpires: _banExpires, ...person }) => person);
 }
