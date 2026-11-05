@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. Calendar is being built, and none of it is in the code yet. The first release isn't finished until a real deployment has proved all four apps, including sending and receiving real mail and invitations. This README describes the intended product and says where something is not built yet.
+**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. Calendar has personal and team calendars, and events with repeats, but its Today and Schedule pages don't show events yet. The first release isn't finished until a real deployment has proved all four apps, including sending and receiving real mail and invitations. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -407,9 +407,9 @@ A deployment set up before Storage existed has no `storage.` address, because th
 
 Calendar replaces Google Calendar. A person lands on Today, the way Storage opens on Home, and Schedule holds the full calendar. Clicking an event on Today opens it in Schedule's Day view, with its details in the panel.
 
-**Built so far:** nothing yet.
+**Built so far:** the `calendar.` address, which the wizard adds and an admin can turn off, personal calendars made on first use, team calendars, each calendar's own access check, and events and repeats in the Calendar object. A repeat can end never, on a day, or after a number of times, and a change can cover only this one, this and later ones, or all of them. The sidebar lists the calendars, shows or hides each one, and makes a new team calendar. Today and Schedule are empty pages so far.
 
-**Not built yet:** Today, Schedule with Day, Week, and Month, personal calendars, team calendars and their members, events and repeats, invitations inside the organisation and answering them, invitation emails to and from people outside, the invitation card in Mail, Join buttons, event search, `.ics` import, handing over a removed person's calendar, reminders, and the wizard adding the `calendar.` address. A control appears only once it works, so none of these has a button yet.
+**Not built yet:** what Today shows, Schedule with Day, Week, and Month, the event dialog, managing a team calendar's members, renaming it, changing its colour, deleting it, and leaving it, invitations inside the organisation and answering them, invitation emails to and from people outside, the invitation card in Mail, Join buttons, event search, `.ics` import, handing over a removed person's calendar, and reminders. The server already does some of these, but a control appears only once it works, so none of them has a button yet.
 
 **To check before building:** the exact name of Outlook's online-meeting property, from a real Outlook invitation file, and that real Google and Outlook invitation emails put the organiser's own address in `From` and pass the [sender check](#invitations-from-outside) for updates and replies.
 
