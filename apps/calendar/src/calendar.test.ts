@@ -105,6 +105,25 @@ test("Can view sees a calendar's events but can't add, change, or remove one", a
   );
 });
 
+test.each([
+  ["Can edit", "editor"],
+  ["Can view", "viewer"],
+] as const)(
+  "%s can't empty a calendar, even straight through its object",
+  async (_, role) => {
+    await created(
+      timed("2026-11-05T11:00:00+11:00", "2026-11-05T12:00:00+11:00"),
+      { title: "Spring launch review" },
+    );
+    kit.join(BOB, role);
+
+    expect(await (await kit.as(BOB)).erase()).toEqual({ status: "noAccess" });
+    expect(
+      shown((await listed("2026-11-05", "2026-11-06")).occurrences),
+    ).toEqual([["Spring launch review", "2026-11-05 11:00"]]);
+  },
+);
+
 test("Can edit changes an event someone else made on the team calendar", async () => {
   const uid = await created(
     timed("2026-11-05T11:00:00+11:00", "2026-11-05T12:00:00+11:00"),

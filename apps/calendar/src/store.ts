@@ -27,6 +27,7 @@ import {
 } from "./time";
 import {
   type ChangeResult,
+  type EraseResult,
   type ChangeScope,
   type CivilDate,
   type CreateResult,
@@ -545,11 +546,13 @@ export class EventStore {
     return { status: "done" };
   }
 
-  // Only once D1 no longer has the calendar, so no one can reach it by then.
-  erase(): void {
+  // Only a manager, and only once D1 no longer has the calendar.
+  erase(actor: Actor): EraseResult {
+    if (actor.role !== "manager") return { status: "noAccess" };
     this.db.transaction(() => {
       this.db.exec("DELETE FROM events");
       this.db.exec("DELETE FROM removed_events");
     });
+    return { status: "done" };
   }
 }

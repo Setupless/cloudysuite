@@ -139,7 +139,9 @@ export const deleteTeamCalendar = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openTeamAsManager((await me()).id, data.calendarId);
     await deleteTeam(env.DB, data.calendarId);
-    await calendar.erase();
+    if ((await calendar.erase()).status === "noAccess") {
+      throw refusal(403, ONLY_MANAGERS_MESSAGE);
+    }
   });
 
 export const setCalendarHidden = createServerFn({ method: "POST" })

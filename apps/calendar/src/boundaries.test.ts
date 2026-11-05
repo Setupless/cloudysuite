@@ -48,9 +48,6 @@ test("only the access check's own module opens a calendar for a person", () => {
   ]);
 });
 
-// Emptying a calendar happens only once D1 no longer has it, so nobody is asking.
-const NO_PERSON_NEEDED = new Set(["erase"]);
-
 test("every Calendar method that touches events is told who is asking", () => {
   const source = readFileSync(join(import.meta.dir, "calendar.ts"), "utf8");
   const methods = [
@@ -60,7 +57,6 @@ test("every Calendar method that touches events is told who is asking", () => {
   ].filter(([, name]) => name !== "constructor");
   expect(methods.length).toBeGreaterThan(3);
   for (const [, name, parameters] of methods) {
-    if (NO_PERSON_NEEDED.has(name as string)) continue;
     expect([name, /\bactor: Actor\b/.test(parameters as string)]).toEqual([
       name,
       true,

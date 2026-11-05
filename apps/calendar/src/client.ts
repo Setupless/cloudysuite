@@ -12,6 +12,7 @@ import type {
   ChangeScope,
   CreateResult,
   DayRange,
+  EraseResult,
   EventDraft,
   EventTarget,
   RangeListing,
@@ -29,7 +30,7 @@ export type CalendarClient = {
   ): Promise<ChangeResult>;
   remove(target: EventTarget, scope: ChangeScope): Promise<ChangeResult>;
   // Only once D1 no longer has the calendar.
-  erase(): Promise<void>;
+  erase(): Promise<EraseResult>;
 };
 
 // The only way for user-facing code to reach a calendar. A grant cannot cross RPC, so D1's
@@ -49,7 +50,7 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.updateEvent(actor, target, scope, draft)) as ChangeResult,
     remove: async (target, scope) =>
       (await stub.removeEvent(actor, target, scope)) as ChangeResult,
-    erase: () => stub.erase(),
+    erase: async () => (await stub.erase(actor)) as EraseResult,
   };
 }
 

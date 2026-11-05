@@ -99,6 +99,8 @@ export type ChangeResult =
   | { status: "readOnly" }
   | { status: "gone" };
 
+export type EraseResult = { status: "done" } | { status: "noAccess" };
+
 export type Person = { id: UserId; name: string; email: string };
 
 export type CalendarEntry = {

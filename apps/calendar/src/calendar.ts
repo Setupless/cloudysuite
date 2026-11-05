@@ -7,13 +7,15 @@ import type {
   ChangeScope,
   CreateResult,
   DayRange,
+  EraseResult,
   EventDraft,
   EventTarget,
   RangeListing,
 } from "./types";
 
 // One calendar's events. Every call that reads or changes them is told who is asking,
-// and refuses Can view a change in the same call that would make it.
+// and refuses Can view a change, or anyone but a manager emptying it, in the same call
+// that would make it.
 export class Calendar extends DurableObject<Env> {
   readonly #store: EventStore;
 
@@ -52,7 +54,7 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.remove(actor, target, scope, Date.now());
   }
 
-  erase(): void {
-    this.#store.erase();
+  erase(actor: Actor): EraseResult {
+    return this.#store.erase(actor);
   }
 }
