@@ -67,6 +67,26 @@ export async function makePersonalCalendar(
   return person ? ensurePersonalCalendar(database, userId) : null;
 }
 
+// The team calendars where this person can change events, longest held first.
+export async function editableTeams(
+  database: D1Database,
+  userId: UserId,
+): Promise<CalendarId[]> {
+  const rows = await drizzle(database)
+    .select({ id: calendars.id })
+    .from(calendarAccess)
+    .innerJoin(calendars, eq(calendars.id, calendarAccess.calendarId))
+    .where(
+      and(
+        eq(calendarAccess.userId, userId),
+        eq(calendars.kind, "team"),
+        inArray(calendarAccess.role, ["editor", "manager"]),
+      ),
+    )
+    .orderBy(asc(calendarAccess.createdAt), asc(calendars.id));
+  return rows.map((row) => row.id);
+}
+
 // Every calendar this person is on. Their personal calendar is always first, even before
 // it is made, because looking at Calendar changes nothing.
 export async function readMyCalendars(

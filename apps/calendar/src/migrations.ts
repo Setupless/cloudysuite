@@ -154,4 +154,9 @@ export const MIGRATIONS: Migrations = [
     ) WITHOUT ROWID`,
     `CREATE INDEX invitation_emails_due ON invitation_emails(try_at)`,
   ],
+  [
+    // The meeting link an invitation from outside gave in its conference field, which a
+    // Join button prefers to one in the place or notes. Null for everything else.
+    `ALTER TABLE events ADD COLUMN conference TEXT`,
+  ],
 ];

@@ -202,7 +202,7 @@ export async function ingest(
       : { message: described, answers: null };
   const result = (await stub.commit(
     message,
-    input.source === "inbound" && !input.quiet ? mailboxId : null,
+    input.source === "inbound" ? { to: mailboxId, notify: !input.quiet } : null,
   )) as IngestResult;
   await noteJevUsage(env, answers);
   return result;

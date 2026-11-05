@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  type EmailAddress,
   MAX_IMPORT_BYTES,
   MAX_IMPORT_EVENTS,
   type SkipReason,
@@ -226,7 +227,11 @@ test("text from outside loses control and direction characters and is cut to len
   expect(found?.notes).toBe("First line\nSecond  line");
   expect(found?.organiser).toBeNull();
   expect(found?.attendees).toEqual([
-    { email: "bo@example.org", name: "Bo", answer: "needsAction" },
+    {
+      email: "bo@example.org" as EmailAddress,
+      name: "Bo",
+      answer: "needsAction",
+    },
   ]);
   expect(found?.conference).toBe("https://meet.google.com/a b");
 });
@@ -397,7 +402,48 @@ test("a file too big, with too many events, or not a calendar is refused whole",
   expect(status("BEGIN:VCARD\r\nEND:VCARD\r\n")).toBe("notCalendar");
   expect(read(calendarFile())).toEqual({
     status: "read",
+    method: null,
     events: [],
     skipped: [],
   });
+});
+
+test("a file says whether it invites, cancels, or answers, and anything else says nothing", () => {
+  const methodOf = (...lines: string[]) => read(calendarFile(...lines)).method;
+  expect(methodOf("METHOD:REQUEST")).toBe("request");
+  expect(methodOf("METHOD:cancel")).toBe("cancel");
+  expect(methodOf("METHOD:REPLY")).toBe("reply");
+  expect(methodOf("METHOD:PUBLISH")).toBeNull();
+  expect(methodOf("METHOD:COUNTER")).toBeNull();
+  expect(methodOf()).toBeNull();
+  // A METHOD inside an event isn't the file's.
+  expect(methodOf("BEGIN:VEVENT", "METHOD:REQUEST", "END:VEVENT")).toBeNull();
+  const two = `${calendarFile("METHOD:REQUEST")}${calendarFile("METHOD:CANCEL")}`;
+  expect(read(two).method).toBeNull();
+});
+
+test("too many removed dates are refused before ical.js reads them", () => {
+  const days = (count: number, from: number) =>
+    Array.from({ length: count }, (_, index) =>
+      new Date(Date.UTC(2027, 0, 1 + from + index))
+        .toISOString()
+        .slice(0, 10)
+        .replaceAll("-", ""),
+    )
+      .map((day) => `${day}T090000`)
+      .join(",");
+  const repeating = (...exdates: string[]) =>
+    event(
+      "UID:many@example.net",
+      "DTSTART;TZID=Australia/Sydney:20261103T090000",
+      "RRULE:FREQ=DAILY",
+      ...exdates.map((list) => `EXDATE;TZID=Australia/Sydney:${list}`),
+    );
+  const began = performance.now();
+  expect(read(repeating(days(1000, 0), days(1001, 1000)))).toMatchObject({
+    events: [],
+    skipped: ["unreadable"],
+  });
+  expect(performance.now() - began).toBeLessThan(500);
+  expect(read(repeating(days(2000, 0))).events[0]?.exdates).toHaveLength(2000);
 });

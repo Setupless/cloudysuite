@@ -21,7 +21,7 @@ export const ANSWER_BUTTONS: Record<GivenAnswer, string> = {
   no: "No",
 };
 
-// Someone outside answers by email, which Calendar doesn't read yet.
+// Someone outside answers by email, so until they do there is no answer to show.
 export const answerName = (person: Attendee) =>
   person.kind === "outside" && person.answer === "needsAnswer"
     ? "No reply yet"
@@ -80,7 +80,7 @@ function namesOf(people: readonly Attendee[]): string {
 function organiserOf(event: Pick<Occurrence, "organiser">, me: UserId) {
   const { organiser } = event;
   if (organiser.kind === "madeHere" && organiser.userId === me) return "You";
-  if (organiser.kind === "invitation") return organiser.name ?? organiser.email;
+  if (organiser.kind === "outside") return organiser.name ?? organiser.email;
   return organiser.name ?? "The organiser";
 }
 

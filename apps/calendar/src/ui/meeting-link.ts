@@ -3,12 +3,17 @@ import { withLinks } from "./event-text";
 export type MeetingService =
   "Google Meet" | "Microsoft Teams" | "Zoom" | "Webex";
 
-export type MeetingLink = { service: MeetingService; url: string };
-
 export type MeetingSources = {
   conference: string | null;
   location: string;
   notes: string;
+};
+
+// Where the link came from. A link from the place or notes is already on screen there.
+export type MeetingLink = {
+  service: MeetingService;
+  url: string;
+  from: keyof MeetingSources;
 };
 
 const HOSTS: { host: string; subdomains: boolean; service: MeetingService }[] =
@@ -26,7 +31,10 @@ const HOSTS: { host: string; subdomains: boolean; service: MeetingService }[] =
 
 // The URL parser lowercases the host, turns a look-alike in another script into
 // punycode, and drops the default port, so an exact match on what it gives is enough.
-function meetingAt(candidate: string): MeetingLink | null {
+function meetingAt(
+  candidate: string,
+  from: MeetingLink["from"],
+): MeetingLink | null {
   const url = URL.parse(candidate.trim());
   if (
     !url ||
@@ -42,12 +50,15 @@ function meetingAt(candidate: string): MeetingLink | null {
       url.hostname === host ||
       (subdomains && url.hostname.endsWith(`.${host}`)),
   );
-  return entry ? { service: entry.service, url: url.href } : null;
+  return entry ? { service: entry.service, url: url.href, from } : null;
 }
 
-function meetingIn(text: string): MeetingLink | null {
+function meetingIn(
+  text: string,
+  from: MeetingLink["from"],
+): MeetingLink | null {
   for (const segment of withLinks(text)) {
-    const found = segment.kind === "link" && meetingAt(segment.href);
+    const found = segment.kind === "link" && meetingAt(segment.href, from);
     if (found) return found;
   }
   return null;
@@ -59,8 +70,8 @@ export function meetingLink({
   notes,
 }: MeetingSources): MeetingLink | null {
   return (
-    (conference === null ? null : meetingAt(conference)) ??
-    meetingIn(location) ??
-    meetingIn(notes)
+    (conference === null ? null : meetingAt(conference, "conference")) ??
+    meetingIn(location, "location") ??
+    meetingIn(notes, "notes")
   );
 }

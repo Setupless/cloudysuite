@@ -312,15 +312,15 @@ export function EventDialog({
   const [choice, setChoice] = useState(() => firstChoice(writable, me));
   // The organiser is never one of their own guests.
   const organiser =
-    editing && editing.organiser.kind !== "invitation"
+    editing && editing.organiser.kind !== "outside"
       ? editing.organiser.userId
       : me;
   const organiserName =
-    editing && editing.organiser.kind !== "invitation"
+    editing && editing.organiser.kind !== "outside"
       ? editing.organiser.name
       : null;
   const organised =
-    place && editing && editing.organiser.kind !== "invitation"
+    place && editing && editing.organiser.kind !== "outside"
       ? { calendarId: place.calendarId, uid: place.target.uid }
       : null;
   const chosen = writable.find((entry) => choiceOf(entry) === choice);

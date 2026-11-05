@@ -1,5 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { MailboxId, UserId } from "@cloudysuite/access";
+import { receiveCalendarMail } from "@cloudysuite/calendar/inbound";
+import {
+  CalendarHandoffStore,
+  carriesCalendar,
+  runDueHandoffs,
+} from "./calendar-handoff";
 import { runDueSends } from "./compose/job";
 import { SendJobStore } from "./compose/job-store";
 import {
@@ -57,6 +63,9 @@ import type {
   ThreadQuery,
 } from "./types";
 
+// A message delivered to this mailbox, and whether anyone may be told of it.
+export type InboundCommit = { to: MailboxId; notify: boolean };
+
 export class Mailbox extends DurableObject<Env> {
   readonly #store: MailboxStore;
   readonly #imports: ImportStore;
@@ -67,6 +76,7 @@ export class Mailbox extends DurableObject<Env> {
   readonly #sends: SendJobStore;
   readonly #spam: SpamStore;
   readonly #push: PushStore;
+  readonly #calendar: CalendarHandoffStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -84,6 +94,7 @@ export class Mailbox extends DurableObject<Env> {
     this.#sends = new SendJobStore(db, this.#store);
     this.#spam = new SpamStore(db);
     this.#push = new PushStore(db);
+    this.#calendar = new CalendarHandoffStore(db);
   }
 
   findByHash(rawHash: string): MessageRef | null {
@@ -94,19 +105,22 @@ export class Mailbox extends DurableObject<Env> {
     return this.#store.planJevCheck(message);
   }
 
-  // `inboundTo` is set only by the inbound path. A Durable Object cannot reliably read
-  // its own name during an alarm, so the job needs to be told which mailbox this is.
+  // `inbound` is set only by the inbound path. A Durable Object cannot reliably read its
+  // own name during an alarm, so the jobs need to be told which mailbox this is. Spam
+  // adds nothing to a calendar, because the filter judged it unwanted.
   async commit(
     message: NewMessage,
-    inboundTo: MailboxId | null = null,
+    inbound: InboundCommit | null = null,
   ): Promise<CommitResult> {
     const result = this.#store.commit(message);
-    if (
-      inboundTo !== null &&
-      result.status === "stored" &&
-      announces(result.folder)
-    ) {
-      this.#push.enqueue(result.messageId, inboundTo, Date.now());
+    if (inbound !== null && result.status === "stored") {
+      const now = Date.now();
+      if (inbound.notify && announces(result.folder)) {
+        this.#push.enqueue(result.messageId, inbound.to, now);
+      }
+      if (result.folder !== "spam" && carriesCalendar(message)) {
+        this.#calendar.enqueue(result.messageId, message, inbound.to, now);
+      }
     }
     await this.#scheduleNextWakeUp();
     return result;
@@ -393,6 +407,7 @@ export class Mailbox extends DurableObject<Env> {
       this.#imports.nextRunAt(),
       this.#sends.nextDueAt(),
       this.#push.nextRunAt(),
+      this.#calendar.nextRunAt(),
     ].filter((time) => time !== null);
     return due.length > 0
       ? // The runtime refuses a time of 0, which "due now" in the deletion queue is stored as.
@@ -405,9 +420,28 @@ export class Mailbox extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     await this.#runSends();
     await this.#sweep();
+    await this.#runCalendarHandoffs();
     await this.#runImports();
     await this.#runPush();
     await this.#scheduleNextWakeUp();
+  }
+
+  // Before imports, so a long batch can't keep an invitation from the calendar. Each
+  // hand-off catches its own failure and keeps its own due time.
+  async #runCalendarHandoffs(): Promise<void> {
+    try {
+      await runDueHandoffs(
+        this.#calendar,
+        this.env.BUCKET,
+        (mail) => receiveCalendarMail(this.env, mail),
+        Date.now(),
+      );
+    } catch (error) {
+      console.error(
+        "Could not hand mail to Calendar. It will try again.",
+        error,
+      );
+    }
   }
 
   // First, so a long import batch can't stretch a ten-second undo window. A throw here

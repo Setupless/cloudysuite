@@ -16,6 +16,10 @@ import {
   type EmailPlan,
   type EmailPlanOrganiser,
   type Gone,
+  type OutsideInvitation,
+  type OutsidePart,
+  type OutsideReply,
+  type OutsideResult,
   type QueuedDelivery,
   type QueuedEmail,
   retryAt,
@@ -51,6 +55,7 @@ import {
   type CivilDate,
   type CreateResult,
   type DayRange,
+  type EmailAddress,
   type EventDetails,
   type EventDraft,
   type EventTarget,
@@ -60,6 +65,7 @@ import {
   type Invitee,
   keyOfPerson,
   MAX_OCCURRENCES,
+  MAX_PERSON_NAME_LENGTH,
   type NotSent,
   type NotSentReason,
   type Occurrence,
@@ -124,19 +130,24 @@ const partOf = (event: OutsideEvent): ImportedPart => ({
   cancelled: event.cancelled,
 });
 
+export type EventGroup = {
+  uid: EventUid;
+  series: OutsideEvent | null;
+  changes: OutsideEvent[];
+};
+
 // A file can hold the same event or date twice. The higher sequence wins, then the first.
-export function groupForImport(events: OutsideEvent[]): ImportGroup[] {
-  const groups = new Map<EventUid, ImportGroup>();
-  const newer = (held: ImportedPart | null | undefined, part: ImportedPart) =>
+export function groupByEvent(events: OutsideEvent[]): EventGroup[] {
+  const groups = new Map<EventUid, EventGroup>();
+  const newer = (held: OutsideEvent | null | undefined, part: OutsideEvent) =>
     !held || part.sequence > held.sequence;
-  for (const event of events) {
-    const group = groups.get(event.uid) ?? {
-      uid: event.uid,
+  for (const part of events) {
+    const group = groups.get(part.uid) ?? {
+      uid: part.uid,
       series: null,
       changes: [],
     };
-    groups.set(event.uid, group);
-    const part = partOf(event);
+    groups.set(part.uid, group);
     if (part.recurrenceId === null) {
       if (newer(group.series, part)) group.series = part;
       continue;
@@ -149,6 +160,13 @@ export function groupForImport(events: OutsideEvent[]): ImportGroup[] {
   }
   return [...groups.values()];
 }
+
+export const groupForImport = (events: OutsideEvent[]): ImportGroup[] =>
+  groupByEvent(events).map((group) => ({
+    uid: group.uid,
+    series: group.series && partOf(group.series),
+    changes: group.changes.map(partOf),
+  }));
 
 export const emptySummary = (): ImportSummary => ({
   added: 0,
@@ -200,6 +218,7 @@ export type EventRow = SqlRow & {
   organiser: string;
   sequence: number;
   cancelled: number;
+  conference: string | null;
 };
 
 export type StoredEvent = EventDetails & {
@@ -211,6 +230,8 @@ export type StoredEvent = EventDetails & {
   organiser: Organiser;
   sequence: number;
   cancelled: boolean;
+  // Only a copy from outside has one.
+  conference: string | null;
 };
 
 export function parseRow(row: EventRow): StoredEvent {
@@ -238,6 +259,7 @@ export function parseRow(row: EventRow): StoredEvent {
     organiser: JSON.parse(row.organiser) as Organiser,
     sequence: row.sequence,
     cancelled: row.cancelled === 1,
+    conference: row.conference,
   };
 }
 
@@ -356,7 +378,8 @@ export function readPeople(
           attendees: JSON.parse(row.attendees) as StoredAttendee[],
           revision: row.revision,
           reply: row.reply === null ? null : (JSON.parse(row.reply) as Reply),
-          notSent: notSent.get(row.uid) ?? new Map(),
+          // A copy's own queue holds only its answer to an organiser outside.
+          notSent: (row.reply === null && notSent.get(row.uid)) || new Map(),
         },
       ]),
   );
@@ -436,6 +459,7 @@ export const occurrenceOf = (
       ? people.reply.answer
       : null,
   cancelled: series.cancelled || event.cancelled,
+  conference: event.conference,
 });
 
 const sameTime = (a: EventTime, b: EventTime) =>
@@ -584,6 +608,7 @@ const deliveredPartOf = (event: StoredEvent): DeliveredPart => ({
   rule: event.rule,
   exdates: event.exdates,
   sequence: event.sequence,
+  conference: event.conference,
 });
 
 // Soonest first on the viewer's own clock, with a day's all-day events before its timed
@@ -632,8 +657,8 @@ export class EventStore {
     this.db.exec(
       `INSERT INTO events (uid, recurrence_id, title, location, notes, starts_at, ends_at,
          tzid, start_date, end_date, rrule, exdates, organiser, sequence, created_at,
-         updated_at, span_start, span_end, cancelled)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         updated_at, span_start, span_end, cancelled, conference)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (uid, coalesce(recurrence_id, '')) DO UPDATE SET
          title = excluded.title, location = excluded.location, notes = excluded.notes,
          starts_at = excluded.starts_at, ends_at = excluded.ends_at, tzid = excluded.tzid,
@@ -641,7 +666,8 @@ export class EventStore {
          rrule = excluded.rrule, exdates = excluded.exdates,
          organiser = excluded.organiser, sequence = excluded.sequence,
          updated_at = excluded.updated_at, span_start = excluded.span_start,
-         span_end = excluded.span_end, cancelled = excluded.cancelled`,
+         span_end = excluded.span_end, cancelled = excluded.cancelled,
+         conference = excluded.conference`,
       event.uid,
       event.recurrenceId,
       event.title,
@@ -661,6 +687,7 @@ export class EventStore {
       span.start,
       span.end,
       event.cancelled ? 1 : 0,
+      event.conference,
     );
   }
 
@@ -921,6 +948,7 @@ export class EventStore {
           },
           sequence: 0,
           cancelled: false,
+          conference: null,
         },
         now,
       );
@@ -1038,6 +1066,7 @@ export class EventStore {
           organiser: series.organiser,
           sequence: 0,
           cancelled: false,
+          conference: null,
         },
         now,
       );
@@ -1233,28 +1262,28 @@ export class EventStore {
   }
 
   // Only the person the copy was sent to answers it, even once their calendar has been
-  // handed to someone else. The answer stays here, and a notice takes it to the organiser,
-  // even when it's the answer already shown, so pressing it again always reaches them.
+  // handed to someone else. The answer stays here. A notice takes it to a colleague who
+  // organised it, and an email to an organiser outside, even when it's the answer already
+  // shown, so pressing it again always reaches them.
   answer(
     actor: Actor,
     uid: EventUid,
     answer: Answer,
     now: number,
   ): AnswerResult {
-    const series = this.#series(uid);
+    const organiser = this.#series(uid)?.organiser;
     const held = this.#people(uid);
     const reply = held?.reply;
     if (
-      !series ||
+      !organiser ||
+      organiser.kind === "madeHere" ||
       !held ||
       !reply ||
-      reply.for !== actor.userId ||
-      series.organiser.kind !== "colleague"
+      reply.for !== actor.userId
     ) {
       return { status: "gone" };
     }
     const given = { ...reply, answer, revision: reply.revision + 1 };
-    const { calendarId, uid: organiserUid } = series.organiser;
     this.db.transaction(() => {
       this.#writePeople(uid, {
         ...held,
@@ -1265,14 +1294,18 @@ export class EventStore {
         ),
         reply: given,
       });
+      if (organiser.kind === "outside") {
+        this.#queueReply(uid, organiser.email, actor, now);
+        return;
+      }
       this.db.exec(
         `INSERT INTO answer_notices (calendar_id, uid, attendee, answer, revision, tries, try_at)
          VALUES (?, ?, ?, ?, ?, 0, ?)
          ON CONFLICT (calendar_id, uid) DO UPDATE SET attendee = excluded.attendee,
            answer = excluded.answer, revision = excluded.revision, tries = 0,
            try_at = excluded.try_at`,
-        calendarId,
-        organiserUid,
+        organiser.calendarId,
+        organiser.uid,
         actor.userId,
         answer,
         given.revision,
@@ -1280,6 +1313,29 @@ export class EventStore {
       );
     });
     return { status: "done" };
+  }
+
+  // The email is written from the answer as it is when it goes, like an invitation, so
+  // a second answer before it goes sends only the second.
+  #queueReply(
+    uid: EventUid,
+    organiser: EmailAddress,
+    actor: Actor,
+    now: number,
+  ): void {
+    this.db.exec(
+      `INSERT INTO invitation_emails (uid, recipient, calendar_id, changed_by, version,
+         state, tries, try_at)
+       VALUES (?, ?, ?, ?, 1, 'queued', 0, ?)
+       ON CONFLICT (uid, recipient) DO UPDATE SET version = version + 1,
+         state = 'queued', tries = 0, try_at = excluded.try_at, reason = NULL,
+         calendar_id = excluded.calendar_id, changed_by = excluded.changed_by`,
+      uid,
+      keyOfPerson({ email: organiser }),
+      actor.calendarId,
+      actor.userId,
+      now,
+    );
   }
 
   // `uid` is the copy's own here, from copyUidOf. A copy is written only over an earlier
@@ -1333,39 +1389,15 @@ export class EventStore {
       organiser,
       cancelled: false,
     });
-    const series = copyOf(seriesPart);
-    const removal = readRemovals(this.db, [uid]).get(uid);
-    // A file can call a date off without raising the series' sequence, so a series at the
-    // same sequence that has called off more dates is newer too.
-    const newerSeries =
-      !held ||
-      seriesPart.sequence > held.sequence ||
-      (seriesPart.sequence === held.sequence &&
-        seriesPart.exdates.some((id) => !held.exdates.includes(id)));
     let changed = false;
     this.db.transaction(() => {
-      if (newerSeries) {
-        changed = true;
-        this.#replaceCopySeries(held, series, delivery, removal, now);
-      }
-      for (const part of delivery.parts) {
-        const id = part.recurrenceId;
-        if (id === null || isRemovedHere(removal, series, id)) continue;
-        const heldChange = this.#changeOf(uid, id);
-        // A newer series comes with the whole event as the organiser has it now, so each
-        // changed date with it counts, even one here that was called off with the event.
-        // Otherwise a changed date counts only if it's newer than the series held too,
-        // since that series may have dropped it.
-        if (
-          !newerSeries &&
-          part.sequence <=
-            Math.max(held?.sequence ?? -1, heldChange?.sequence ?? -1)
-        ) {
-          continue;
-        }
-        changed = true;
-        this.#write(copyOf(part), now);
-      }
+      changed = this.#takeParts(
+        held,
+        copyOf,
+        seriesPart,
+        delivery.parts.filter((part) => part !== seriesPart),
+        now,
+      );
       const heldPeople = this.#people(uid);
       if (!heldPeople || delivery.peopleRevision > heldPeople.revision) {
         changed = true;
@@ -1403,13 +1435,65 @@ export class EventStore {
     return changed ? "received" : "unchanged";
   }
 
+  // The parts of a copy newer than those held, by UID and sequence, with `held` checked
+  // as the same organiser's. The series is null when only some dates change. A newer
+  // series comes with the whole event as the organiser has it now, so each changed date
+  // with it counts, even one here that was called off with the event. Otherwise a
+  // changed date counts only if it's newer than the series held too, since that series
+  // may have dropped it. A removed date stays removed.
+  #takeParts<Part extends DeliveredPart>(
+    held: StoredEvent | null,
+    copyOf: (part: Part) => StoredEvent,
+    seriesPart: Part | null,
+    changes: readonly Part[],
+    now: number,
+  ): boolean {
+    const series = seriesPart && copyOf(seriesPart);
+    const dates = series ?? held;
+    if (!dates) return false;
+    const removal = readRemovals(this.db, [dates.uid]).get(dates.uid);
+    // A file can call a date off without raising the series' sequence, so a series at the
+    // same sequence that has called off more dates is newer too.
+    const newerSeries =
+      series !== null &&
+      (!held ||
+        series.sequence > held.sequence ||
+        (series.sequence === held.sequence &&
+          series.exdates.some((id) => !held.exdates.includes(id))));
+    if (newerSeries) {
+      this.#replaceCopySeries(
+        held,
+        series,
+        new Set([null, ...changes.map((part) => part.recurrenceId)]),
+        removal,
+        now,
+      );
+    }
+    let changed = newerSeries;
+    for (const part of changes) {
+      const id = part.recurrenceId;
+      if (id === null || isRemovedHere(removal, dates, id)) continue;
+      const heldChange = this.#changeOf(dates.uid, id);
+      if (
+        !newerSeries &&
+        part.sequence <=
+          Math.max(held?.sequence ?? -1, heldChange?.sequence ?? -1)
+      ) {
+        continue;
+      }
+      changed = true;
+      this.#write(copyOf(part), now);
+    }
+    return changed;
+  }
+
   // A date the organiser has newly removed stays on the copy, marked as called off, so
   // someone who looks sees it was cancelled rather than finding it gone. A changed date
   // the organiser no longer has goes.
   #replaceCopySeries(
     held: StoredEvent | null,
     series: StoredEvent,
-    delivery: Extract<Delivery, { kind: "event" }>,
+    delivered: ReadonlySet<OccurrenceId | null>,
     removal: Removal | undefined,
     now: number,
   ): void {
@@ -1441,7 +1525,6 @@ export class EventStore {
           ];
         })
       : [];
-    const delivered = new Set(delivery.parts.map((part) => part.recurrenceId));
     for (const change of heldChanges) {
       const id = change.recurrenceId as OccurrenceId;
       const stillOff = change.cancelled && series.exdates.includes(id);
@@ -1485,6 +1568,182 @@ export class EventStore {
         now,
       );
     });
+  }
+
+  // An invitation emailed from outside, under the UID it came with. Anyone can send a new
+  // one, which arrives unanswered. Only its organiser, with the proof Mail checked, can
+  // change or call off one held here, and a removed event or date stays removed.
+  receiveOutsideInvitation(
+    invitation: OutsideInvitation,
+    now: number,
+  ): OutsideResult {
+    const { uid, series } = invitation;
+    if (this.#rows("SELECT 1 FROM removed_events WHERE uid = ?", uid).length) {
+      return "unchanged";
+    }
+    const held = this.#series(uid);
+    if (
+      held &&
+      !(
+        held.organiser.kind === "outside" &&
+        held.organiser.email === invitation.organiser.email &&
+        invitation.fromOrganiser
+      )
+    ) {
+      return "refused";
+    }
+    const organiser: Organiser = { kind: "outside", ...invitation.organiser };
+    const copyOf = (part: OutsidePart): StoredEvent => ({
+      ...part,
+      uid,
+      organiser,
+    });
+    const callsOff = invitation.method === "cancel" || series?.cancelled;
+    if (!held) {
+      // There's nothing to call off, or to change only some dates of.
+      if (callsOff || !series) return "unchanged";
+      this.db.transaction(() => {
+        this.#takeParts(null, copyOf, series, invitation.changes, now);
+        this.#takePeople(invitation, undefined);
+      });
+      return "added";
+    }
+    const changed = this.db.transaction(() => {
+      if (callsOff) return this.#callOffCopy(held, invitation, now);
+      const parts = this.#takeParts(
+        held,
+        copyOf,
+        series,
+        invitation.changes,
+        now,
+      );
+      // A change to who's invited needn't raise the sequence, so the list is taken at it.
+      const people =
+        series !== null &&
+        series.sequence >= held.sequence &&
+        this.#takePeople(invitation, this.#people(uid));
+      return parts || people;
+    });
+    return changed ? "updated" : "unchanged";
+  }
+
+  // The list as the organiser sent it. This person's answer is the one they gave here.
+  #takePeople(invitation: OutsideInvitation, held: People | undefined) {
+    const reply: Reply = held?.reply ?? {
+      for: invitation.to,
+      answer: "needsAnswer",
+      revision: 0,
+    };
+    const attendees = invitation.people.map((person): StoredAttendee => ({
+      ...person,
+      answer:
+        person.kind === "colleague" && person.userId === reply.for
+          ? reply.answer
+          : person.answer,
+      revision: 0,
+    }));
+    if (held && JSON.stringify(held.attendees) === JSON.stringify(attendees)) {
+      return false;
+    }
+    this.#writePeople(invitation.uid, {
+      attendees,
+      revision: (held?.revision ?? 0) + 1,
+      reply,
+    });
+    return true;
+  }
+
+  // The whole event, against the series' sequence, which only grows, or some of its
+  // dates, as RFC 5546 calls off a single instance. A called-off date stays on the copy,
+  // marked as such.
+  #callOffCopy(
+    held: StoredEvent,
+    invitation: OutsideInvitation,
+    now: number,
+  ): boolean {
+    if (invitation.series) {
+      if (held.sequence > invitation.series.sequence) return false;
+      const [row] = this.#rows<{ settled: number }>(
+        "SELECT min(cancelled) AS settled FROM events WHERE uid = ?",
+        held.uid,
+      );
+      if (row?.settled === 1) return false;
+      this.db.exec("UPDATE events SET cancelled = 1 WHERE uid = ?", held.uid);
+      return true;
+    }
+    if (held.rule === null) return false;
+    const rule = held.rule;
+    const removal = readRemovals(this.db, [held.uid]).get(held.uid);
+    const budget: Budget = { steps: STEPS_PER_CALL };
+    let changed = false;
+    for (const part of invitation.changes) {
+      const id = part.recurrenceId as OccurrenceId;
+      const heldChange = this.#changeOf(held.uid, id);
+      if (
+        heldChange?.cancelled ||
+        held.exdates.includes(id) ||
+        isRemovedHere(removal, held, id) ||
+        part.sequence < Math.max(held.sequence, heldChange?.sequence ?? -1) ||
+        (!heldChange && indexOf(rule, held.time, id, budget) === null)
+      ) {
+        continue;
+      }
+      changed = true;
+      this.#write(
+        {
+          ...(heldChange ?? held),
+          recurrenceId: id,
+          time: heldChange?.time ?? timeOfDate(held, id),
+          rule: null,
+          exdates: [],
+          sequence: part.sequence,
+          cancelled: true,
+        },
+        now,
+      );
+    }
+    return changed;
+  }
+
+  // Someone outside answering an invitation this organiser sent from their address. Only
+  // their own event takes it, and only for that address on its list. Everyone else
+  // invited is sent the new list. True when the event is here, changed or not.
+  receiveOutsideReply(
+    reply: OutsideReply,
+    calendarId: CalendarId,
+    now: number,
+  ): boolean {
+    const series = this.#series(reply.uid);
+    const held = this.#people(reply.uid);
+    if (
+      series?.organiser.kind !== "madeHere" ||
+      series.organiser.userId !== reply.organiser ||
+      !held ||
+      held.reply
+    ) {
+      return false;
+    }
+    const attendee = held.attendees.find(
+      (person) =>
+        person.kind === "outside" && person.email === reply.attendee.email,
+    );
+    if (!attendee) return false;
+    // Their name is their address until an answer from them says more.
+    const name =
+      reply.attendee.name?.slice(0, MAX_PERSON_NAME_LENGTH) || attendee.name;
+    if (attendee.answer === reply.answer && attendee.name === name) return true;
+    const attendees = held.attendees.map((person) =>
+      person === attendee ? { ...person, answer: reply.answer, name } : person,
+    );
+    this.db.transaction(() => {
+      this.#writePeople(reply.uid, {
+        attendees,
+        revision: held.revision + 1,
+        reply: null,
+      });
+      this.#queue(reply.uid, idsOf(attendees), calendarId, now);
+    });
+    return true;
   }
 
   dueDeliveries(now: number, limit: number): QueuedDelivery[] {
@@ -1659,9 +1918,32 @@ export class EventStore {
 
   // The event as it is now, for one person, or the one date that was called off. Someone
   // no longer invited is told it's off, and so is everyone once it's deleted, but only if
-  // anything reached them before.
+  // anything reached them before. On a copy from outside, it's the answer as it is now.
   emailFor(queued: QueuedEmail): EmailPlan {
     const series = this.#series(queued.uid);
+    if (series?.organiser.kind === "outside") {
+      const { reply, attendees } = this.#people(queued.uid) ?? {};
+      const { email, name } = series.organiser;
+      if (
+        !reply ||
+        reply.answer === "needsAnswer" ||
+        queued.recipient !== keyOfPerson({ email })
+      ) {
+        return { method: "none" };
+      }
+      const named = attendees?.find(
+        (person) => person.kind === "colleague" && person.userId === reply.for,
+      );
+      return {
+        method: "reply",
+        uid: queued.uid,
+        by: reply.for,
+        byName: named?.name ?? null,
+        organiser: { email, name },
+        series: deliveredPartOf(series),
+        answer: reply.answer,
+      };
+    }
     if (series && series.organiser.kind !== "madeHere")
       return { method: "none" };
     const people = series && this.#people(queued.uid);
@@ -1944,6 +2226,8 @@ export class EventStore {
         organiser: held?.organiser ?? importer,
         sequence: series.sequence,
         cancelled: false,
+        // An event of the person's own takes its link from the place they can edit.
+        conference: null,
       };
       if (held) this.#dropChanges(uid, null);
       this.#write(written, now);

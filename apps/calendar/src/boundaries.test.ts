@@ -50,9 +50,15 @@ test("only the access check's own module opens a calendar for a person", () => {
   ]);
 });
 
-// Another Calendar object calls these to hand over an invitation copy or an answer. They
-// take no person, so no person may reach them.
-const OBJECT_TO_OBJECT = ["receiveInvitation", "receiveAnswer"];
+// Another Calendar object calls the first two to hand over an invitation copy or an
+// answer, and Mail's alarm the last two, with what an email from outside said. They take
+// no person, so no person may reach them.
+const OBJECT_TO_OBJECT = [
+  "receiveInvitation",
+  "receiveAnswer",
+  "receiveOutsideInvitation",
+  "receiveOutsideReply",
+];
 
 test("every Calendar method that touches events is told who is asking", () => {
   const source = readFileSync(join(import.meta.dir, "calendar.ts"), "utf8");
@@ -92,6 +98,22 @@ test("only a Calendar object hands an invitation or an answer to another calenda
   }
 });
 
+test("only Mail's alarm hands a calendar what an email from outside said", () => {
+  expect(usersOf(/\bmailReceiver\(/)).toEqual([
+    "apps/calendar/src/client.ts",
+    "apps/calendar/src/inbound.ts",
+  ]);
+  expect(usersOf(/\breceiveCalendarMail\b/)).toEqual([
+    "apps/calendar/src/inbound.ts",
+    "apps/mail/src/mailbox.ts",
+  ]);
+  // No server function, route, or page can reach it, only the Mailbox object.
+  expect(usersOf(/from "[^"]*calendar\/inbound"/)).toEqual([
+    "apps/mail/src/calendar-handoff.ts",
+    "apps/mail/src/mailbox.ts",
+  ]);
+});
+
 test("only the Calendar object makes an event store", () => {
   expect(usersOf(/\bnew EventStore\b/)).toEqual([
     "apps/calendar/src/calendar.ts",
@@ -110,6 +132,7 @@ test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
     "./calendar",
+    "./inbound",
     "./routes",
   ]);
 });

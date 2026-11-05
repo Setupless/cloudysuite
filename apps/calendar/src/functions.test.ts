@@ -21,6 +21,7 @@ import {
 } from "./test-support";
 import {
   type ChangeScope,
+  type EmailAddress,
   type EventTime,
   IMPORT_NOT_CALENDAR_MESSAGE,
   IMPORT_TOO_LARGE_MESSAGE,
@@ -656,7 +657,11 @@ test("an invitation copy has no Edit, is refused a change, and can be removed", 
     end: Date.parse("2026-11-10T15:30:00+11:00"),
     timeZone: SYDNEY,
     rule: null,
-    organiser: { kind: "invitation", email: "jo@example.net", name: "Jo" },
+    organiser: {
+      kind: "outside",
+      email: "jo@example.net" as EmailAddress,
+      name: "Jo",
+    },
   });
   const editor = as(people.editor);
   const day = {

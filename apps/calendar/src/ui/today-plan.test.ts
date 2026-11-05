@@ -184,6 +184,7 @@ test("a hidden calendar's events are left out of Today", () => {
     people: [],
     answer: null,
     cancelled: false,
+    conference: null,
   });
   const events = shownEvents(
     {

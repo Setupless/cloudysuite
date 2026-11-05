@@ -36,7 +36,7 @@ const joins: [string, MeetingService, string][] = [
 ];
 
 test.each(joins)("%s joins %s", (link, service, url) => {
-  expect(inPlace(link)).toEqual({ service, url });
+  expect(inPlace(link)).toEqual({ service, url, from: "location" });
 });
 
 const noJoin: [string, string][] = [
@@ -108,16 +108,21 @@ test("a link inside text is found without the punctuation after it", () => {
   expect(inPlace(`Online (${MEET}).`)).toEqual({
     service: "Google Meet",
     url: MEET,
+    from: "location",
   });
 });
 
 test("the conference field comes first, then the place, then the notes", () => {
   const all = { conference: MEET, location: ZOOM, notes: TEAMS };
-  expect(meetingLink(all)?.service).toBe("Google Meet");
-  expect(meetingLink({ ...all, conference: null })?.service).toBe("Zoom");
-  expect(
-    meetingLink({ ...all, conference: null, location: "Room 4" })?.service,
-  ).toBe("Microsoft Teams");
+  expect(meetingLink(all)).toEqual({
+    service: "Google Meet",
+    url: MEET,
+    from: "conference",
+  });
+  expect(meetingLink({ ...all, conference: null })?.from).toBe("location");
+  expect(meetingLink({ ...all, conference: null, location: "Room 4" })).toEqual(
+    { service: "Microsoft Teams", url: TEAMS, from: "notes" },
+  );
 });
 
 test("a source with no meeting link passes to the next one", () => {
@@ -127,7 +132,7 @@ test("a source with no meeting link passes to the next one", () => {
       location: "Room 4 https://maps.example.org/room-4",
       notes: `Agenda https://docs.google.com/d/1, then join ${TEAMS}`,
     }),
-  ).toEqual({ service: "Microsoft Teams", url: TEAMS });
+  ).toEqual({ service: "Microsoft Teams", url: TEAMS, from: "notes" });
 });
 
 test("the first meeting link in a field wins", () => {
@@ -137,5 +142,5 @@ test("the first meeting link in a field wins", () => {
       location: "",
       notes: `Join ${ZOOM} or dial in. Backup: ${MEET}`,
     }),
-  ).toEqual({ service: "Zoom", url: ZOOM });
+  ).toEqual({ service: "Zoom", url: ZOOM, from: "notes" });
 });

@@ -407,7 +407,7 @@ test("an editor's change goes out from the organiser's address", async () => {
     '"Boss" <boss@example.com>',
   );
   expect(invitationIn(update).events[0]?.organiser).toEqual({
-    email: "boss@example.com",
+    email: "boss@example.com" as EmailAddress,
     name: "Boss",
   });
 });

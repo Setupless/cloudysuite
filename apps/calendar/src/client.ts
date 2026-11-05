@@ -7,7 +7,14 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { SearchTerm } from "@cloudysuite/search";
-import type { AnswerNotice, Delivery, DeliveryResult } from "./invitations";
+import type {
+  AnswerNotice,
+  Delivery,
+  DeliveryResult,
+  OutsideInvitation,
+  OutsideReply,
+  OutsideResult,
+} from "./invitations";
 import type { Actor, ImportGroup, ImportResult } from "./store";
 import { calendarStub } from "./stub";
 import type {
@@ -145,5 +152,17 @@ export function invitationReceiver(env: Env, calendarId: CalendarId) {
     answer: async (notice: AnswerNotice) => {
       await stub.receiveAnswer(notice);
     },
+  };
+}
+
+// For Mail's alarm to hand a calendar what an email from outside said. It grants no
+// person anything, and writes only a copy of an invitation from outside or one outside
+// answer, by the store's rules. boundaries.test.ts allows only inbound.ts to call it.
+export function mailReceiver(env: Env, calendarId: CalendarId) {
+  const stub = calendarStub(env, calendarId);
+  return {
+    invitation: async (invitation: OutsideInvitation) =>
+      (await stub.receiveOutsideInvitation(invitation)) as OutsideResult,
+    reply: (reply: OutsideReply) => stub.receiveOutsideReply(calendarId, reply),
   };
 }

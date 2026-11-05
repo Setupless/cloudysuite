@@ -17,7 +17,7 @@ import {
   LONDON,
   SYDNEY,
 } from "./test-support";
-import type { Occurrence, TimeZone } from "./types";
+import type { EmailAddress, Occurrence, TimeZone } from "./types";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
 
@@ -213,7 +213,11 @@ test("an invitation organised somewhere else stays as it is", async () => {
     end: Date.parse("2026-11-03T09:15:00+11:00"),
     timeZone: SYDNEY,
     rule: null,
-    organiser: { kind: "invitation", email: "jo@example.net", name: "Jo" },
+    organiser: {
+      kind: "outside",
+      email: "jo@example.net" as EmailAddress,
+      name: "Jo",
+    },
   });
   const before = rows();
   expect(await importFile(standup(5, "Standup, taken over"))).toMatchObject({

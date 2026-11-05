@@ -1,4 +1,4 @@
-import { isBanned, type UserId } from "@cloudysuite/access";
+import { isBanned, type MailboxId, type UserId } from "@cloudysuite/access";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
@@ -113,6 +113,27 @@ export async function colleaguesAt(
     if (!found.has(address)) found.set(address, row.userId);
   }
   return found;
+}
+
+// Whose own mailbox this is, by the same rule. A shared mailbox is no one person's.
+export async function personOfMailbox(
+  database: D1Database,
+  mailboxId: MailboxId,
+): Promise<UserId | null> {
+  const [row] = await drizzle(database)
+    .select({ userId: mailboxAccess.userId })
+    .from(mailboxAccess)
+    .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
+    .where(
+      and(
+        eq(mailboxAccess.mailboxId, mailboxId),
+        eq(mailboxes.kind, "personal"),
+        eq(mailboxAccess.role, "manager"),
+      ),
+    )
+    .orderBy(asc(mailboxAccess.createdAt), asc(mailboxAccess.userId))
+    .limit(1);
+  return row?.userId ?? null;
 }
 
 // For the event dialog, and for a change that adds an address.
