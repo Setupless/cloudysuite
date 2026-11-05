@@ -10,25 +10,40 @@ import {
 } from "../../../../src/db/schema";
 import type { EmailAddress, OutsideInviting } from "../types";
 
+// D1 binds at most 100 values in a statement, and each query here binds a few more.
+const CHUNK = 90;
+
+// A list from an event or an email can be any length, so it's asked in parts, each one
+// statement of a batch, which D1 counts as one query.
+function chunked<Item>(items: readonly Item[]): Item[][] {
+  const unique = [...new Set(items)];
+  const parts: Item[][] = [];
+  for (let start = 0; start < unique.length; start += CHUNK) {
+    parts.push(unique.slice(start, start + CHUNK));
+  }
+  return parts;
+}
+
 // A person's own address is the primary address of the personal mailbox they manage.
 // A shared mailbox belongs to no one person. Should someone also manage another
 // person's personal mailbox, the one they were given first is their own.
-function ownAddresses(db: ReturnType<typeof drizzle>, people: UserId[]) {
-  return db
-    .select({ userId: mailboxAccess.userId, address: addresses.address })
-    .from(mailboxAccess)
-    .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
-    .innerJoin(addresses, eq(addresses.mailboxId, mailboxes.id))
-    .where(
-      and(
-        inArray(mailboxAccess.userId, people),
-        eq(mailboxAccess.role, "manager"),
-        eq(mailboxes.kind, "personal"),
-        eq(addresses.kind, "primary"),
-      ),
-    )
-    .orderBy(asc(mailboxAccess.createdAt), asc(mailboxes.id));
-}
+const ownAddresses = (db: ReturnType<typeof drizzle>, people: UserId[]) =>
+  chunked(people).map((part) =>
+    db
+      .select({ userId: mailboxAccess.userId, address: addresses.address })
+      .from(mailboxAccess)
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
+      .innerJoin(addresses, eq(addresses.mailboxId, mailboxes.id))
+      .where(
+        and(
+          inArray(mailboxAccess.userId, part),
+          eq(mailboxAccess.role, "manager"),
+          eq(mailboxes.kind, "personal"),
+          eq(addresses.kind, "primary"),
+        ),
+      )
+      .orderBy(asc(mailboxAccess.createdAt), asc(mailboxes.id)),
+  );
 
 const firstOfEach = (rows: { userId: UserId; address: string }[]) => {
   const found = new Map<UserId, EmailAddress>();
@@ -58,7 +73,7 @@ export async function readSendingFacts(
   colleagues: UserId[],
 ): Promise<SendingFacts> {
   const db = drizzle(database);
-  const [off, person, own] = await db.batch([
+  const [off, person, ...own] = await db.batch([
     db
       .select({ app: appSettings.app })
       .from(appSettings)
@@ -67,10 +82,11 @@ export async function readSendingFacts(
       .select({ banned: user.banned, banExpires: user.banExpires })
       .from(user)
       .where(eq(user.id, organiser)),
-    ownAddresses(db, [...new Set([organiser, ...colleagues])]),
+    ...ownAddresses(db, [organiser, ...colleagues]),
   ]);
   const disabled = new Set(off.map((row) => row.app));
-  const found = firstOfEach(own);
+  // Each person is in one part, so the order within it still decides.
+  const found = firstOfEach(own.flat());
   const sender =
     person[0] && !isBanned(person[0]) ? found.get(organiser) : null;
   found.delete(organiser);
@@ -94,21 +110,25 @@ export async function colleaguesAt(
   wanted: EmailAddress[],
 ): Promise<Map<EmailAddress, UserId>> {
   const db = drizzle(database);
-  const rows = await db
-    .select({ address: addresses.address, userId: mailboxAccess.userId })
-    .from(addresses)
-    .innerJoin(mailboxes, eq(mailboxes.id, addresses.mailboxId))
-    .innerJoin(mailboxAccess, eq(mailboxAccess.mailboxId, mailboxes.id))
-    .where(
-      and(
-        inArray(addresses.address, wanted),
-        eq(mailboxes.kind, "personal"),
-        eq(mailboxAccess.role, "manager"),
-      ),
-    )
-    .orderBy(asc(mailboxAccess.createdAt), asc(mailboxAccess.userId));
+  const [first, ...rest] = chunked(wanted).map((part) =>
+    db
+      .select({ address: addresses.address, userId: mailboxAccess.userId })
+      .from(addresses)
+      .innerJoin(mailboxes, eq(mailboxes.id, addresses.mailboxId))
+      .innerJoin(mailboxAccess, eq(mailboxAccess.mailboxId, mailboxes.id))
+      .where(
+        and(
+          inArray(addresses.address, part),
+          eq(mailboxes.kind, "personal"),
+          eq(mailboxAccess.role, "manager"),
+        ),
+      )
+      .orderBy(asc(mailboxAccess.createdAt), asc(mailboxAccess.userId)),
+  );
   const found = new Map<EmailAddress, UserId>();
-  for (const row of rows) {
+  if (!first) return found;
+  // Each address is in one part, so the order within it still decides.
+  for (const row of (await db.batch([first, ...rest])).flat()) {
     const address = row.address as EmailAddress;
     if (!found.has(address)) found.set(address, row.userId);
   }

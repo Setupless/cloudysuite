@@ -111,16 +111,17 @@ export class CalendarHandoffStore {
     );
   }
 
-  postpone(handoff: DueHandoff, now: number): void {
+  postpone(handoff: DueHandoff, now: number): "later" | "givenUp" {
     if (handoff.tries + 1 >= MAX_TRIES) {
       this.finish(handoff.messageId);
-      return;
+      return "givenUp";
     }
     this.#db.exec(
       "UPDATE calendar_handoffs SET tries = tries + 1, try_at = ? WHERE message_id = ?",
       now + Math.min(FIRST_RETRY_MS * 2 ** handoff.tries, LONGEST_RETRY_MS),
       handoff.messageId,
     );
+    return "later";
   }
 
   nextRunAt(): number | null {
@@ -156,10 +157,11 @@ export async function runDueHandoffs(
       store.finish(handoff.messageId);
     } catch (error) {
       console.error(
-        "Could not hand an invitation to Calendar. It will try again.",
+        store.postpone(handoff, Date.now()) === "later"
+          ? "Could not hand an invitation to Calendar. It will try again."
+          : `Gave up handing an invitation to Calendar after ${MAX_TRIES} tries. The email stays in the mailbox as it came.`,
         error,
       );
-      store.postpone(handoff, Date.now());
     }
   }
 }
