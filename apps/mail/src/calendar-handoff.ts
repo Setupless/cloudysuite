@@ -38,6 +38,7 @@ type DueRow = SqlRow & {
   proved: number;
   tries: number;
   from_address: string | null;
+  in_spam: number;
 };
 
 export type DueHandoff = {
@@ -46,6 +47,8 @@ export type DueHandoff = {
   from: string | null;
   proved: boolean;
   tries: number;
+  // Someone can move it to Spam before the alarm runs, which counts as the filter would.
+  inSpam: boolean;
 };
 
 export class CalendarHandoffStore {
@@ -75,7 +78,8 @@ export class CalendarHandoffStore {
   due(now: number): DueHandoff[] {
     return this.#db
       .exec<DueRow>(
-        `SELECT h.message_id, h.mailbox_id, h.proved, h.tries, m.from_address
+        `SELECT h.message_id, h.mailbox_id, h.proved, h.tries, m.from_address,
+           m.folder = 'spam' AS in_spam
          FROM calendar_handoffs h JOIN messages m ON m.id = h.message_id
          WHERE h.try_at <= ? ORDER BY h.try_at LIMIT ?`,
         now,
@@ -88,6 +92,7 @@ export class CalendarHandoffStore {
         from: row.from_address,
         proved: row.proved === 1,
         tries: row.tries,
+        inSpam: row.in_spam === 1,
       }));
   }
 
@@ -145,6 +150,10 @@ export async function runDueHandoffs(
   now: number,
 ): Promise<void> {
   for (const handoff of store.due(now)) {
+    if (handoff.inSpam) {
+      store.finish(handoff.messageId);
+      continue;
+    }
     if (Date.now() - now >= RUN_BUDGET_MS) return;
     try {
       const parts = await Promise.all(
