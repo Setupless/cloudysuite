@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import packageJson from "../package.json";
 
 const ROOT = join(import.meta.dir, "../../..");
 
+// A glob doesn't follow links, so it never walks into a package through node_modules,
+// where Mail and Calendar, which use each other, would loop.
 function productionFiles(): string[] {
   return ["src", "apps", "packages"].flatMap((dir) =>
-    readdirSync(join(ROOT, dir), { recursive: true, encoding: "utf8" })
+    [...new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: join(ROOT, dir) })]
       .filter(
         (file) =>
           /\.(ts|tsx)$/.test(file) &&

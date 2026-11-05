@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gate, type HostRoute, resolveHost, type Settings } from "./routing";
 
@@ -188,8 +188,9 @@ test("a request that doesn't say how it was made is refused, not sent to a page"
 // would arrive as the file. Without it, the server's answer decides.
 test("no link forces a download, so a download while the app is off shows the off page", () => {
   const apps = join(import.meta.dir, "../apps");
-  const forced = readdirSync(apps, { recursive: true, encoding: "utf8" })
-    .filter((file) => file.endsWith(".tsx") && !file.includes("node_modules"))
+  // A glob doesn't follow links into node_modules, where Mail and Calendar would loop.
+  const forced = [...new Bun.Glob("**/*.tsx").scanSync({ cwd: apps })]
+    .filter((file) => !file.includes("node_modules"))
     .filter((file) =>
       /(^\s*|["}]\s)download(\s|=|>|$)/m.test(
         readFileSync(join(apps, file), "utf8"),
