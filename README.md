@@ -4,7 +4,7 @@ As close as you can get to Google, on Cloudflare, with your own domains.
 
 CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
 
-**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. The first release isn't finished until a real deployment has proved them, including sending and receiving real mail. Calendar has not started. This README describes the intended product and says where something is not built yet.
+**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. Calendar is being built, and none of it is in the code yet. The first release isn't finished until a real deployment has proved all four apps, including sending and receiving real mail and invitations. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -21,7 +21,7 @@ Each app has its own subdomain on the organisation's primary domain.
 | `auth.example.com`     | Organisation, accounts, and email addresses | Google Admin and Account | First   |
 | `mail.example.com`     | Mailboxes                                   | Gmail                    | First   |
 | `storage.example.com`  | Files                                       | Google Drive             | First   |
-| `calendar.example.com` | Calendars, also synced over CalDAV          | Google Calendar          | Later   |
+| `calendar.example.com` | Calendars and invitations                   | Google Calendar          | First   |
 
 Later ideas include a password manager, docs, and sheets.
 
@@ -49,7 +49,7 @@ The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type gro
 
 ## First release
 
-The first release contains Auth, Mail, and Storage, and it waits for all three. Mail was built first, because it had to be good enough to replace Gmail for daily use before work on another app started. Calendar comes after the first release.
+The first release contains Auth, Mail, Storage, and Calendar, and it waits for all four. Mail was built first, because it had to be good enough to replace Gmail for daily use before work on another app started. Calendar joined the first release after Storage, and is built last.
 
 ### Deployment
 
@@ -403,6 +403,81 @@ Uploads split a file into the same 10 MB parts as [Mail import](#mail-import), u
 
 A deployment set up before Storage existed has no `storage.` address, because the wizard runs only once. Add it as a custom domain on the Worker in Cloudflare.
 
+### Calendar
+
+Calendar replaces Google Calendar. A person lands on Today, the way Storage opens on Home, and Schedule holds the full calendar. Clicking an event on Today opens it in Schedule's Day view, with its details in the panel.
+
+**Built so far:** nothing yet.
+
+**Not built yet:** Today, Schedule with Day, Week, and Month, personal calendars, team calendars and their members, events and repeats, invitations inside the organisation and answering them, invitation emails to and from people outside, the invitation card in Mail, Join buttons, `.ics` import, handing over a removed person's calendar, and the wizard adding the `calendar.` address. A control appears only once it works, so none of these has a button yet.
+
+#### Today and Schedule
+
+- **Today shows what's next.** At the top is the next event, with how long until it starts, who's coming, and who hasn't replied. Below it are a This week strip, the rest of today, tomorrow, and invitations from the person's mail. Events that have ended fold into "N finished earlier", so the rest of today starts with what's still to come.
+- **Schedule is the full calendar,** with Day, Week, and Month views. In Week and Month, an event opens in a small card beside it, so the grid keeps its width. Open details on the card goes to Day view, with the full panel.
+- **The toolbar has Go to today, previous and next, and a date title that opens a month picker.** There is no mini month in the sidebar, because the title picker does the same job without taking room from the list of calendars.
+- **Clicking an empty slot starts a new event at that time.** Overlapping events sit side by side, so none hides another.
+- **Keys.** T goes to today, D, W, and M switch to Day, Week, and Month, N starts a new event, the left and right arrows move to the previous or next day, week, or month, and Esc closes what's open. They use TanStack Hotkeys, which is already in the stack.
+- **The sidebar holds Today, Schedule, then a list of calendars, then New team calendar.** Each calendar on the list has a checkbox that shows or hides its events.
+
+#### Personal and team calendars
+
+- **Each person has one personal calendar, which only they see.** It's made on first use, not on first look, like My files. Viewing Calendar changes nothing, because no `GET` request changes a person's data. Their first event makes it, and so does the first invitation that reaches them. The database allows one for each person, so two tabs can't make two.
+- **A team calendar is its own member list,** like a team folder, with the same choices. There are no teams across the organisation to keep in step. Anyone signed in can make a team calendar and becomes its manager, so a team never has to wait for an admin. A manager adds and removes people, and sets each one to Can view, Can edit, or manager. A team calendar always has a manager, so the last one can't leave or step down. Anyone else can leave.
+- **Can view means read-only, on the server.** It can see the calendar's events and their details. It can't add, change, or delete an event. The Calendar object refuses these itself, in the same call that would do the work, so hiding a button is only a courtesy.
+- **A calendar's colour is one of the six team colours,** the `avatar-1` to `avatar-6` roles that team folders use. A personal calendar starts as `avatar-4`. In the design concept, a personal calendar in blue was hard to tell from a blue team calendar beside it.
+- **One access check.** `checkCalendarAccess` is the only thing that issues a calendar's grant, and says who someone is to the calendar. Every read and write goes through it.
+- **Each calendar is one SQLite-backed Durable Object.** A calendar is a team calendar or a person's personal calendar. The object holds the events. D1 holds `calendars` and `calendar_access`, and nothing about events, so an event's title, time, and people live in one place.
+- **Removing a person hands over their personal calendar, and deletes nothing.** It becomes a team calendar named after them, managed by the person the admin chose to receive their files. This mirrors how My files is handed over, so the admin makes one choice for both.
+
+#### Events
+
+- **An event has a title, a day, a start and an end or all day, a repeat, a place, notes, and people.** The repeat is one of doesn't repeat, every day, every weekday, every week, every month, and every year.
+- **Changing a repeating event asks how far the change goes.** The choices are "Only this one", "This and later ones", and "All of them".
+- **Each event keeps its own time zone, and shows in the viewer's device time zone.** A weekly meeting at 9:00 in Sydney stays at 9:00 in Sydney across a daylight-saving change, and someone in another city sees it at their own local time.
+- **Notes and places are plain text.** Only `https` links in them are clickable, and each opens in a new tab with no referrer, so the linked site doesn't learn the calendar's address. An invitation from outside writes these fields, so they are treated like message content.
+
+#### Invitations
+
+- **Anyone in the organisation can be invited from the directory, and so can any email address.**
+- **Everyone invited gets an email** from the organiser's own address, with the invitation attached as iCalendar. This is iMIP, the standard way calendars send invitations by email, so any mail app can answer it.
+- **People in the organisation also get the event straight in their personal calendar,** unanswered and shown dashed, so it's there before they open their mail. Their copy of the email shows an invitation card in Mail, and the card reads from their calendar, so an answer given in either place shows in both.
+- **A copy is never added twice.** The event's UID and sequence decide. A copy whose sequence is no higher than the one held changes nothing, so mail arriving again changes nothing.
+- **Answering is Yes, Maybe, or No,** from Calendar, Today, or the card in Mail. The organiser is told directly when they're inside the organisation, and by an iMIP reply email when they're outside it.
+- **Changes and cancellations from the organiser reach everyone the same way.** A cancelled event stays on the calendar marked as cancelled, with "Remove from my calendar", so someone who looks sees it was called off rather than finding it gone.
+- **An event someone else organised can't be edited or deleted.** The person can answer it and remove it from their own calendar. The organiser's event is the one everyone follows, so a change made in one person's copy would leave the others out of step.
+- **Invitation emails go through the organiser's mailbox send queue,** so [Mail's sending rules](#mail) apply. Each attempt is checked first, and nothing is resent by guesswork. They don't appear in Sent, because the event's People list is the record of who was invited.
+- **With Mail off, invitations inside the organisation still work.** The invite dialog says that people outside won't get an email.
+
+#### Invitations from outside
+
+- **An email to a person's own address that carries an iCalendar invitation adds the event to their personal calendar,** unanswered.
+- **Some invitations add nothing.** Mail to a shared mailbox such as `support@` adds nothing to any calendar, because the mailbox belongs to no one person. Mail sorted into Spam adds nothing, so a stranger can't write onto someone's calendar. While Calendar is off, nothing is added, and the email still arrives, because mail is never dropped.
+- **A change or cancellation to an event already on the calendar counts only from that event's organiser address, on mail whose sender passed authentication.** It uses the authentication results Mail stored when the message arrived, and passing means what [Spam filtering](#spam-filtering) calls proving the sender: DMARC passed, or DKIM passed for the `From` domain or a parent of it. Anyone can write an organiser's address into an invitation, so only mail that proves it came from that address may change the event.
+- **A reply updates only the answer of the attendee address it came from, on authenticated mail.** Anything else stays an ordinary email, and the card says the sender couldn't be confirmed.
+- **Everything in an invitation is hostile,** like message content.
+
+#### Join buttons
+
+- **An event shows "Join Google Meet", "Join Microsoft Teams", "Join Zoom", or "Join Webex"** when it carries a link on that service's own host: `meet.google.com`, `teams.microsoft.com`, `teams.live.com`, `*.zoom.us`, or `*.webex.com`.
+- **The link can come from the invitation's conference field, the place, or the notes.** The conference field is Google's `X-GOOGLE-CONFERENCE` or Microsoft's online-meeting property.
+- **Only `https` links on those exact hosts count.** Any other link gets no Join button, so an invitation can't dress up any address as "Join".
+- **No Google or Microsoft account is needed, and no API.** People can paste a meeting link into Where for their own events.
+
+#### Import
+
+A `.ics` file can be imported into a calendar the person can edit. An event already there, matched by UID, is updated rather than copied, so importing the same file twice changes nothing.
+
+#### Not in the first release
+
+- **Phone sync.** CalDAV needs app passwords. See [Open questions](#open-questions).
+- **Who's free.** Showing a colleague's busy times is a privacy decision. See [Open questions](#open-questions).
+- **Reminders,** unless they're built before the release.
+- **Attaching Storage files to events.**
+- **Links for people outside the organisation,** for the same reason as [Storage](#storage): a link that works without signing in would have no access check behind it.
+
+A deployment set up before Calendar existed has no `calendar.` address, because the wizard runs only once. Add it as a custom domain on the Worker in Cloudflare.
+
 ## Design
 
 CloudySuite uses the Daylight direction, which is calm, neutral, and familiar, with blue for the next action. A left sidebar holds the app switcher and folders, and Mail has a message list beside a reading pane. [The design trial](https://github.com/Setupless/cloudysuite/blob/17574a1/prototypes/look-and-feel/index.html) shows Daylight and the three rejected directions on each screen, in light and dark. It is no longer in the repository, so open that revision for visual reference only.
@@ -449,8 +524,8 @@ These limits come from the Cloudflare docs and shape the product:
 ## Technical direction
 
 - One Worker serves every app and routes by hostname, because the Deploy button does not deploy several Workers from one repository together.
-- Each mailbox and each drive is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, and drive access.
-- The rule that every mailbox or drive query checks the signed-in user's access lives in one place, because several people can share one.
+- Each mailbox, each drive, and each calendar is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, drive access, calendars, and calendar access.
+- The rule that every mailbox, drive, or calendar query checks the signed-in user's access lives in one place, because several people can share one.
 - The Worker uses Smart Placement, because one page load makes several D1 queries one after another, and running the Worker near the database saves a long trip on each.
 
 ### Repository layout
@@ -512,6 +587,7 @@ We build around the TanStack libraries, so that the product is fast for end user
 - oxc for linting
 - Tabler icons
 - postal-mime, to parse raw messages. Writing a MIME parser by hand is error-prone, and this one runs on Workers.
+- ical.js, to read and write iCalendar for invitations, repeats, and `.ics` import. Writing an iCalendar parser by hand is error-prone, and this one has no dependencies and runs on Workers. Version 2.2.1 parsed an invitation, listed a weekly repeat's dates, and wrote the event back out under `wrangler dev`. It is MPL-2.0, which an AGPL-3.0 project can use.
 - Web push uses WebCrypto, with no library.
 - portless for named local development URLs. It needs Node 24 or later and is a development tool only.
 
@@ -522,6 +598,8 @@ Bun is a development tool here. Production code runs on the Workers runtime, so 
 - Which wizard steps work through the API with one token, which permissions does that token need, and which steps need a guide instead?
 - Does Cloudflare allow person-to-person mailbox mail on Email Service? Its [FAQ](https://developers.cloudflare.com/email-service/reference/faq/) answers "Can I use Email Service for marketing emails?" with "No. Email Service supports transactional email only." It does not say whether mailbox mail is allowed. Confirm with Cloudflare before the public release.
 - Should an admin also be able to turn an app off for one person or group? The first release turns an app off for the whole organisation.
+- Should calendars sync to phones? CalDAV clients sign in with a plain password, so phone sync needs app passwords, which [the sign-in features](#auth) don't allow yet. Calendar has no "Add to your phone" until this is decided.
+- Should people see when a colleague is free? Showing someone's busy times to others is a privacy decision the owner hasn't made, so Calendar has no "who's free" view.
 
 ## License
 
