@@ -50,6 +50,11 @@ const calendarAccess = (calendarId: CalendarId) =>
     `SELECT user_id, role FROM calendar_access WHERE calendar_id = '${calendarId}' ORDER BY user_id`,
   ) as { user_id: string; role: string }[];
 
+const rolesOn = (calendarId: CalendarId) =>
+  Object.fromEntries(
+    calendarAccess(calendarId).map(({ user_id, role }) => [user_id, role]),
+  );
+
 const calendar = (id: CalendarId) =>
   (
     kit.rows(
@@ -273,19 +278,12 @@ test("each team calendar they managed alone gets a manager, the way a team folde
   ]);
   expect(calendar(CALENDAR_ALONE)?.name).toBe("Ben's planning");
   // Can edit counts first, even for someone who joined later.
-  expect(calendarAccess(WITH_AN_EDITOR)).toEqual(
-    [
-      { user_id: ada, role: "manager" },
-      { user_id: cam, role: "viewer" },
-    ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
-  );
+  expect(rolesOn(WITH_AN_EDITOR)).toEqual({
+    [ada]: "manager",
+    [cam]: "viewer",
+  });
   // With only Can view left, whoever has been on it longest.
-  expect(calendarAccess(ALL_VIEWERS)).toEqual(
-    [
-      { user_id: ada, role: "viewer" },
-      { user_id: cam, role: "manager" },
-    ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
-  );
+  expect(rolesOn(ALL_VIEWERS)).toEqual({ [ada]: "viewer", [cam]: "manager" });
   expect(
     kit.rows(`SELECT 1 FROM calendar_access WHERE user_id = '${ben}'`),
   ).toEqual([]);
