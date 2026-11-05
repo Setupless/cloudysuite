@@ -696,6 +696,131 @@ test("an invitation Calendar never takes is given up after its last try, and the
   ]);
 });
 
+// D1 refuses a Worker invocation more than 50 queries on the free plan, and counts a
+// batch as one.
+const D1_QUERIES_PER_INVOCATION = 50;
+
+function countQueries() {
+  type Statement = {
+    bind: (...params: unknown[]) => Statement;
+    all: () => unknown;
+    raw: () => unknown;
+    run: () => unknown;
+  };
+  const database = kit.database as unknown as {
+    prepare: (sql: string) => Statement;
+    batch: (statements: Statement[]) => unknown;
+  };
+  const { prepare, batch } = database;
+  const counter = { count: 0 };
+  const counted = (statement: Statement): Statement => ({
+    ...statement,
+    bind: (...params) => counted(statement.bind(...params)),
+    all: () => (counter.count++, statement.all()),
+    raw: () => (counter.count++, statement.raw()),
+    run: () => (counter.count++, statement.run()),
+  });
+  database.prepare = (sql) => counted(prepare(sql));
+  database.batch = (statements) => (counter.count++, batch(statements));
+  return {
+    counter,
+    stop: () => Object.assign(database, { prepare, batch }),
+  };
+}
+
+// One run of the mailbox's alarm, with the directory queries it made.
+async function mailAlarmRun() {
+  const instance = mail.instanceOf(mailboxes.boss);
+  instance.alarm = null;
+  const queries = countQueries();
+  try {
+    await instance.object.alarm();
+  } finally {
+    queries.stop();
+  }
+  await calendars.settle();
+  return queries.counter.count;
+}
+
+const manyInvitations = (prefix: string) =>
+  googleCalendar(
+    "REQUEST",
+    ...Array.from({ length: 200 }, (_, index) =>
+      googleEvent({
+        uid: `${prefix}-${index}@evil.example`,
+        title: `Event ${prefix} ${index}`,
+      }),
+    ),
+  );
+
+test("an email with hundreds of events adds only its first 20, within D1's query limit", async () => {
+  await deliver(
+    invitationEmail({
+      from: SAM,
+      auth: AUTH.proved("contoso.example"),
+      method: "REQUEST",
+      shape: "outlook",
+      calendar: manyInvitations("a"),
+      parts: [
+        calendarAttachment(manyInvitations("b"), "b.ics"),
+        calendarAttachment(manyInvitations("c"), "c.ics"),
+      ],
+    }),
+  );
+  expect(await mailAlarmRun()).toBeLessThan(D1_QUERIES_PER_INVOCATION);
+  expect((await schedule()).map((one) => one.title).sort()).toEqual(
+    Array.from({ length: 20 }, (_, index) => `Event a ${index}`).sort(),
+  );
+});
+
+test("a burst of invitation emails reaches the calendar a few at a time, and all of it soon after", async () => {
+  for (let index = 0; index < 10; index++) {
+    await deliver(
+      google({ uid: `burst-${index}@google.com`, title: `Burst ${index}` }),
+    );
+  }
+  await mailAlarmRun();
+  expect((await schedule()).length).toBeLessThanOrEqual(3);
+  expect(mail.instanceOf(mailboxes.boss).alarm).toBeLessThanOrEqual(Date.now());
+
+  for (let run = 0; run < 10; run++) {
+    expect(await mailAlarmRun()).toBeLessThan(D1_QUERIES_PER_INVOCATION);
+  }
+  expect(await schedule()).toHaveLength(10);
+});
+
+test("a reply email answers only its first 20 events, within D1's query limit", async () => {
+  const uid = await inviteFrom(TEAM, [{ email: DANA as EmailAddress }]);
+  const answering = (uids: string[]) =>
+    invitationEmail({
+      from: DANA,
+      auth: AUTH.proved(PARTNER),
+      method: "REPLY",
+      calendar: googleCalendar(
+        "REPLY",
+        ...uids.map((one) => {
+          const text = googleReply(one, DANA, "ACCEPTED");
+          return text
+            .slice(text.indexOf("BEGIN:VEVENT"), text.indexOf("END:VCALENDAR"))
+            .trimEnd()
+            .split("\r\n");
+        }),
+      ),
+    });
+  const others = Array.from(
+    { length: 199 },
+    (_, index) => `elsewhere-${index}@google.com`,
+  );
+
+  await deliver(answering([...others.slice(0, 20), uid]));
+  await mailAlarmRun();
+  expect(peopleOf((await schedule())[0])).toEqual([[DANA, "needsAnswer"]]);
+
+  await deliver(answering([uid, ...others]));
+  expect(await mailAlarmRun()).toBeLessThan(D1_QUERIES_PER_INVOCATION);
+  expect(peopleOf((await schedule())[0])).toEqual([["Dana Wright", "yes"]]);
+});
+
 test("a calendar part too large to read adds nothing, and the mail is still kept", async () => {
   const filler = Array.from(
     { length: 300 },
