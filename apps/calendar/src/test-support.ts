@@ -34,6 +34,16 @@ mock.module("cloudflare:workers", () => ({
     }
   },
 }));
+// The raw message the Calendar object hands the EMAIL binding.
+mock.module("cloudflare:email", () => ({
+  EmailMessage: class {
+    constructor(
+      readonly from: string,
+      readonly to: string,
+      readonly raw: string,
+    ) {}
+  },
+}));
 const { Calendar } = await import("./calendar");
 const { openCalendar } = await import("./client");
 
@@ -84,6 +94,8 @@ export async function createCalendarTest() {
   >();
   // Calendars that another calendar can't reach, as if the call between them failed.
   const unreachable = new Set<string>();
+  // Calendars that stop the moment they save their progress, as if evicted then.
+  const stopping = new Set<string>();
   // Every invitation one object handed another, as it crossed between them.
   const delivered: { to: string; delivery: Delivery }[] = [];
   const env = {
@@ -136,6 +148,9 @@ export async function createCalendarTest() {
         },
         deleteAlarm: async () => {
           instance.alarm = null;
+        },
+        sync: async () => {
+          if (stopping.has(name)) throw new Error("The object stopped");
         },
       },
     };
@@ -225,6 +240,7 @@ export async function createCalendarTest() {
     arrive,
     settle,
     unreachable,
+    stopping,
     delivered,
     // Hands a delivery to a calendar again, as a retry or a late copy would.
     deliverAgain: (to: string, delivery: Delivery) =>

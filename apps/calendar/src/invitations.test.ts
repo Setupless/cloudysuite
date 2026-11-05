@@ -1126,6 +1126,8 @@ test("while Calendar stays off, a waiting queue checks less and less often, and 
       data: { calendarId: TEAM, draft: planning({ people: [invited], title }) },
     });
   try {
+    // A held clock, so no millisecond passes between a wake-up being set and read.
+    setSystemTime(new Date());
     await unsentInvite(people.outsider, "Weekly planning");
     calendarOn(false);
     await objects.settle();

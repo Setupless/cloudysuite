@@ -14,7 +14,8 @@
     "./download": "./src/download.ts",
     "./ingest": "./src/ingest.ts",
     "./mailbox": "./src/mailbox.ts",
-    "./routes": "./src/routes.ts"
+    "./routes": "./src/routes.ts",
+    "./send-outcome": "./src/compose/send-outcome.ts"
   },
   "dependencies": {
     "@cloudysuite/access": "workspace:*",

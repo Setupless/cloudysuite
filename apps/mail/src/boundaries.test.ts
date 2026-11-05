@@ -77,5 +77,6 @@ test("the package does not export the stub or the store", () => {
     "./ingest",
     "./mailbox",
     "./routes",
+    "./send-outcome",
   ]);
 });

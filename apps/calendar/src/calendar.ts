@@ -1,9 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { SearchTerm } from "@cloudysuite/search";
+import type { UserId } from "@cloudysuite/access";
 import { isAppOff } from "../../../src/app-on";
 import { invitationReceiver } from "./client";
 import { findPersonalCalendar, makePersonalCalendar } from "./directory";
+import { runDueEmails } from "./email/send";
+import { outsideInviting } from "./email/senders";
 import { findEvents } from "./event-search";
 import { listInvitations } from "./invitation-list";
 import {
@@ -33,7 +36,10 @@ import type {
   EventUid,
   Invitee,
   Occurrence,
+  OutsideInviting,
+  PersonKey,
   RangeListing,
+  RetryResult,
   TimeZone,
 } from "./types";
 
@@ -77,17 +83,30 @@ export class Calendar extends DurableObject<Env> {
     return listInvitations(this.#db, actor, timeZone, Date.now());
   }
 
+  // Only a draft that names an address needs to know. Anyone else's answer is never read.
+  async #outsideFor(
+    draft: EventDraft,
+    organiser: UserId | null,
+  ): Promise<OutsideInviting> {
+    if (organiser === null) return "noSender";
+    return draft.people.some((person) => typeof person !== "string")
+      ? outsideInviting(this.env.DB, organiser)
+      : "ready";
+  }
+
   async createEvent(
     actor: Actor,
     organiserName: string,
     draft: EventDraft,
     invitable: Invitee[],
   ): Promise<CreateResult> {
+    const outside = await this.#outsideFor(draft, actor.userId);
     const result = this.#store.create(
       actor,
       organiserName,
       draft,
       invitable,
+      outside,
       Date.now(),
     );
     await this.#scheduleNextWakeUp();
@@ -101,14 +120,29 @@ export class Calendar extends DurableObject<Env> {
     draft: EventDraft,
     invitable: Invitee[],
   ): Promise<ChangeResult> {
+    const outside = await this.#outsideFor(
+      draft,
+      this.#store.organiserOf(target.uid),
+    );
     const result = this.#store.update(
       actor,
       target,
       scope,
       draft,
       invitable,
+      outside,
       Date.now(),
     );
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
+  async retryEmail(
+    actor: Actor,
+    uid: EventUid,
+    recipient: PersonKey,
+  ): Promise<RetryResult> {
+    const result = this.#store.retryEmail(actor, uid, recipient, Date.now());
     await this.#scheduleNextWakeUp();
     return result;
   }
@@ -153,6 +187,11 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.countEvents();
   }
 
+  // Everyone on the calendar sees who organised its events.
+  organiserOf(_actor: Actor, uid: EventUid): UserId | null {
+    return this.#store.organiserOf(uid);
+  }
+
   async erase(actor: Actor): Promise<EraseResult> {
     const result = this.#store.erase(actor, Date.now());
     await this.#scheduleNextWakeUp();
@@ -182,8 +221,10 @@ export class Calendar extends DurableObject<Env> {
   }
 
   // With Calendar off nothing new happens, so copies and answers wait in their queues,
-  // untouched, and go once an admin turns it back on.
+  // untouched, and go once an admin turns it back on. Emails due then don't go, and say
+  // so in the People list, as Mail's sending does when Mail is off.
   override async alarm(): Promise<void> {
+    await this.#sendEmails();
     if (await this.#calendarOff()) {
       // Each check reads D1, so a long stretch off checks less often.
       const holds = this.ctx.storage.kv.get<number>(OFF_HOLDS) ?? 0;
@@ -198,6 +239,34 @@ export class Calendar extends DurableObject<Env> {
     await this.#sendDeliveries();
     await this.#sendAnswers();
     await this.#scheduleNextWakeUp();
+  }
+
+  async #sendEmails(): Promise<void> {
+    try {
+      await runDueEmails(
+        {
+          store: this.#store,
+          database: this.env.DB,
+          email: {
+            send: async ({ from, to, raw }) => {
+              // Loaded here, so code that never sends doesn't need the Workers runtime.
+              const { EmailMessage } = await import("cloudflare:email");
+              return this.env.EMAIL.send(new EmailMessage(from, to, raw));
+            },
+          },
+          saveProgress: async () => {
+            await this.#scheduleNextWakeUp();
+            await this.ctx.storage.sync();
+          },
+        },
+        Date.now(),
+      );
+    } catch (error) {
+      console.error(
+        "Invitation emails stopped. They'll be looked at again.",
+        error,
+      );
+    }
   }
 
   // A directory that can't say waits the same way, so nothing goes without an answer.

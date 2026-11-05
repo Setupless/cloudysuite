@@ -27,6 +27,7 @@ import {
   setMemberRole,
   type TeamChange,
 } from "./directory";
+import { colleaguesAt, outsideInviting } from "./email/senders";
 import { readCalendarFile } from "./outside/ics";
 import {
   addSummary,
@@ -47,6 +48,7 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   IMPORT_TOO_MANY_MESSAGE,
   type ImportSummary,
+  keyOfPerson,
   LAST_MANAGER_MESSAGE,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
@@ -54,6 +56,8 @@ import {
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
+  OUTSIDE_REFUSED_MESSAGES,
+  type OutsideInviting,
   PEOPLE_FOR_ONE_DATE_MESSAGE,
   PERSONAL_CALENDAR_MESSAGE,
   type Person,
@@ -74,8 +78,10 @@ import {
   parseMemberRoleInput,
   parseNewEventInput,
   parseNewTeamCalendarInput,
+  parseOutsideInvitingInput,
   parseRangeInput,
   parseRenameInput,
+  parseRetryEmailInput,
   refusal,
 } from "./wire";
 
@@ -138,6 +144,8 @@ function answerChange(result: ChangeResult): void {
       throw refusal(404, NOT_A_PERSON_MESSAGE);
     case "peopleForOneDate":
       throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
+    case "outsideNotAllowed":
+      throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
   }
 }
 
@@ -295,8 +303,33 @@ export const listInvitations = createServerFn({ method: "GET" })
     }));
   });
 
+// An address of a colleague's own mailbox invites that colleague, so they get their copy
+// and one email, not a second place on the list.
+async function withColleagues(draft: EventDraft): Promise<EventDraft> {
+  const typed = draft.people.flatMap((person) =>
+    typeof person === "string" ? [] : [person.email],
+  );
+  if (typed.length === 0) return draft;
+  const found = await colleaguesAt(env.DB, typed);
+  const people = draft.people.map((person) =>
+    typeof person === "string" ? person : (found.get(person.email) ?? person),
+  );
+  return {
+    ...draft,
+    people: [
+      ...new Map(
+        people.map((person) => [keyOfPerson(person), person]),
+      ).values(),
+    ],
+  };
+}
+
 // Names come from the directory, never from the request.
-const invitableIn = (draft: EventDraft) => readInvitable(env.DB, draft.people);
+const invitableIn = (draft: EventDraft) =>
+  readInvitable(
+    env.DB,
+    draft.people.filter((person) => typeof person === "string"),
+  );
 
 // Kept on every event the person makes, so it can't be a whole page long.
 const organiserName = (person: { name: string }) =>
@@ -307,10 +340,11 @@ export const createEvent = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<EventUid> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
+    const draft = await withColleagues(data.draft);
     const result = await calendar.create(
       organiserName(person),
-      data.draft,
-      await invitableIn(data.draft),
+      draft,
+      await invitableIn(draft),
     );
     switch (result.status) {
       case "created":
@@ -319,6 +353,8 @@ export const createEvent = createServerFn({ method: "POST" })
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":
         throw refusal(404, NOT_A_PERSON_MESSAGE);
+      case "outsideNotAllowed":
+        throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
     }
   });
 
@@ -326,12 +362,13 @@ export const updateEvent = createServerFn({ method: "POST" })
   .validator(parseEventChangeInput)
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
+    const draft = await withColleagues(data.draft);
     answerChange(
       await calendar.update(
         data.target,
         data.scope,
-        data.draft,
-        await invitableIn(data.draft),
+        draft,
+        await invitableIn(draft),
       ),
     );
   });
@@ -369,6 +406,31 @@ export const importCalendarFile = createServerFn({ method: "POST" })
       addSummary(summary, result.summary);
     }
     return summary;
+  });
+
+// Whether the dialog may offer addresses, which go from the organiser's address: the
+// person's own for a new event, or that of an event they can edit.
+export const getOutsideInviting = createServerFn({ method: "GET" })
+  .validator(parseOutsideInvitingInput)
+  .handler(async ({ data }): Promise<OutsideInviting> => {
+    const { id } = await me();
+    if (!data.event) return outsideInviting(env.DB, id);
+    const calendar = await openCalendarAs(id, data.event.calendarId);
+    if (levelOfRole(calendar.role) !== "edit") {
+      throw refusal(403, VIEW_ONLY_MESSAGE);
+    }
+    const organiser = await calendar.organiserOf(data.event.uid);
+    if (!organiser) throw refusal(404, EVENT_GONE_MESSAGE);
+    return outsideInviting(env.DB, organiser);
+  });
+
+export const retryInvitationEmail = createServerFn({ method: "POST" })
+  .validator(parseRetryEmailInput)
+  .handler(async ({ data }): Promise<void> => {
+    const calendar = await openCalendarAs((await me()).id, data.calendarId);
+    const result = await calendar.retryEmail(data.uid, data.recipient);
+    if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
+    if (result.status === "gone") throw refusal(404, EVENT_GONE_MESSAGE);
   });
 
 export const answerInvitation = createServerFn({ method: "POST" })

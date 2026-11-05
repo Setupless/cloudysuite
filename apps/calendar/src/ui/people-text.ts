@@ -1,5 +1,12 @@
 import type { UserId } from "@cloudysuite/access";
-import type { Answer, Attendee, GivenAnswer, Occurrence } from "../types";
+import type {
+  Answer,
+  Attendee,
+  GivenAnswer,
+  NotSent,
+  NotSentReason,
+  Occurrence,
+} from "../types";
 
 export const ANSWER_NAMES: Record<Answer, string> = {
   yes: "Going",
@@ -13,6 +20,47 @@ export const ANSWER_BUTTONS: Record<GivenAnswer, string> = {
   maybe: "Maybe",
   no: "No",
 };
+
+// Someone outside answers by email, which Calendar doesn't read yet.
+export const answerName = (person: Attendee) =>
+  person.kind === "outside" && person.answer === "needsAnswer"
+    ? "No reply yet"
+    : ANSWER_NAMES[person.answer];
+
+// Under "Not sent to" and their name: what happened, and what to do next.
+export const NOT_SENT_TEXT: Record<NotSentReason, string> = {
+  calendarOff:
+    "Calendar was off when the email was due, so it didn't go. Try again now it's back on.",
+  mailOff:
+    "Mail was off, so the email didn't go. Try again once Mail is back on.",
+  changerCantEdit:
+    "Whoever made the change can no longer edit this calendar, so the email didn't go. Try again if it should still go.",
+  noSender:
+    "Emails go from the organiser's own address, which can't send now. Their mailbox may be gone, or their account suspended. Ask your admin, then try again.",
+  checkUnavailable:
+    "We couldn't confirm the email was still allowed to go, so it didn't. Try again in a few minutes.",
+  rateLimited:
+    "Too much mail was going out, so the email didn't go. Try again in a few minutes.",
+  senderNotVerified:
+    "The organiser's address isn't set up to send mail yet. Ask your admin to finish setting up the domain, then try again.",
+  dailyLimit:
+    "Your organisation reached today's sending limit. Try again tomorrow.",
+  accountSuspended:
+    "Cloudflare has paused sending for your organisation. Ask your admin to check the Cloudflare account.",
+  recipientNotAllowed:
+    "Your organisation's settings don't allow mail to this address. Ask your admin.",
+  recipientSuppressed:
+    "This address can't get mail from your organisation, because an earlier message bounced or was reported. Check the address with them.",
+  deliveryRefused:
+    "Their mail server refused the email. Check the address, then try again.",
+  invalidMessage:
+    "Something in this invitation couldn't be sent. Check the address, then try again.",
+};
+
+export const notSentText = (notSent: NotSent, name: string) =>
+  notSent.kind === "unclear"
+    ? `We can't tell whether the email reached ${name}. Check with them before you try again.`
+    : NOT_SENT_TEXT[notSent.reason];
 
 const IN_ORDER: Answer[] = ["yes", "maybe", "no", "needsAnswer"];
 
@@ -36,16 +84,19 @@ function organiserOf(event: Pick<Occurrence, "organiser">, me: UserId) {
   return organiser.name ?? "The organiser";
 }
 
+export const isMe = (person: Attendee, me: UserId) =>
+  person.kind === "colleague" && person.userId === me;
+
 // "Maya Chen invited you and 3 others. 2 going, 1 maybe, 1 not replied."
 export function peopleSummary(
-  event: Pick<Occurrence, "organiser" | "people">,
+  event: Pick<Occurrence, "organiser"> & { people: readonly Attendee[] },
   me: UserId,
 ): string | null {
   const { people } = event;
   if (people.length === 0) return null;
   const by = organiserOf(event, me);
-  const others = people.filter((person) => person.userId !== me).length;
-  const invited = people.some((person) => person.userId === me)
+  const others = people.filter((person) => !isMe(person, me)).length;
+  const invited = people.some((person) => isMe(person, me))
     ? others === 0
       ? `${by} invited you.`
       : `${by} invited you and ${counted(others, "other", "others")}.`
@@ -62,7 +113,7 @@ export function comingLine(
   people: readonly Attendee[],
   me: UserId,
 ): string | null {
-  const others = people.filter((person) => person.userId !== me);
+  const others = people.filter((person) => !isMe(person, me));
   const going = others.filter((person) => person.answer === "yes");
   const waiting = others.filter((person) => person.answer === "needsAnswer");
   const lines = [

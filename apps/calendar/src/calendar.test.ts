@@ -608,6 +608,7 @@ test("an event made before names were kept still shows, and can still be changed
       "all",
       draft(seen!.time, { title: "Older review, renamed" }),
       [],
+      "ready",
       0,
     ),
   ).toEqual({ status: "done" });

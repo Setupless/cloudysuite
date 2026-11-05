@@ -73,13 +73,28 @@ export const GIVEN_ANSWERS = [
   "no",
 ] as const satisfies readonly GivenAnswer[];
 
-// Someone invited. The kind leaves room for people outside, invited by address.
-export type Attendee = {
-  kind: "colleague";
-  userId: UserId;
-  name: string;
-  answer: Answer;
-};
+// Lowercase and checked by parseEmailAddress, so one address is always one string.
+export type EmailAddress = Brand<string, "EmailAddress">;
+
+// Someone invited: a colleague from the directory, or anyone by email address.
+export type Attendee =
+  | { kind: "colleague"; userId: UserId; name: string; answer: Answer }
+  // The name is the address until an answer from them says more.
+  | { kind: "outside"; email: EmailAddress; name: string; answer: Answer };
+
+// Names one person on an event's list, a colleague or an address, the same way however
+// they were added. "user:…" or "mailto:…".
+export type PersonKey = Brand<string, "PersonKey">;
+
+// Someone the dialog asks to invite: a colleague's id, or an address.
+export type PersonToInvite = UserId | { email: EmailAddress };
+
+export const keyOfPerson = (person: Attendee | PersonToInvite): PersonKey =>
+  (typeof person === "string"
+    ? `user:${person}`
+    : "kind" in person && person.kind === "colleague"
+      ? `user:${person.userId}`
+      : `mailto:${person.email}`) as PersonKey;
 
 // Someone the directory says can be invited now, with the name it holds for them.
 export type Invitee = { userId: UserId; name: string };
@@ -91,8 +106,34 @@ export type EventDetails = { title: string; location: string; notes: string };
 export type EventDraft = EventDetails & {
   time: EventTime;
   repeat: Repeat | null;
-  people: UserId[];
+  people: PersonToInvite[];
 };
+
+// Why an invitation email didn't go. The checks run again before each attempt, and the
+// rest are the mail service's own refusals.
+export const NOT_SENT_REASONS = [
+  "calendarOff",
+  "mailOff",
+  "changerCantEdit",
+  "noSender",
+  "checkUnavailable",
+  "rateLimited",
+  "senderNotVerified",
+  "dailyLimit",
+  "accountSuspended",
+  "recipientNotAllowed",
+  "recipientSuppressed",
+  "deliveryRefused",
+  "invalidMessage",
+] as const;
+export type NotSentReason = (typeof NOT_SENT_REASONS)[number];
+
+// An invitation email to one person that didn't go, or that may not have.
+export type NotSent =
+  { kind: "refused"; reason: NotSentReason } | { kind: "unclear" };
+
+// Whether people outside can be invited to an event, from its organiser's address.
+export type OutsideInviting = "ready" | "mailOff" | "noSender";
 
 export type Occurrence = EventDetails & {
   uid: EventUid;
@@ -103,8 +144,9 @@ export type Occurrence = EventDetails & {
   organiser: Organiser;
   // Decided by the same rule that refuses a change, so a button can match it.
   changeable: boolean;
-  // Everyone invited, in the order they were added.
-  people: Attendee[];
+  // Everyone invited, in the order they were added. Only the organiser's calendar knows
+  // which emails didn't go, so a copy says null for everyone.
+  people: (Attendee & { notSent: NotSent | null })[];
   // The viewer's own answer, on a copy of an invitation sent to them, and null otherwise.
   answer: Answer | null;
   // The organiser called off this date, or the whole event.
@@ -135,11 +177,19 @@ export type ChangeScope = "this" | "thisAndLater" | "all";
 
 export type EventTarget = { uid: EventUid; occurrenceId: OccurrenceId | null };
 
+// A new address on the list needs an email from the organiser's address, so neither Mail
+// being off nor an organiser with no personal mailbox can let one on.
+export type OutsideRefused = {
+  status: "outsideNotAllowed";
+  why: Exclude<OutsideInviting, "ready">;
+};
+
 export type CreateResult =
   | { status: "created"; uid: EventUid }
   | { status: "noAccess" }
   // Someone asked for can't be invited, because they were removed or suspended.
-  | { status: "notInvitable" };
+  | { status: "notInvitable" }
+  | OutsideRefused;
 
 export type ChangeResult =
   | { status: "done" }
@@ -150,7 +200,12 @@ export type ChangeResult =
   | { status: "gone" }
   | { status: "notInvitable" }
   // Who's invited changes from a date onwards, or for every date, never for one.
-  | { status: "peopleForOneDate" };
+  | { status: "peopleForOneDate" }
+  | OutsideRefused;
+
+// Try again on an email that didn't go. Done also covers one already on its way again.
+export type RetryResult =
+  { status: "done" } | { status: "noAccess" } | { status: "gone" };
 
 // Gone also covers a copy that isn't this person's to answer.
 export type AnswerResult = { status: "done" } | { status: "gone" };
@@ -297,3 +352,11 @@ export const NOT_A_PERSON_MESSAGE =
   "One of those people can't be added. They may have been removed or suspended.";
 export const PERSONAL_CALENDAR_MESSAGE =
   "Your own calendar is just for you. It can't be deleted or left, and nobody else can be added to it.";
+export const NOT_AN_ADDRESS_MESSAGE =
+  "One of the email addresses isn't complete. Check it, such as name@example.com.";
+export const OUTSIDE_REFUSED_MESSAGES: Record<OutsideRefused["why"], string> = {
+  mailOff:
+    "Mail is off, so people outside your organisation can't be invited. Invite colleagues only, or ask your admin to turn Mail back on.",
+  noSender:
+    "Invitations to people outside your organisation go from the organiser's own mailbox, and this organiser doesn't have one. Invite colleagues only, or ask your admin for a mailbox.",
+};

@@ -5,15 +5,29 @@ import {
   IconCircleDashed,
   IconCircleX,
   IconHelpCircle,
+  IconMailOff,
+  IconRefresh,
   IconUser,
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { answerInvitation } from "../functions";
+import { answerInvitation, retryInvitationEmail } from "../functions";
 import { call, calendarKeys } from "../queries";
-import { type Answer, GIVEN_ANSWERS, type GivenAnswer } from "../types";
+import {
+  type Answer,
+  GIVEN_ANSWERS,
+  type GivenAnswer,
+  keyOfPerson,
+  type NotSent,
+} from "../types";
 import { useMe } from "./me";
-import { ANSWER_BUTTONS, ANSWER_NAMES, peopleSummary } from "./people-text";
+import {
+  ANSWER_BUTTONS,
+  answerName,
+  isMe,
+  notSentText,
+  peopleSummary,
+} from "./people-text";
 import type { ShownEvent } from "./shown-event";
 
 const ANSWER_ICONS: Record<Answer, { icon: Icon; tone: string }> = {
@@ -111,6 +125,77 @@ function PersonLine({
   );
 }
 
+type Person = ShownEvent["people"][number];
+
+// An invitation email that didn't go, or may not have. Try again is offered to anyone
+// who can change the event, and the server checks that too.
+function NotSentLine({
+  event,
+  person,
+  notSent,
+}: {
+  event: ShownEvent;
+  person: Person;
+  notSent: NotSent;
+}) {
+  const client = useQueryClient();
+  const [trying, setTrying] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function tryAgain() {
+    setTrying(true);
+    setFailure(null);
+    try {
+      await call(() =>
+        retryInvitationEmail({
+          data: {
+            calendarId: event.calendarId,
+            uid: event.uid,
+            recipient: keyOfPerson(person),
+          },
+        }),
+      );
+      await client.invalidateQueries({ queryKey: calendarKeys.all });
+    } catch (thrown) {
+      setFailure((thrown as Error).message);
+    } finally {
+      setTrying(false);
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-1.5 rounded border border-line px-2.5 py-2">
+      <span className="flex items-center gap-2 font-semibold text-danger">
+        <IconMailOff
+          size={16}
+          stroke={1.75}
+          aria-hidden
+          className="flex-none"
+        />
+        <span dir="auto" className="min-w-0 truncate">
+          Not sent to {person.name}
+        </span>
+      </span>
+      <span className="text-secondary">
+        {notSentText(notSent, person.name)}
+      </span>
+      {event.changeable && (
+        <span>
+          <Button
+            variant="toolbar"
+            icon={IconRefresh}
+            pending={trying}
+            onClick={() => void tryAgain()}
+          >
+            Try again
+          </Button>
+        </span>
+      )}
+      {failure && <Notice tone="danger">{failure}</Notice>}
+    </li>
+  );
+}
+
 // The organiser, then everyone invited with their answer, which the organiser's own
 // calendar keeps for them.
 export function PeopleList({ event }: { event: ShownEvent }) {
@@ -140,13 +225,24 @@ export function PeopleList({ event }: { event: ShownEvent }) {
         )}
         {event.people.map((person) => (
           <PersonLine
-            key={person.userId}
+            key={keyOfPerson(person)}
             name={person.name}
-            you={person.userId === me}
-            detail={ANSWER_NAMES[person.answer]}
+            you={isMe(person, me)}
+            detail={answerName(person)}
             {...ANSWER_ICONS[person.answer]}
           />
         ))}
+        {event.people.map(
+          (person) =>
+            person.notSent && (
+              <NotSentLine
+                key={`not-sent-${keyOfPerson(person)}`}
+                event={event}
+                person={person}
+                notSent={person.notSent}
+              />
+            ),
+        )}
       </ul>
     </section>
   );

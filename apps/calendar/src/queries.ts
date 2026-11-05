@@ -9,6 +9,7 @@ import {
   countCalendarEvents,
   getCalendars,
   getMembers,
+  getOutsideInviting,
   getPeopleChoices,
   listEvents,
   listInvitations,
@@ -22,7 +23,7 @@ import {
 } from "./schedule";
 import { searchEvents } from "./search-functions";
 import { addDays } from "./time";
-import type { TimeZone } from "./types";
+import type { EventUid, TimeZone } from "./types";
 import { todayWindow } from "./ui/today-plan";
 
 const CANNOT_REACH =
@@ -118,6 +119,22 @@ export const peopleChoicesQuery = () =>
   queryOptions({
     queryKey: calendarKeys.people,
     queryFn: () => call(() => getPeopleChoices()),
+  });
+
+// Asked each time the dialog opens, since Mail can be turned off at any time.
+// No event asks about the person's own address, for a new one.
+export const outsideInvitingQuery = (
+  event: { calendarId: CalendarId; uid: EventUid } | null,
+) =>
+  queryOptions({
+    queryKey: [
+      "calendar",
+      "outsideInviting",
+      event?.calendarId ?? null,
+      event?.uid ?? null,
+    ] as const,
+    queryFn: () => call(() => getOutsideInviting({ data: { event } })),
+    staleTime: 0,
   });
 const UTC = "UTC" as TimeZone;
 
