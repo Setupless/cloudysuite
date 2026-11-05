@@ -203,24 +203,36 @@ function InvitationRow({
 }) {
   const { days, hours } = whenOf(event, zone, today);
   const summary = peopleSummary(event, useMe());
+  // Schedule leaves a hidden calendar out, so there'd be nothing to open there.
+  const opens = !event.calendar.hidden;
+  const details = (
+    <>
+      <span
+        className={`truncate font-semibold ${opens ? "hover:underline" : ""}`}
+      >
+        {event.title}
+      </span>
+      <span className="text-[13px] text-secondary">
+        {hours ? `${days}, ${hours}` : days}
+      </span>
+      {summary && <span className="text-[13px] text-secondary">{summary}</span>}
+    </>
+  );
+  const shape = "flex min-w-0 flex-1 flex-col gap-0.5 text-sm";
   return (
     <li className="flex flex-col gap-2 border-b border-line px-1 py-2.5 sm:flex-row sm:items-center">
-      <EventLink
-        event={event}
-        day={daySpanOf(event.time, zone).first}
-        label={`${spokenLabel(event, zone, today)}. ${summary ?? ""}`}
-        className={`flex min-w-0 flex-1 flex-col gap-0.5 rounded text-sm ${FOCUS}`}
-      >
-        <span className="truncate font-semibold hover:underline">
-          {event.title}
-        </span>
-        <span className="text-[13px] text-secondary">
-          {hours ? `${days}, ${hours}` : days}
-        </span>
-        {summary && (
-          <span className="text-[13px] text-secondary">{summary}</span>
-        )}
-      </EventLink>
+      {opens ? (
+        <EventLink
+          event={event}
+          day={daySpanOf(event.time, zone).first}
+          label={`${spokenLabel(event, zone, today)}. ${summary ?? ""}`}
+          className={`${shape} rounded ${FOCUS}`}
+        >
+          {details}
+        </EventLink>
+      ) : (
+        <div className={shape}>{details}</div>
+      )}
       <AnswerButtons event={event} />
     </li>
   );
@@ -551,9 +563,10 @@ function LiveToday() {
               <RestOfToday key={today} plan={plan} zone={zone} />
               <Tomorrow plan={plan} zone={zone} />
             </div>
-            <Invitations zone={zone} today={today} />
           </>
         )}
+        {/* It loads on its own, so invitations still show when the events can't. */}
+        {(ready || failure) && <Invitations zone={zone} today={today} />}
       </div>
     </>
   );

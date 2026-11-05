@@ -62,10 +62,12 @@ export function PeoplePicker({
         );
 
   async function add(person: Person) {
-    // Cleared now, so the list doesn't offer the person being added again.
+    // Cleared now, so the list doesn't offer the person being added again. A clicked
+    // choice leaves the list with it, so focus goes back to the box.
     const typed = text;
     setText("");
     setError(null);
+    input.current?.focus();
     refocus.current = true;
     try {
       await onAdd(person);
@@ -88,9 +90,16 @@ export function PeoplePicker({
           autoComplete="off"
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
-          // Enter picks the first match, rather than sending a form around the box.
+          // Enter picks the first match, rather than sending a form around the box. An
+          // Enter that ends typing with an input method only confirms the text.
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || wanted === "") return;
+            if (
+              event.key !== "Enter" ||
+              event.nativeEvent.isComposing ||
+              wanted === ""
+            ) {
+              return;
+            }
             event.preventDefault();
             const [first] = people;
             if (first) void add(first);
