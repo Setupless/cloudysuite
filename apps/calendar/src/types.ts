@@ -148,6 +148,86 @@ export type EventSearchAnswer =
 
 export type Member = { person: Person; role: CalendarRole };
 
+export const MAX_UID_LENGTH = 255;
+
+// One import is one request, and a file at both limits took under 2 seconds on the
+// Workers runtime.
+export const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
+export const MAX_IMPORT_EVENTS = 10_000;
+
+export const SKIP_REASONS = [
+  "unreadable",
+  "tooComplex",
+  "noId",
+  "noStart",
+  "outOfRange",
+  "endsBeforeStart",
+  "neverHappens",
+  "cancelled",
+  "noSeries",
+] as const;
+// Why one event in a file wasn't imported.
+export type SkipReason = (typeof SKIP_REASONS)[number];
+
+// What Calendar can't show of the dates an event from outside gives. "firstDateOnly" is
+// a rule it can't follow. "mainRepeatOnly" is a rule it follows, beside extra dates or
+// rules that it doesn't keep.
+export type Shortfall = "firstDateOnly" | "mainRepeatOnly";
+
+// Each event counts once, however many dates it has or how many of them were changed.
+export type ImportSummary = {
+  added: number;
+  updated: number;
+  // Already up to date, or removed here before.
+  unchanged: number;
+  // Held here as an invitation from its organiser, which import can't change.
+  organisedElsewhere: number;
+  // Added or updated with that shortfall.
+  firstDateOnly: number;
+  mainRepeatOnly: number;
+  skipped: Partial<Record<SkipReason, number>>;
+};
+
+export const SKIP_REASON_TEXT: Record<
+  SkipReason,
+  { one: string; many: string }
+> = {
+  unreadable: { one: "couldn't be read", many: "couldn't be read" },
+  tooComplex: {
+    one: "has details too long or complicated to read",
+    many: "have details too long or complicated to read",
+  },
+  noId: {
+    one: "is missing the ID that tells events apart",
+    many: "are missing the ID that tells events apart",
+  },
+  noStart: { one: "has no start date", many: "have no start date" },
+  outOfRange: {
+    one: "is dated before 1900 or after 2199",
+    many: "are dated before 1900 or after 2199",
+  },
+  endsBeforeStart: {
+    one: "ends before it starts",
+    many: "end before they start",
+  },
+  neverHappens: {
+    one: "repeats on no dates at all",
+    many: "repeat on no dates at all",
+  },
+  cancelled: { one: "was cancelled", many: "were cancelled" },
+  noSeries: {
+    one: "changes one date of a repeating event that isn't in the file",
+    many: "change one date of a repeating event that isn't in the file",
+  },
+};
+
+export const IMPORT_TOO_LARGE_MESSAGE =
+  "This file is larger than 4 MB, so Calendar can't import it. Export fewer events, such as one calendar or a shorter time, and import that file.";
+export const IMPORT_TOO_MANY_MESSAGE =
+  "This file has more than 10,000 events, which is more than Calendar can import at once. Export fewer events, such as one calendar or a shorter time, and import that file.";
+export const IMPORT_NOT_CALENDAR_MESSAGE =
+  "This isn't a calendar file Calendar can read. Choose a .ics file exported from a calendar app.";
+
 export const NO_ACCESS_MESSAGE =
   "You don't have access to this calendar. Ask one of its managers if you need it.";
 export const VIEW_ONLY_MESSAGE =

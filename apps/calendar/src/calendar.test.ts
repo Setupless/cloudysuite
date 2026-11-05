@@ -253,6 +253,36 @@ test("a repeat ends on its last day or after its number of times", async () => {
   );
 });
 
+test("a yearly event on 29 February is on 29 February in leap years only", async () => {
+  await created(
+    {
+      kind: "allDay",
+      startDate: date("2028-02-29"),
+      endDate: date("2028-03-01"),
+    },
+    {
+      title: "Leap birthday",
+      repeat: { frequency: "yearly", end: { kind: "never" } },
+    },
+  );
+  await created(
+    timed("2028-02-29T09:00:00+11:00", "2028-02-29T10:00:00+11:00"),
+    {
+      title: "Leap review",
+      repeat: { frequency: "yearly", end: { kind: "afterTimes", times: 2 } },
+    },
+  );
+  expect(shown((await listed("2028-01-01", "2037-01-01")).occurrences)).toEqual(
+    [
+      ["Leap birthday", "2028-02-29"],
+      ["Leap review", "2028-02-29 09:00"],
+      ["Leap birthday", "2032-02-29"],
+      ["Leap review", "2032-02-29 09:00"],
+      ["Leap birthday", "2036-02-29"],
+    ],
+  );
+});
+
 test("an unbounded daily series gives at most 1,000 dates in one range", async () => {
   await created(
     timed("2026-01-01T09:00:00+11:00", "2026-01-01T09:15:00+11:00"),

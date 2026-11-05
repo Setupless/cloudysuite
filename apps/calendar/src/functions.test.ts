@@ -10,11 +10,15 @@ import {
   PASSWORD,
   signIn,
 } from "../../auth/src/admin/test-kit";
+import { calendarFile, GOOGLE_EXPORT } from "./outside/test-support";
 import { createCalendarTest, date, draft, SYDNEY, TEAM } from "./test-support";
 import {
   type ChangeScope,
   type EventTime,
+  IMPORT_NOT_CALENDAR_MESSAGE,
+  IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
+  MAX_IMPORT_BYTES,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   type OccurrenceId,
@@ -455,6 +459,61 @@ test("removing someone hands their calendar to the person chosen, events and all
       organiser: { kind: "madeHere", userId: removed, name: "Sam Rivera" },
     }),
   );
+});
+
+const importing = (file: string) => ({
+  data: { calendarId: TEAM, file, timeZone: SYDNEY },
+});
+
+test("Can view can't import, and a file Calendar can't read is refused in plain words", async () => {
+  expect(
+    await refused(
+      as(people.viewer).importCalendarFile(importing(GOOGLE_EXPORT)),
+    ),
+  ).toEqual({ status: 403, message: VIEW_ONLY_MESSAGE });
+  expect(calendarNow().events).toEqual([{ uid: "launch-review" }]);
+  expect(
+    await refused(as(people.editor).importCalendarFile(importing("hello"))),
+  ).toEqual({ status: 400, message: IMPORT_NOT_CALENDAR_MESSAGE });
+  // The validator refuses this one before the handler runs.
+  const huge = importing("x".repeat(MAX_IMPORT_BYTES + 1));
+  expect(
+    await refused((async () => as(people.editor).importCalendarFile(huge))()),
+  ).toEqual({ status: 413, message: IMPORT_TOO_LARGE_MESSAGE });
+});
+
+test("an editor imports a file in batches and is told what happened, and again changes nothing", async () => {
+  const many = calendarFile(
+    ...Array.from({ length: 450 }, (_, index) => [
+      "BEGIN:VEVENT",
+      `UID:holiday-${index}@example.net`,
+      `DTSTART;VALUE=DATE:${20270101 + (index % 28)}`,
+      "SUMMARY:Holiday",
+      "END:VEVENT",
+    ]).flat(),
+    "BEGIN:VEVENT",
+    "UID:no-start@example.net",
+    "END:VEVENT",
+  );
+  expect(await as(people.editor).importCalendarFile(importing(many))).toEqual({
+    added: 450,
+    updated: 0,
+    unchanged: 0,
+    organisedElsewhere: 0,
+    firstDateOnly: 0,
+    mainRepeatOnly: 0,
+    skipped: { noStart: 1 },
+  });
+  expect(await as(people.manager).importCalendarFile(importing(many))).toEqual({
+    added: 0,
+    updated: 0,
+    unchanged: 450,
+    organisedElsewhere: 0,
+    firstDateOnly: 0,
+    mainRepeatOnly: 0,
+    skipped: { noStart: 1 },
+  });
+  expect(calendarNow().events).toHaveLength(451);
 });
 
 const SERIES_DAYS = [

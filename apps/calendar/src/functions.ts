@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   type CalendarId,
   ensurePersonalCalendar,
+  levelOfRole,
   readOthers,
   type UserId,
 } from "@cloudysuite/access";
@@ -24,13 +25,24 @@ import {
   setMemberRole,
   type TeamChange,
 } from "./directory";
-import { inViewerOrder } from "./store";
+import { readCalendarFile } from "./outside/ics";
+import {
+  addSummary,
+  countSkip,
+  emptySummary,
+  groupForImport,
+  inViewerOrder,
+} from "./store";
 import {
   type CalendarEntry,
   type ChangeResult,
   EVENT_GONE_MESSAGE,
   type EventListing,
   type EventUid,
+  IMPORT_NOT_CALENDAR_MESSAGE,
+  IMPORT_TOO_LARGE_MESSAGE,
+  IMPORT_TOO_MANY_MESSAGE,
+  type ImportSummary,
   LAST_MANAGER_MESSAGE,
   MAX_OCCURRENCES,
   type Member,
@@ -49,6 +61,7 @@ import {
   parseEventChangeInput,
   parseEventRemovalInput,
   parseHiddenInput,
+  parseImportInput,
   parseMemberInput,
   parseMemberRoleInput,
   parseNewEventInput,
@@ -59,6 +72,15 @@ import {
 } from "./wire";
 
 const me = () => requireCalendarUser(getRequest());
+
+// Small enough that no one call to the Calendar object holds a large file.
+const IMPORT_BATCH = 200;
+
+const FILE_REFUSALS = {
+  tooLarge: () => refusal(413, IMPORT_TOO_LARGE_MESSAGE),
+  tooManyEvents: () => refusal(413, IMPORT_TOO_MANY_MESSAGE),
+  notCalendar: () => refusal(400, IMPORT_NOT_CALENDAR_MESSAGE),
+};
 
 async function openAsManager(
   userId: UserId,
@@ -267,4 +289,32 @@ export const deleteEvent = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
     answerChange(await calendar.remove(data.target, data.scope));
+  });
+
+// Each batch is safe to send again, so a retry after a failure part way through ends the
+// same as one import that never failed.
+export const importCalendarFile = createServerFn({ method: "POST" })
+  .validator(parseImportInput)
+  .handler(async ({ data }): Promise<ImportSummary> => {
+    const person = await me();
+    const calendar = await openCalendarAs(person.id, data.calendarId);
+    if (levelOfRole(calendar.role) !== "edit") {
+      throw refusal(403, VIEW_ONLY_MESSAGE);
+    }
+    const reading = readCalendarFile(data.file, data.timeZone);
+    if (reading.status !== "read") {
+      throw FILE_REFUSALS[reading.status]();
+    }
+    const summary = emptySummary();
+    for (const reason of reading.skipped) countSkip(summary, reason, 1);
+    const groups = groupForImport(reading.events);
+    for (let first = 0; first < groups.length; first += IMPORT_BATCH) {
+      const result = await calendar.importEvents(
+        person.name,
+        groups.slice(first, first + IMPORT_BATCH),
+      );
+      if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
+      addSummary(summary, result.summary);
+    }
+    return summary;
   });

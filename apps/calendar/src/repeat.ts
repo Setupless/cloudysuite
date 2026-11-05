@@ -1,4 +1,5 @@
 import ICAL from "ical.js";
+import { followableRule } from "./followable";
 import {
   addDays,
   allDayOccurrenceId,
@@ -41,7 +42,9 @@ export type Budget = { steps: number };
 
 export type DateOfSeries = { id: OccurrenceId; time: EventTime };
 
+// The one way a stored rule reaches ical.js.
 function parseRule(rule: string): ICAL.Recur | null {
+  if (!followableRule(rule)) return null;
   try {
     const recur = ICAL.Recur.fromString(rule);
     return recur.freq ? recur : null;
@@ -137,6 +140,22 @@ export function repeatOf(rule: string, time: EventTime): ShownRepeat {
   return { frequency, end: { kind: "never" } };
 }
 
+// A plain yearly repeat from 29 February would land on 1 March in other years, where
+// RFC 5545 skips them, so the day it implies is spelled out for ical.js.
+function iteratorFrom(recur: ICAL.Recur, first: ICAL.Time) {
+  const plain = Object.values(recur.parts).every((values) => !values?.length);
+  if (
+    recur.freq === "YEARLY" &&
+    plain &&
+    first.month === 2 &&
+    first.day === 29
+  ) {
+    recur.setComponent("BYMONTH", [2]);
+    recur.setComponent("BYMONTHDAY", [29]);
+  }
+  return recur.iterator(first);
+}
+
 // Yields each date's original start in order, until the rule ends or the budget runs out.
 // UNTIL is checked here rather than by ical.js, which would compare a UTC end with a
 // local start as though both were UTC.
@@ -146,14 +165,25 @@ export function* datesOf(
   budget: Budget,
 ): Generator<DateOfSeries> {
   const recur = parseRule(rule);
-  if (!recur) return;
+  // The start is always the first date, whatever the rule says after it.
+  if (!recur) {
+    if (budget.steps-- <= 0) return;
+    yield {
+      id:
+        time.kind === "allDay"
+          ? allDayOccurrenceId(time.startDate)
+          : timedOccurrenceId(time.start),
+      time,
+    };
+    return;
+  }
   const until = recur.until;
   recur.until = null;
 
   if (time.kind === "allDay") {
     const days = daysBetween(time.startDate, time.endDate);
     const last = until && untilDate(until, time);
-    const dates = recur.iterator(ICAL.Time.fromDateString(time.startDate));
+    const dates = iteratorFrom(recur, ICAL.Time.fromDateString(time.startDate));
     while (budget.steps-- > 0) {
       const next = dates.next();
       if (!next) return;
@@ -170,7 +200,8 @@ export function* datesOf(
   const { timeZone } = time;
   const length = time.end - time.start;
   const start = new Date(wallOf(time.start, timeZone));
-  const dates = recur.iterator(
+  const dates = iteratorFrom(
+    recur,
     ICAL.Time.fromData({
       year: start.getUTCFullYear(),
       month: start.getUTCMonth() + 1,
