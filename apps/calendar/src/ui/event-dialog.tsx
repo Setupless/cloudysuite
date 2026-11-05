@@ -270,7 +270,7 @@ function InviteField({
       />
       <span className="font-normal text-secondary">
         {note ??
-          "Colleagues see it in their own calendar straight away. Everyone gets an email they can answer from any calendar or mail app."}
+          "Colleagues see it in their own calendar straight away. People outside your organisation, and colleagues with a mailbox, get an email they can answer from any calendar or mail app."}
       </span>
     </div>
   );

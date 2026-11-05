@@ -74,7 +74,11 @@ function whenText(time: EventTime, now: number): string {
   const end = new Date(time.end);
   const withYear = yearOf(start, zone) !== yearOf(new Date(now), zone);
   const startDay = dayText(start, zone, withYear);
-  const endDay = dayText(end, zone, withYear);
+  const endDay = dayText(
+    end,
+    zone,
+    withYear || yearOf(end, zone) !== yearOf(start, zone),
+  );
   const range =
     startDay === endDay
       ? `${startDay}, ${clockText(start, zone)} to ${clockText(end, zone)}`

@@ -942,6 +942,6 @@ test("an event that ends in the next year says that year", async () => {
     time: timed("2026-12-31T23:00:00+11:00", "2027-01-01T01:00:00+11:00"),
   });
   expect(readEmail(email.sent[0]!.raw).subject).toBe(
-    "Invitation: Weekly planning, Thu 31 Dec, 23:00 to Fri 1 Jan 2027, 01:00 (Australia/Sydney)",
+    "Invitation: Weekly planning, Thu 31 Dec, 23:00 to Fri, 1 Jan 2027, 01:00 (Australia/Sydney)",
   );
 });

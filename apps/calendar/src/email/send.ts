@@ -205,12 +205,12 @@ export async function runDueEmails(
       store.emailUnclear(queued, queued.sent ?? "request");
       continue;
     }
-    const plan: EmailPlan = store.emailFor(queued);
-    if (plan.method === "none") {
-      store.dropEmail(queued);
-      continue;
-    }
     try {
+      const plan: EmailPlan = store.emailFor(queued);
+      if (plan.method === "none") {
+        store.dropEmail(queued);
+        continue;
+      }
       await sendOne(context, queued, plan, Date.now());
     } catch (error) {
       // One that was claimed is left to be found as sending, never tried again.
