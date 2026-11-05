@@ -1059,7 +1059,7 @@ export class EventStore {
       return { status: "gone" };
     }
     const given = { ...reply, answer, revision: reply.revision + 1 };
-    const calendarId = series.organiser.calendarId;
+    const { calendarId, uid: organiserUid } = series.organiser;
     this.db.transaction(() => {
       this.#writePeople(uid, {
         ...held,
@@ -1069,13 +1069,13 @@ export class EventStore {
         reply: given,
       });
       this.db.exec(
-        `INSERT INTO answer_notices (uid, calendar_id, attendee, answer, revision, tries, try_at)
+        `INSERT INTO answer_notices (calendar_id, uid, attendee, answer, revision, tries, try_at)
          VALUES (?, ?, ?, ?, ?, 0, ?)
-         ON CONFLICT (uid) DO UPDATE SET calendar_id = excluded.calendar_id,
-           attendee = excluded.attendee, answer = excluded.answer,
-           revision = excluded.revision, tries = 0, try_at = excluded.try_at`,
-        uid,
+         ON CONFLICT (calendar_id, uid) DO UPDATE SET attendee = excluded.attendee,
+           answer = excluded.answer, revision = excluded.revision, tries = 0,
+           try_at = excluded.try_at`,
         calendarId,
+        organiserUid,
         actor.userId,
         answer,
         given.revision,
@@ -1085,11 +1085,14 @@ export class EventStore {
     return { status: "done" };
   }
 
-  // A copy is written only over an earlier copy from the same calendar. A part whose
-  // sequence is no higher than the one held changes nothing, and a removed event or date
-  // stays removed.
-  receiveInvitation(delivery: Delivery, now: number): DeliveryResult {
-    const { uid } = delivery;
+  // `uid` is the copy's own here, from copyUidOf. A copy is written only over an earlier
+  // copy from the same calendar. A part whose sequence is no higher than the one held
+  // changes nothing, and a removed event or date stays removed.
+  receiveInvitation(
+    delivery: Delivery,
+    uid: EventUid,
+    now: number,
+  ): DeliveryResult {
     if (this.#rows("SELECT 1 FROM removed_events WHERE uid = ?", uid).length) {
       return "unchanged";
     }
@@ -1125,6 +1128,7 @@ export class EventStore {
       userId: delivery.organiser.userId,
       name: delivery.organiser.name,
       calendarId: delivery.from,
+      uid: delivery.uid,
     };
     const copyOf = (part: DeliveredPart): StoredEvent => ({
       ...part,
@@ -1167,8 +1171,9 @@ export class EventStore {
         changed = true;
         const given = heldPeople?.reply;
         const [onItsWay] = this.#rows(
-          "SELECT 1 FROM answer_notices WHERE uid = ?",
-          uid,
+          "SELECT 1 FROM answer_notices WHERE calendar_id = ? AND uid = ?",
+          delivery.from,
+          delivery.uid,
         );
         const theirs = delivery.people.find(
           (person) => person.userId === delivery.to,
@@ -1393,7 +1398,8 @@ export class EventStore {
 
   finishAnswer(notice: AnswerNotice): void {
     this.db.exec(
-      "DELETE FROM answer_notices WHERE uid = ? AND revision = ?",
+      "DELETE FROM answer_notices WHERE calendar_id = ? AND uid = ? AND revision = ?",
+      notice.calendarId,
       notice.uid,
       notice.revision,
     );
@@ -1401,14 +1407,17 @@ export class EventStore {
 
   postponeAnswer(notice: AnswerNotice, now: number): void {
     const [row] = this.#rows<{ tries: number }>(
-      "SELECT tries FROM answer_notices WHERE uid = ? AND revision = ?",
+      "SELECT tries FROM answer_notices WHERE calendar_id = ? AND uid = ? AND revision = ?",
+      notice.calendarId,
       notice.uid,
       notice.revision,
     );
     if (!row) return;
     this.db.exec(
-      "UPDATE answer_notices SET tries = tries + 1, try_at = ? WHERE uid = ? AND revision = ?",
+      `UPDATE answer_notices SET tries = tries + 1, try_at = ?
+       WHERE calendar_id = ? AND uid = ? AND revision = ?`,
       retryAt(now, row.tries),
+      notice.calendarId,
       notice.uid,
       notice.revision,
     );

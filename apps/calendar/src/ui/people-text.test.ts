@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { CalendarId, UserId } from "@cloudysuite/access";
-import type { Answer, Attendee, Organiser } from "../types";
+import type { Answer, Attendee, EventUid, Organiser } from "../types";
 import { comingLine, peopleSummary } from "./people-text";
 
 const ME = "me" as UserId;
@@ -21,6 +21,7 @@ const maya: Organiser = {
   userId: "maya" as UserId,
   name: "Maya Chen",
   calendarId: "c1" as CalendarId,
+  uid: "e1" as EventUid,
 };
 
 test("the card says who invited whom, and how they answered", () => {

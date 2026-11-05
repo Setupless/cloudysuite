@@ -112,15 +112,17 @@ export const MIGRATIONS: Migrations = [
       PRIMARY KEY (user_id, uid)
     ) WITHOUT ROWID`,
     `CREATE INDEX deliveries_due ON deliveries(try_at)`,
-    // The invitee's side: the organiser's calendar needs this answer.
+    // The invitee's side: the organiser's calendar needs this answer. The UID is the
+    // event's there, and two calendars can each hold one with the same UID.
     `CREATE TABLE answer_notices (
-      uid TEXT PRIMARY KEY,
       calendar_id TEXT NOT NULL,
+      uid TEXT NOT NULL,
       attendee TEXT NOT NULL,
       answer TEXT NOT NULL,
       revision INTEGER NOT NULL,
       tries INTEGER NOT NULL,
-      try_at INTEGER NOT NULL
+      try_at INTEGER NOT NULL,
+      PRIMARY KEY (calendar_id, uid)
     ) WITHOUT ROWID`,
   ],
 ];

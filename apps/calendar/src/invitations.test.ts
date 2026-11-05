@@ -190,13 +190,18 @@ async function seen(userId: UserId): Promise<CalendarOccurrence[]> {
   return occurrences;
 }
 
-// The person's own copy of the organiser's event, as their calendar lists it.
+// The person's own copy of the team calendar's event, as their calendar lists it.
 async function copyIn(userId: UserId, uid: EventUid): Promise<EventUid> {
   const listed = [
     ...(await seen(userId)),
     ...(await as(userId).listInvitations({ data: { timeZone: SYDNEY } })),
   ];
-  const copy = listed.find((entry) => entry.uid === uid);
+  const copy = listed.find(
+    ({ organiser }) =>
+      organiser.kind === "colleague" &&
+      organiser.calendarId === TEAM &&
+      organiser.uid === uid,
+  );
   if (!copy) throw new Error("expected a copy");
   return copy.uid;
 }
@@ -224,13 +229,12 @@ test("inviting two colleagues puts one unanswered copy in each one's own calenda
     const entries = await seen(userId);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      uid,
       calendarId: await personalOf(userId),
       title: "Weekly planning",
       answer: "needsAnswer",
       changeable: false,
       cancelled: false,
-      organiser: { kind: "colleague", name: "Boss", calendarId: TEAM },
+      organiser: { kind: "colleague", name: "Boss", calendarId: TEAM, uid },
     });
     expect(answers(entries[0])).toEqual({
       "Maya Chen": "needsAnswer",
@@ -253,8 +257,12 @@ test("the same delivery twice, or an older one late, leaves one copy at its newe
   await change(uid, { title: "Planning, moved", people: [people.outsider] });
   const latest = objects.delivered.at(-1)!;
 
-  expect(objects.deliverAgain(latest.to, latest.delivery)).toBe("unchanged");
-  expect(objects.deliverAgain(first.to, first.delivery)).toBe("unchanged");
+  expect(await objects.deliverAgain(latest.to, latest.delivery)).toBe(
+    "unchanged",
+  );
+  expect(await objects.deliverAgain(first.to, first.delivery)).toBe(
+    "unchanged",
+  );
   const entries = await seen(people.outsider);
   expect(entries.map((entry) => entry.title)).toEqual(["Planning, moved"]);
 });
@@ -343,8 +351,8 @@ test("someone on the team calendar who is also invited sees the event once, as t
   expect(
     entries.every(
       (entry) =>
-        entry.uid === uid &&
         entry.organiser.kind === "colleague" &&
+        entry.organiser.uid === uid &&
         entry.answer === "needsAnswer",
     ),
   ).toBe(true);
@@ -707,7 +715,7 @@ test("a file that calls off one date reaches every copy", async () => {
   );
   await objects.settle();
   expect(
-    (await seen(people.outsider)).map((entry) => [
+    (await seen(people.outsider)).map((entry): [string | null, boolean] => [
       entry.occurrenceId,
       entry.cancelled,
     ]),
@@ -774,7 +782,10 @@ test("someone taken off and put back before their copy heard is asked again too"
   await unsent(uid, { people: [people.editor] });
   await change(uid, { people: [people.editor, people.outsider] });
 
-  const expected = { "Maya Chen": "needsAnswer", "Jo Okafor": "needsAnswer" };
+  const expected: Record<string, Answer> = {
+    "Maya Chen": "needsAnswer",
+    "Jo Okafor": "needsAnswer",
+  };
   const [jos] = await seen(people.outsider);
   expect(jos?.answer).toBe("needsAnswer");
   expect(answers(jos)).toEqual(expected);
@@ -907,7 +918,9 @@ test("a date removed from a copy stays removed when the organiser moves every da
       },
     });
   const dates = async () =>
-    (await seen(people.outsider)).map((entry) => entry.occurrenceId);
+    (await seen(people.outsider)).map(
+      (entry): string | null => entry.occurrenceId,
+    );
 
   await remove(SECOND, "this");
   await change(uid, { time: LATER, repeat: WEEKLY, people: [people.outsider] });

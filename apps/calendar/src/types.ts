@@ -52,12 +52,14 @@ export type Organiser =
   // user row. It's null on events made before names were kept.
   | { kind: "madeHere"; userId: UserId; name: string | null }
   // A copy of an event a colleague organised on another calendar here, which an answer
-  // goes straight to. It can be answered or removed.
+  // goes straight to. It can be answered or removed. The copy has a UID of its own here,
+  // and this is the calendar that holds the event and the event's UID there.
   | {
       kind: "colleague";
       userId: UserId;
       name: string | null;
       calendarId: CalendarId;
+      uid: EventUid;
     }
   // A copy of an event organised outside. It can be answered or removed.
   | { kind: "invitation"; email: string; name: string | null };

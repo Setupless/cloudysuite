@@ -5,7 +5,12 @@ import { invitationReceiver } from "./client";
 import { findPersonalCalendar, makePersonalCalendar } from "./directory";
 import { findEvents } from "./event-search";
 import { listInvitations } from "./invitation-list";
-import type { AnswerNotice, Delivery, DeliveryResult } from "./invitations";
+import {
+  type AnswerNotice,
+  copyUidOf,
+  type Delivery,
+  type DeliveryResult,
+} from "./invitations";
 import { MIGRATIONS } from "./migrations";
 import {
   type Actor,
@@ -153,8 +158,9 @@ export class Calendar extends DurableObject<Env> {
   // Only another Calendar object calls these, through invitationReceiver. They write only
   // a copy of an event organised on the calendar that sent it, or one invited person's
   // answer, so there is nobody to check by then.
-  receiveInvitation(delivery: Delivery): DeliveryResult {
-    return this.#store.receiveInvitation(delivery, Date.now());
+  async receiveInvitation(delivery: Delivery): Promise<DeliveryResult> {
+    const uid = await copyUidOf(delivery.from, delivery.uid);
+    return this.#store.receiveInvitation(delivery, uid, Date.now());
   }
 
   async receiveAnswer(notice: AnswerNotice): Promise<void> {

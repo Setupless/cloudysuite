@@ -58,6 +58,22 @@ export type QueuedDelivery = {
   version: number;
 };
 
+// Where a copy lives in the calendar it's sent to. Anyone can import a file with any UID,
+// so two calendars can each send one with the same UID, and a copy is named by both. One
+// calendar's copy can then never take the place of another's.
+export async function copyUidOf(
+  from: CalendarId,
+  uid: EventUid,
+): Promise<EventUid> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${from} ${uid}`),
+  );
+  return Array.from(new Uint8Array(digest).subarray(0, 16), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("") as EventUid;
+}
+
 const FIRST_RETRY_MS = 60_000;
 const LONGEST_RETRY_MS = 60 * 60_000;
 
