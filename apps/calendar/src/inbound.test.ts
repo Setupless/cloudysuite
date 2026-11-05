@@ -551,6 +551,38 @@ test("an earlier answer that arrives late doesn't replace a later one", async ()
   expect(peopleOf((await schedule())[0])).toEqual([["Dana Wright", "maybe"]]);
 });
 
+test("the person shows by their own name, whatever the invitation calls them, and their reply goes under it", async () => {
+  await arrive(
+    google({
+      guests: [
+        [DANA, "ACCEPTED", "Dana Wright"],
+        ["boss@example.com", "NEEDS-ACTION", "Gullible Intern"],
+      ],
+    }),
+  );
+  const [event] = await schedule();
+  expect(peopleOf(event)).toEqual([["Boss", "needsAnswer"]]);
+
+  await as().answerInvitation({
+    data: { calendarId: await personalOf(), uid: event!.uid, answer: "yes" },
+  });
+  await calendars.settle();
+  const read = readEmail(email.sent[0]!.raw);
+  expect(read.headers.get("from")).toBe('"Boss" <boss@example.com>');
+  const reading = readCalendarFile(
+    partOfType(read, "text/calendar").body,
+    SYDNEY,
+  );
+  if (reading.status !== "read") throw new Error(reading.status);
+  expect(reading.events[0]?.attendees).toEqual([
+    {
+      email: "boss@example.com" as EmailAddress,
+      name: "Boss",
+      answer: "accepted",
+    },
+  ]);
+});
+
 test("answering an invitation from outside emails one reply, from the person's own address", async () => {
   await arrive(google());
   const calendarId = await personalOf();
