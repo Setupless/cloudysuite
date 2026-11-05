@@ -26,8 +26,11 @@ import {
   REPEAT_FREQUENCIES,
   type Repeat,
   type RepeatEnd,
+  type TimeZone,
 } from "./types";
+import { MAX_SEARCH_LENGTH } from "./search-query";
 
+const MAX_TIME_ZONE_LENGTH = 64;
 const MAX_CALENDAR_NAME_LENGTH = 100;
 const MAX_UID_LENGTH = 255;
 const MAX_USER_ID_LENGTH = 128;
@@ -169,6 +172,24 @@ export function parseRangeInput(raw: unknown): DayRange {
     typeof input.timeZone === "string" ? parseTimeZone(input.timeZone) : null;
   if (!timeZone || to <= from) throw badRequest();
   return { from, to, timeZone };
+}
+
+// Any text is a fair thing to search for. It's cut one past the limit, so an enormous
+// string never crosses to a Calendar object and the parser still sees it was too long.
+// A zone this runtime doesn't know reads the reader's days in UTC, which only decides
+// whether an all-day event a few hours either side of now counts as past.
+export function parseEventSearchInput(raw: unknown) {
+  const input = record(raw);
+  if (typeof input.text !== "string") throw badRequest();
+  const zone =
+    typeof input.timeZone === "string" &&
+    input.timeZone.length <= MAX_TIME_ZONE_LENGTH
+      ? parseTimeZone(input.timeZone)
+      : null;
+  return {
+    text: input.text.slice(0, MAX_SEARCH_LENGTH + 1),
+    timeZone: zone ?? ("UTC" as TimeZone),
+  };
 }
 
 function parseTime(raw: unknown): EventTime {

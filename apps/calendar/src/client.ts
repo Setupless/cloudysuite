@@ -5,6 +5,7 @@ import {
   checkCalendarAccess,
   type UserId,
 } from "@cloudysuite/access";
+import type { SearchTerm } from "@cloudysuite/search";
 import type { Actor } from "./store";
 import { calendarStub } from "./stub";
 import type {
@@ -14,14 +15,17 @@ import type {
   DayRange,
   EraseResult,
   EventDraft,
+  EventSearchResult,
   EventTarget,
   RangeListing,
+  TimeZone,
 } from "./types";
 
 export type CalendarClient = {
   calendarId: CalendarId;
   role: CalendarRole;
   listRange(range: DayRange): Promise<RangeListing>;
+  search(terms: SearchTerm[], timeZone: TimeZone): Promise<EventSearchResult>;
   create(organiserName: string, draft: EventDraft): Promise<CreateResult>;
   update(
     target: EventTarget,
@@ -45,6 +49,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
     role: grant.role,
     listRange: async (range) =>
       (await stub.listRange(actor, range)) as RangeListing,
+    search: async (terms, timeZone) =>
+      (await stub.searchEvents(actor, terms, timeZone)) as EventSearchResult,
     create: async (organiserName, draft) =>
       (await stub.createEvent(actor, organiserName, draft)) as CreateResult,
     update: async (target, scope, draft) =>

@@ -1,10 +1,7 @@
 import type { SqlDriver, SqlValue } from "@cloudysuite/object-sql";
+import { toPrefixMatch } from "@cloudysuite/search";
 import { FILE_TYPE_RULES, FILE_TYPES } from "./file-types";
-import {
-  type DriveSearch,
-  type ItemType,
-  toMatchExpression,
-} from "./search-query";
+import type { DriveSearch, ItemType } from "./search-query";
 import type { Actor, DriveStore } from "./store";
 import type { ItemId, SearchLine, SearchResult } from "./types";
 
@@ -37,7 +34,7 @@ type Condition = { sql: string; values: SqlValue[] };
 
 function conditionsOf(actor: Actor, search: DriveSearch): Condition[] {
   const conditions: Condition[] = [{ sql: FINDABLE, values: [] }];
-  const expression = toMatchExpression(search.terms);
+  const expression = toPrefixMatch(search.terms);
   if (expression !== null) {
     conditions.push({
       sql: "items.rowid IN (SELECT rowid FROM item_search WHERE item_search MATCH ?)",

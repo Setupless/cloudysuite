@@ -127,6 +127,25 @@ export type EventListing = {
   complete: boolean;
 };
 
+// A repeat is found once, at its next date, or at its last date once it has ended.
+export type EventSearchResult = {
+  occurrences: Occurrence[];
+  // Whether more matched than are here.
+  more: boolean;
+  // False when the repeats took too long to work out, so some may be missing.
+  complete: boolean;
+};
+
+export type EventSearchAnswer =
+  | {
+      status: "found";
+      occurrences: CalendarOccurrence[];
+      more: boolean;
+      // Whether some calendar couldn't answer.
+      incomplete: boolean;
+    }
+  | { status: "problem"; problem: string };
+
 export type Member = { person: Person; role: CalendarRole };
 
 export const NO_ACCESS_MESSAGE =

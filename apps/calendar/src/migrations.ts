@@ -51,4 +51,31 @@ export const MIGRATIONS: Migrations = [
      WHERE json_extract(organiser, '$.kind') = 'madeHere'
        AND json_type(organiser, '$.name') IS NULL`,
   ],
+  [
+    // Contentless because events already holds the text. Triggers keep it in the same
+    // transaction as every change to events, whichever code path makes it. An event's
+    // rowid lasts its whole life: only VACUUM renumbers, and nothing here runs it.
+    `CREATE VIRTUAL TABLE event_search USING fts5(
+      title, location, notes,
+      content = '', contentless_delete = 1,
+      tokenize = 'unicode61 remove_diacritics 2',
+      prefix = '2 3'
+    )`,
+    `INSERT INTO event_search (rowid, title, location, notes)
+     SELECT rowid, title, location, notes FROM events`,
+    `CREATE TRIGGER events_search_insert AFTER INSERT ON events BEGIN
+      INSERT INTO event_search (rowid, title, location, notes)
+      VALUES (new.rowid, new.title, new.location, new.notes);
+    END`,
+    `CREATE TRIGGER events_search_change AFTER UPDATE OF title, location, notes ON events
+    WHEN old.title <> new.title OR old.location <> new.location OR old.notes <> new.notes
+    BEGIN
+      DELETE FROM event_search WHERE rowid = old.rowid;
+      INSERT INTO event_search (rowid, title, location, notes)
+      VALUES (new.rowid, new.title, new.location, new.notes);
+    END`,
+    `CREATE TRIGGER events_search_delete AFTER DELETE ON events BEGIN
+      DELETE FROM event_search WHERE rowid = old.rowid;
+    END`,
+  ],
 ];

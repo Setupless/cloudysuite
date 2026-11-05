@@ -27,6 +27,7 @@ import type { CalendarEntry } from "../types";
 import { CalendarSettings } from "./calendar-settings";
 import { calendarBorder, calendarFill } from "./colours";
 import { NameDialog } from "./name-dialog";
+import { SearchBox } from "./search-box";
 
 // A personal calendar has no id until it's first used.
 type SettingsFor = CalendarId | "personal";
@@ -165,6 +166,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       app="calendar"
       user={user}
       navigationLabel="Calendar"
+      headerContent={<SearchBox />}
       navigation={
         <Navigation
           calendars={calendars}

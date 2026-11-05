@@ -44,6 +44,7 @@ mock.module("@tanstack/react-start/server", () => ({
   getRequest: () => request,
 }));
 const functions = await import("./functions");
+const { searchEvents } = await import("./search-functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;
 let kit: Kit;
@@ -623,4 +624,33 @@ test("an invitation copy has no Edit, is refused a change, and can be removed", 
     data: { calendarId: TEAM, target, scope: "all" },
   });
   expect((await editor.listEvents({ data: day })).occurrences).toEqual([]);
+});
+
+test("search finds events only for people on the calendar, and only while Calendar is on", async () => {
+  const searchAs = (userId: UserId, text: string) => {
+    as(userId);
+    return searchEvents({ data: { text, timeZone: SYDNEY } });
+  };
+  const titlesFor = async (userId: UserId, text: string) => {
+    const answer = await searchAs(userId, text);
+    return answer.status === "found"
+      ? answer.occurrences.map((occurrence) => occurrence.title)
+      : answer.problem;
+  };
+  expect(await titlesFor(people.viewer, "rev launch")).toEqual([
+    "Spring launch review",
+  ]);
+  expect(await titlesFor(people.viewer, '"*')).toBe(
+    "Type a word from an event's title, place, or notes.",
+  );
+
+  await as(people.manager).removeCalendarMember({
+    data: { calendarId: TEAM, userId: people.viewer },
+  });
+  expect(await titlesFor(people.viewer, "launch")).toEqual([]);
+
+  kit.sqlite.run(
+    "INSERT INTO app_settings (app, enabled) VALUES ('calendar', 0)",
+  );
+  expect((await refused(searchAs(people.viewer, "launch"))).status).toBe(403);
 });

@@ -1,8 +1,9 @@
 import type { UserId } from "@cloudysuite/access";
 import { inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { wordsOf } from "@cloudysuite/search";
 import { user } from "../../../src/db/schema";
-import { type OwnerFilter, shown, wordsOf } from "./search-query";
+import { type OwnerFilter, shown } from "./search-query";
 import type { Person } from "./types";
 
 // D1 allows 100 bound values in a statement.

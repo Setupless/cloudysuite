@@ -50,9 +50,9 @@ import {
 export type Actor = { userId: UserId; role: CalendarRole };
 
 // About 200 ms of ical.js on the slowest rules, shared by every series in one call.
-const STEPS_PER_CALL = 100_000;
+export const STEPS_PER_CALL = 100_000;
 
-type EventRow = SqlRow & {
+export type EventRow = SqlRow & {
   uid: string;
   recurrence_id: string | null;
   title: string;
@@ -69,7 +69,7 @@ type EventRow = SqlRow & {
   sequence: number;
 };
 
-type StoredEvent = EventDetails & {
+export type StoredEvent = EventDetails & {
   uid: EventUid;
   recurrenceId: OccurrenceId | null;
   time: EventTime;
@@ -79,7 +79,7 @@ type StoredEvent = EventDetails & {
   sequence: number;
 };
 
-function parseRow(row: EventRow): StoredEvent {
+export function parseRow(row: EventRow): StoredEvent {
   return {
     uid: row.uid as EventUid,
     recurrenceId: row.recurrence_id as OccurrenceId | null,
@@ -116,6 +116,26 @@ const mayChange = (actor: Actor, series: StoredEvent) =>
   canEdit(actor) &&
   series.organiser.kind === "madeHere" &&
   shownRepeat(series)?.frequency !== "custom";
+
+// One date as the person sees it. A changed date has its own details, and the series
+// decides the repeat, the organiser, and whether it can be changed.
+export const occurrenceOf = (
+  actor: Actor,
+  series: StoredEvent,
+  event: StoredEvent,
+  occurrenceId: OccurrenceId | null,
+  time: EventTime,
+): Occurrence => ({
+  uid: series.uid,
+  occurrenceId,
+  title: event.title,
+  location: event.location,
+  notes: event.notes,
+  time,
+  repeat: shownRepeat(series),
+  organiser: series.organiser,
+  changeable: mayChange(actor, series),
+});
 
 const sameTime = (a: EventTime, b: EventTime) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -309,18 +329,7 @@ export class EventStore {
       event: StoredEvent,
       occurrenceId: OccurrenceId | null,
       time: EventTime,
-    ) =>
-      found.push({
-        uid: series.uid,
-        occurrenceId,
-        title: event.title,
-        location: event.location,
-        notes: event.notes,
-        time,
-        repeat: shownRepeat(series),
-        organiser: series.organiser,
-        changeable: mayChange(actor, series),
-      });
+    ) => found.push(occurrenceOf(actor, series, event, occurrenceId, time));
 
     for (const series of rows.filter((row) => row.recurrenceId === null)) {
       if (series.rule === null) {
