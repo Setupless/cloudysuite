@@ -6,6 +6,7 @@
       "name": "cloudysuite",
       "dependencies": {
         "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/storage": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",
@@ -46,6 +47,22 @@
         "@tanstack/react-start": "1.169.4",
         "better-auth": "1.7.16",
         "drizzle-orm": "1.0.0-rc.5",
+        "react": "19.3.1",
+      },
+    },
+    "apps/calendar": {
+      "name": "@cloudysuite/calendar",
+      "dependencies": {
+        "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/ui": "workspace:*",
+        "@tabler/icons-react": "3.50.0",
+        "@tanstack/react-query": "5.105.0",
+        "@tanstack/react-router": "1.170.46",
+        "@tanstack/react-start": "1.169.4",
+        "drizzle-orm": "1.0.0-rc.5",
+        "ical.js": "2.2.1",
         "react": "19.3.1",
       },
     },
@@ -184,6 +201,8 @@
     "@cloudysuite/access": ["@cloudysuite/access@workspace:packages/access"],
 
     "@cloudysuite/auth": ["@cloudysuite/auth@workspace:apps/auth"],
+
+    "@cloudysuite/calendar": ["@cloudysuite/calendar@workspace:apps/calendar"],
 
     "@cloudysuite/jev": ["@cloudysuite/jev@workspace:packages/jev"],
 
@@ -640,6 +659,8 @@
     "gensync": ["gensync@1.0.0-beta.2", "", {}, "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="],
 
     "graceful-fs": ["graceful-fs@4.2.11", "", {}, "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="],
+
+    "ical.js": ["ical.js@2.2.1", "", {}, "sha512-yK/UlPbEs316igb/tjRgbFA8ZV75rCsBJp/hWOatpyaPNlgw0dGDmU+FoicOcwX4xXkeXOkYiOmCqNPFpNPkQg=="],
 
     "isbot": ["isbot@5.2.2", "", {}, "sha512-iQcBXcd+Rv/pkubRyGh2utW2j1oPG5hZY6TUhVPpqK4G+o3IbxpJNx04hgksjc/N7GK5pEorUxDeg31cFgEk/w=="],
 
