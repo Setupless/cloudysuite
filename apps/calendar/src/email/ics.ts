@@ -105,7 +105,14 @@ function addDateOf(
 // Names come from the directory or from whoever typed them, so nothing in one can end
 // the line or reorder it.
 const cleanName = (name: string) =>
-  name.replace(/[\p{Cc}؜‎‏‪-‮⁦-⁩]+/gu, " ").trim();
+  name.replace(/[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]+/gu, " ").trim();
+
+// ical.js escapes a line feed but writes a carriage return as it is, which some readers
+// take as the end of the line. Line breaks become line feeds, and other breaks spaces.
+const cleanText = (text: string) =>
+  text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\P{Cc}\t\n]|[\p{Zl}\p{Zp}]/gu, " ");
 
 function addPerson(
   event: ICAL.Component,
@@ -159,9 +166,13 @@ function eventOf(
     addRule(event, part.rule);
     for (const id of part.exdates) addDateOf(event, "exdate", id, part.time);
   }
-  event.addPropertyWithValue("summary", part.title);
-  if (part.location) event.addPropertyWithValue("location", part.location);
-  if (part.notes) event.addPropertyWithValue("description", part.notes);
+  event.addPropertyWithValue("summary", cleanText(part.title));
+  if (part.location) {
+    event.addPropertyWithValue("location", cleanText(part.location));
+  }
+  if (part.notes) {
+    event.addPropertyWithValue("description", cleanText(part.notes));
+  }
   event.addPropertyWithValue("status", cancelled ? "CANCELLED" : "CONFIRMED");
   addPerson(event, "organizer", input.organiser);
   for (const attendee of input.attendees) {
