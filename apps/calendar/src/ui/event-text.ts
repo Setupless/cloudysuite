@@ -126,7 +126,7 @@ export function whenText(
   };
 }
 
-const EVERY: Record<RepeatFrequency, string> = {
+export const REPEAT_NAMES: Record<RepeatFrequency, string> = {
   daily: "Every day",
   weekdays: "Every weekday",
   weekly: "Every week",
@@ -136,7 +136,7 @@ const EVERY: Record<RepeatFrequency, string> = {
 
 export function repeatText(repeat: ShownRepeat, today: CivilDate): string {
   if (repeat.frequency === "custom") return "Repeats";
-  const every = EVERY[repeat.frequency];
+  const every = REPEAT_NAMES[repeat.frequency];
   switch (repeat.end.kind) {
     case "never":
       return every;

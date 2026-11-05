@@ -1,5 +1,9 @@
 import { Button, Notice, useHydrated } from "@cloudysuite/ui";
-import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconPlus,
+} from "@tabler/icons-react";
 import {
   type DehydratedState,
   HydrationBoundary,
@@ -22,13 +26,15 @@ import {
   visibleDays,
 } from "../schedule";
 import { parseTimeZone } from "../time";
-import type { CivilDate, TimeZone } from "../types";
+import type { CivilDate, EventUid, TimeZone } from "../types";
 import { TitlePicker } from "./date-picker";
 import { EventCard, EventPanel } from "./event-details";
+import { DeleteEventDialog, EventDialog, type Opening } from "./event-dialog";
+import { type FormStart, nextHalfHour, slotStart } from "./event-form";
 import { dayTitle, monthTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
 import { daySpanOf } from "./schedule-layout";
-import { shownEvents } from "./shown-event";
+import { type ShownEvent, shownEvents } from "./shown-event";
 import { type EventHandlers, TimeGrid } from "./time-grid";
 
 const SCREEN = "flex h-[calc(100dvh-52px)] flex-col";
@@ -44,6 +50,30 @@ const VIEW_NAMES: Record<ScheduleView, string> = {
 // Back and Forward change the place without closing anything, so a card belongs to the
 // place it opened in.
 type OpenCard = { key: OccurrenceKey; anchor: HTMLElement; at: string };
+
+// `back` is where focus goes if the person closes it without saving.
+type OpenDialog = (Opening | { kind: "delete"; event: ShownEvent }) & {
+  back: HTMLElement | null;
+};
+
+const eventWithKey = (key: string) =>
+  document.querySelector<HTMLElement>(`[data-event-key="${CSS.escape(key)}"]`);
+
+// A key ends with the event's UID.
+const eventWithUid = (uid: EventUid) =>
+  document.querySelector<HTMLElement>(
+    `[data-event-key$="/${CSS.escape(uid)}"]`,
+  );
+
+// After the page has drawn what changed, to the first of these still on it.
+function focusFirst(...candidates: (() => HTMLElement | null | undefined)[]) {
+  requestAnimationFrame(() => {
+    for (const candidate of candidates) {
+      const element = candidate();
+      if (element?.isConnected) return element.focus();
+    }
+  });
+}
 
 export const deviceZone = () =>
   parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
@@ -62,6 +92,8 @@ function useNow(): number {
 const unlessDialog = (run: () => void) => () => {
   if (!document.querySelector(":modal")) run();
 };
+// So Esc can still close that dialog, and the arrows can still move between its choices.
+const KEEP_DEFAULT = { preventDefault: false };
 
 function LiveSchedule({ search }: { search: ScheduleSearch }) {
   const [zone] = useState(deviceZone);
@@ -84,8 +116,9 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   const [openCard, setCard] = useState<OpenCard | null>(null);
   const card = openCard?.at === at ? openCard : null;
   const [picking, setPicking] = useState(false);
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const titleButton = useRef<HTMLButtonElement>(null);
-  const panelOpener = useRef<HTMLElement | null>(null);
+  const newButton = useRef<HTMLButtonElement>(null);
 
   const go = (
     view: ScheduleView,
@@ -103,8 +136,9 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
       resetScroll: false,
     });
   const closePanel = () => {
+    const key = search.event;
     showPanel(undefined);
-    if (panelOpener.current?.isConnected) panelOpener.current.focus();
+    if (key) focusFirst(() => eventWithKey(key));
   };
   const closeCard = useCallback(
     (refocus: boolean) => {
@@ -114,6 +148,33 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     [card],
   );
   const closePicker = useCallback(() => setPicking(false), []);
+
+  const openDialog = (opened: OpenDialog) => {
+    setCard(null);
+    setPicking(false);
+    setDialog(opened);
+  };
+  const openNew = (start: FormStart, back: HTMLElement | null) =>
+    openDialog({ kind: "new", start, back });
+  const closeDialog = () => {
+    const back = dialog?.back;
+    setDialog(null);
+    focusFirst(
+      () => back,
+      () => newButton.current,
+    );
+  };
+  const afterChange = (saved: EventUid | null) => {
+    const changed = dialog?.kind === "new" ? null : dialog?.event.key;
+    setDialog(null);
+    setCard(null);
+    if (place.view === "day" && search.event) showPanel(undefined);
+    focusFirst(
+      () => changed && eventWithKey(changed),
+      () => saved && eventWithUid(saved),
+      () => newButton.current,
+    );
+  };
 
   const closeTop = () => {
     if (picking) {
@@ -145,12 +206,26 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   useHotkey(
     "ArrowLeft",
     unlessDialog(() => go(place.view, steppedDate(place, -1))),
+    KEEP_DEFAULT,
   );
   useHotkey(
     "ArrowRight",
     unlessDialog(() => go(place.view, steppedDate(place, 1))),
+    KEEP_DEFAULT,
   );
-  useHotkey("Escape", unlessDialog(closeTop));
+  useHotkey("Escape", unlessDialog(closeTop), KEEP_DEFAULT);
+  useHotkey(
+    "N",
+    unlessDialog(() =>
+      openNew(
+        nextHalfHour(Date.now(), zone),
+        document.activeElement instanceof HTMLElement &&
+          document.activeElement !== document.body
+          ? document.activeElement
+          : null,
+      ),
+    ),
+  );
 
   const inDay = place.view === "day";
   const handlers: EventHandlers = {
@@ -161,7 +236,6 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     onOpen: (event, anchor) => {
       setPicking(false);
       if (inDay) {
-        panelOpener.current = anchor;
         showPanel(event.key === search.event ? undefined : event.key);
       } else {
         setCard(
@@ -170,6 +244,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
       }
     },
     onOpenDay: (date) => go("day", date),
+    onSlot: (date, minute) => openNew(slotStart(date, minute), null),
   };
   const cardEvent =
     card && !inDay ? events.find((event) => event.key === card.key) : undefined;
@@ -236,6 +311,18 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             </button>
           ))}
         </div>
+        <Button
+          ref={newButton}
+          variant="toolbarAction"
+          icon={IconPlus}
+          aria-keyshortcuts="N"
+          disabled={!calendars.data}
+          onClick={(click) =>
+            openNew(nextHalfHour(Date.now(), zone), click.currentTarget)
+          }
+        >
+          New event
+        </Button>
       </div>
       {failure && (
         <div className="px-4 pb-2">
@@ -272,6 +359,12 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             zone={zone}
             today={today}
             onClose={closePanel}
+            onEdit={(button) =>
+              openDialog({ kind: "edit", event: panelEvent, back: button })
+            }
+            onDelete={(button) =>
+              openDialog({ kind: "delete", event: panelEvent, back: button })
+            }
           />
         )}
         {cardEvent && card && (
@@ -285,9 +378,37 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             onOpenDetails={() =>
               go("day", daySpanOf(cardEvent.time, zone).first, cardEvent.key)
             }
+            onEdit={() =>
+              openDialog({ kind: "edit", event: cardEvent, back: card.anchor })
+            }
+            onDelete={() =>
+              openDialog({
+                kind: "delete",
+                event: cardEvent,
+                back: card.anchor,
+              })
+            }
           />
         )}
       </div>
+      {dialog?.kind === "delete" ? (
+        <DeleteEventDialog
+          event={dialog.event}
+          onDone={() => afterChange(null)}
+          onClose={closeDialog}
+        />
+      ) : (
+        dialog &&
+        calendars.data && (
+          <EventDialog
+            opening={dialog}
+            calendars={calendars.data}
+            zone={zone}
+            onSaved={afterChange}
+            onClose={closeDialog}
+          />
+        )
+      )}
     </div>
   );
 }

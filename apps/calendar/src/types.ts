@@ -48,8 +48,9 @@ export type ShownRepeat = Repeat | { frequency: "custom" };
 
 export type Organiser =
   // Made on this calendar. This copy is the one everyone follows, so anyone with Can
-  // edit here may change it.
-  | { kind: "madeHere"; userId: UserId }
+  // edit here may change it. The name is kept because removing a person deletes their
+  // user row. It's null on events made before names were kept.
+  | { kind: "madeHere"; userId: UserId; name: string | null }
   // A copy of an event organised somewhere else. It can be answered or removed.
   | { kind: "invitation"; email: string; name: string | null };
 
@@ -83,6 +84,11 @@ export type RangeListing = {
 };
 
 export const MAX_OCCURRENCES = 1000;
+
+export const MAX_TITLE_LENGTH = 500;
+export const MAX_LOCATION_LENGTH = 1000;
+export const MAX_NOTES_LENGTH = 10_000;
+export const MAX_REPEAT_TIMES = 999;
 
 export type ChangeScope = "this" | "thisAndLater" | "all";
 

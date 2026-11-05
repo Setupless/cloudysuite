@@ -22,7 +22,7 @@ export type CalendarClient = {
   calendarId: CalendarId;
   role: CalendarRole;
   listRange(range: DayRange): Promise<RangeListing>;
-  create(draft: EventDraft): Promise<CreateResult>;
+  create(organiserName: string, draft: EventDraft): Promise<CreateResult>;
   update(
     target: EventTarget,
     scope: ChangeScope,
@@ -45,8 +45,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
     role: grant.role,
     listRange: async (range) =>
       (await stub.listRange(actor, range)) as RangeListing,
-    create: async (draft) =>
-      (await stub.createEvent(actor, draft)) as CreateResult,
+    create: async (organiserName, draft) =>
+      (await stub.createEvent(actor, organiserName, draft)) as CreateResult,
     update: async (target, scope, draft) =>
       (await stub.updateEvent(actor, target, scope, draft)) as ChangeResult,
     remove: async (target, scope) =>

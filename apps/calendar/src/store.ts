@@ -356,7 +356,12 @@ export class EventStore {
     };
   }
 
-  create(actor: Actor, draft: EventDraft, now: number): CreateResult {
+  create(
+    actor: Actor,
+    organiserName: string,
+    draft: EventDraft,
+    now: number,
+  ): CreateResult {
     if (!canEdit(actor)) return { status: "noAccess" };
     const uid = crypto.randomUUID() as EventUid;
     this.#write(
@@ -369,7 +374,11 @@ export class EventStore {
         time: draft.time,
         rule: draft.repeat && ruleOf(draft.repeat, draft.time),
         exdates: [],
-        organiser: { kind: "madeHere", userId: actor.userId },
+        organiser: {
+          kind: "madeHere",
+          userId: actor.userId,
+          name: organiserName,
+        },
         sequence: 0,
       },
       now,
