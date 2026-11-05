@@ -1,8 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-import type { DriveId, MailboxId, UserId } from "../../../src/db/schema";
+import type {
+  CalendarId,
+  DriveId,
+  MailboxId,
+  UserId,
+} from "../../../src/db/schema";
 import { createTestDatabase } from "../../../src/db/test-database";
 import {
+  type CalendarGrant,
+  checkCalendarAccess,
   checkDriveAccess,
   checkMailboxAccess,
   type DriveGrant,
@@ -286,4 +293,92 @@ test("parseDriveId accepts only a lowercase uuid", () => {
   expect(parseDriveId(marketing)).toBe(marketing);
   expect(parseDriveId("../other")).toBeNull();
   expect(parseDriveId(marketing.toUpperCase())).toBeNull();
+});
+
+const launches = "2c4f5e41-bd3e-4fa1-8f88-3d4e5f607183" as CalendarId;
+
+function addCalendar() {
+  sqlite.run(
+    "INSERT INTO calendars (id, kind, name, colour) VALUES (?, 'team', 'Launches', 2)",
+    [launches],
+  );
+  sqlite.run(
+    "INSERT INTO calendar_access (calendar_id, user_id, role) VALUES (?, ?, 'viewer')",
+    [launches, alice],
+  );
+}
+
+test("someone on a calendar gets a grant with their role, and nobody else gets one", async () => {
+  addCalendar();
+  const access = await checkCalendarAccess(d1, alice, launches);
+  if (!access.allowed) throw new Error("expected access");
+  expect(access.grant.calendarId).toBe(launches);
+  expect(access.grant.role).toBe("viewer");
+  expect(await checkCalendarAccess(d1, bob, launches)).toEqual({
+    allowed: false,
+  });
+});
+
+test("a calendar that doesn't exist is refused", async () => {
+  addCalendar();
+  sqlite.run("DELETE FROM calendars WHERE id = ?", [launches]);
+  expect(await checkCalendarAccess(d1, alice, launches)).toEqual({
+    allowed: false,
+  });
+  const missing = "00000000-0000-4000-8000-000000000000" as CalendarId;
+  expect(await checkCalendarAccess(d1, alice, missing)).toEqual({
+    allowed: false,
+  });
+});
+
+test("a banned person is refused a calendar until the ban ends", async () => {
+  addCalendar();
+  for (const expires of [null, Date.now() + 60_000]) {
+    banAlice(expires);
+    expect(await checkCalendarAccess(d1, alice, launches)).toEqual({
+      allowed: false,
+    });
+  }
+  banAlice(Date.now() - 60_000);
+  expect((await checkCalendarAccess(d1, alice, launches)).allowed).toBe(true);
+});
+
+test("a calendar's grant can't be built by hand or passed as a drive's", async () => {
+  addCalendar();
+  const access = await checkCalendarAccess(d1, alice, launches);
+  if (!access.allowed) throw new Error("expected access");
+  const { grant } = access;
+  // @ts-expect-error A grant only comes from checkCalendarAccess.
+  const forged: CalendarGrant = {
+    userId: alice,
+    calendarId: launches,
+    role: "manager",
+  };
+  // @ts-expect-error A calendar's grant is not a drive's.
+  const crossed: DriveGrant = grant;
+  expect(forged).not.toBeInstanceOf(grant.constructor);
+  expect(crossed as unknown).toBe(grant);
+  const Grant = grant.constructor as new (
+    ...values: unknown[]
+  ) => CalendarGrant;
+  expect(() => new Grant(alice, launches, "manager")).toThrow();
+});
+
+test("a person can have only one personal calendar, and a team calendar needs a name", () => {
+  sqlite.run(
+    "INSERT INTO calendars (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+    [launches, alice],
+  );
+  expect(() =>
+    sqlite.run(
+      "INSERT INTO calendars (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+      [marketing, alice],
+    ),
+  ).toThrow();
+  expect(() =>
+    sqlite.run(
+      "INSERT INTO calendars (id, kind, colour) VALUES (?, 'team', 1)",
+      [finance],
+    ),
+  ).toThrow();
 });
