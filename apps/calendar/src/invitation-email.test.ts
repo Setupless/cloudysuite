@@ -33,7 +33,9 @@ import type {
   EventUid,
   NotSentReason,
   OccurrenceId,
+  PersonKey,
   PersonToInvite,
+  UnsentCancellation,
 } from "./types";
 
 // Outside Vite a server function never reaches its handler, so this runs the validator
@@ -578,6 +580,98 @@ test("a refused email shows as not sent, and Try again sends it exactly once", a
   expect(sentTo(OUTSIDE)).toHaveLength(1);
   expect(readEmail(sentTo(OUTSIDE)[0]!.raw).subject).toStartWith("Invitation:");
   expect(await notSent()).toEqual({});
+});
+
+test("someone taken off whose cancellation didn't go stays on People as taken off, until Try again sends it once", async () => {
+  const uid = await invite([people.colleague, outside(OUTSIDE)]);
+  email.willEnd(
+    { kind: "refused", code: "E_RECIPIENT_SUPPRESSED" },
+    { kind: "refused", code: "E_RECIPIENT_SUPPRESSED" },
+  );
+  await change(uid, { people: [] });
+  const shown = await organisersView();
+  expect(shown.people).toEqual([]);
+  expect(
+    shown.takenOff.toSorted((a, b) => a.name.localeCompare(b.name)),
+  ).toEqual([
+    {
+      key: `mailto:${OUTSIDE}` as PersonKey,
+      name: OUTSIDE,
+      notSent: { kind: "refused", reason: "recipientSuppressed" },
+    },
+    {
+      key: `user:${people.colleague}` as PersonKey,
+      name: "Jo Okafor",
+      notSent: { kind: "refused", reason: "recipientSuppressed" },
+    },
+  ]);
+  const tryAgain = (by: UserId) =>
+    as(by).retryInvitationEmail({
+      data: { calendarId: TEAM, uid, recipient: `mailto:${OUTSIDE}` },
+    });
+  expect(await refused(tryAgain(people.viewer))).toMatchObject({
+    status: 403,
+  });
+
+  await tryAgain(people.manager);
+  await tryAgain(people.manager);
+  await objects.settle();
+  const [, cancellation, ...more] = sentTo(OUTSIDE);
+  expect(more).toEqual([]);
+  expect(invitationIn(cancellation!).read.subject).toStartWith(
+    "Cancelled: Weekly planning",
+  );
+  expect((await organisersView()).takenOff.map((one) => one.name)).toEqual([
+    "Jo Okafor",
+  ]);
+});
+
+test("a deleted event's cancellation that didn't go is listed in the calendar's settings, until Try again sends it once", async () => {
+  const uid = await invite([outside(OUTSIDE)]);
+  email.willEnd({ kind: "unclear" });
+  await as(people.manager).deleteEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid, occurrenceId: null },
+      scope: "all",
+    },
+  });
+  await objects.settle();
+  const unsent: UnsentCancellation[] = [
+    {
+      uid,
+      title: "Weekly planning",
+      time: TUESDAY,
+      to: {
+        key: `mailto:${OUTSIDE}` as PersonKey,
+        name: OUTSIDE,
+        notSent: { kind: "unclear" },
+      },
+    },
+  ];
+  const list = (by: UserId) =>
+    as(by).listUnsentCancellations({ data: { calendarId: TEAM } });
+  expect(await list(people.viewer)).toEqual(unsent);
+  // Someone not on the calendar learns nothing about it.
+  expect((await refused(list(people.colleague))).status).toBe(403);
+  const tryAgain = (by: UserId) =>
+    as(by).retryInvitationEmail({
+      data: { calendarId: TEAM, uid, recipient: `mailto:${OUTSIDE}` },
+    });
+  expect(await refused(tryAgain(people.viewer))).toMatchObject({
+    status: 403,
+  });
+
+  await tryAgain(people.editor);
+  await tryAgain(people.editor);
+  await objects.settle();
+  expect(email.attempts).toHaveLength(3);
+  const [, cancellation, ...more] = sentTo(OUTSIDE);
+  expect(more).toEqual([]);
+  expect(invitationIn(cancellation!).read.subject).toStartWith(
+    "Cancelled: Weekly planning",
+  );
+  expect(await list(people.manager)).toEqual([]);
 });
 
 test("an object stopped after claiming a send finds it unclear, and never sends it twice", async () => {
