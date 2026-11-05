@@ -13,11 +13,14 @@ import {
   type CalendarOccurrence,
   type ChangeScope,
   type CivilDate,
+  type EmailAddress,
   type EventDraft,
   type EventTarget,
   type EventTime,
+  keyOfPerson,
   MAX_REPEAT_TIMES,
   type Occurrence,
+  type PersonToInvite,
   type Repeat,
   type RepeatEnd,
   type RepeatFrequency,
@@ -57,7 +60,17 @@ export type EventForm = {
   people: Guest[];
 };
 
-export type Guest = { userId: UserId; name: string };
+export type Guest =
+  | { kind: "colleague"; userId: UserId; name: string }
+  | { kind: "outside"; email: EmailAddress };
+
+export const guestName = (guest: Guest) =>
+  guest.kind === "colleague" ? guest.name : guest.email;
+
+const askedFor = (guest: Guest): PersonToInvite =>
+  guest.kind === "colleague" ? guest.userId : { email: guest.email };
+
+export const guestKey = (guest: Guest) => keyOfPerson(askedFor(guest));
 
 export type FormField = keyof EventForm;
 
@@ -169,7 +182,11 @@ export function formOf(event: Occurrence, zone: TimeZone): EventForm {
     ...repeatFields(event.repeat),
     location: event.location,
     notes: event.notes,
-    people: event.people.map(({ userId, name }) => ({ userId, name })),
+    people: event.people.map((person): Guest =>
+      person.kind === "colleague"
+        ? { kind: "colleague", userId: person.userId, name: person.name }
+        : { kind: "outside", email: person.email },
+    ),
   };
   if (time.kind === "allDay") {
     return {
@@ -302,7 +319,7 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
       notes: form.notes,
       time: timed.time,
       repeat: repeated.repeat,
-      people: form.people.map((guest) => guest.userId),
+      people: form.people.map(askedFor),
     },
   };
 }
@@ -310,9 +327,13 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
 const sameRepeat = (a: Occurrence["repeat"], b: Repeat | null) =>
   JSON.stringify(repeatFields(a)) === JSON.stringify(repeatFields(b));
 
-const samePeople = (event: Occurrence, draft: EventDraft) =>
-  event.people.length === draft.people.length &&
-  event.people.every((person) => draft.people.includes(person.userId));
+const samePeople = (event: Occurrence, draft: EventDraft) => {
+  const asked = new Set(draft.people.map(keyOfPerson));
+  return (
+    event.people.length === draft.people.length &&
+    event.people.every((person) => asked.has(keyOfPerson(person)))
+  );
+};
 
 // Null when there is nothing to ask, because the event doesn't repeat. "Only this one"
 // leaves the repeat and the people as they were, so it isn't offered when either changed.

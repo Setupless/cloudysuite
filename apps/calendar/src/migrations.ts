@@ -126,4 +126,29 @@ export const MIGRATIONS: Migrations = [
       PRIMARY KEY (calendar_id, uid)
     ) WITHOUT ROWID`,
   ],
+  [
+    // The organiser's side: this person needs an invitation email for the event as it is
+    // now. Written in the transaction that changes the event, and sent by the alarm. The
+    // state is queued, sending, sent, refused, or unclear, and try_at is set only while
+    // queued or sending. A claim that never finished is found as sending, and becomes
+    // unclear, never a second send. `sent` is what the last email that went, or may
+    // have gone, said: request or cancel. `gone` is the event as it was, once deleted,
+    // so its cancellation can still say what was called off.
+    `CREATE TABLE invitation_emails (
+      uid TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      calendar_id TEXT NOT NULL,
+      changed_by TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      tries INTEGER NOT NULL,
+      try_at INTEGER,
+      reason TEXT,
+      sent TEXT,
+      gone TEXT,
+      PRIMARY KEY (uid, recipient),
+      CHECK ((try_at IS NULL) = (state NOT IN ('queued', 'sending')))
+    ) WITHOUT ROWID`,
+    `CREATE INDEX invitation_emails_due ON invitation_emails(try_at)`,
+  ],
 ];

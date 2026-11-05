@@ -27,6 +27,7 @@ import {
   setMemberRole,
   type TeamChange,
 } from "./directory";
+import { outsideInviting } from "./email/senders";
 import { readCalendarFile } from "./outside/ics";
 import {
   addSummary,
@@ -54,6 +55,8 @@ import {
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
+  OUTSIDE_REFUSED_MESSAGES,
+  type OutsideInviting,
   PEOPLE_FOR_ONE_DATE_MESSAGE,
   PERSONAL_CALENDAR_MESSAGE,
   type Person,
@@ -74,8 +77,10 @@ import {
   parseMemberRoleInput,
   parseNewEventInput,
   parseNewTeamCalendarInput,
+  parseOrganiserInput,
   parseRangeInput,
   parseRenameInput,
+  parseRetryEmailInput,
   refusal,
 } from "./wire";
 
@@ -138,6 +143,8 @@ function answerChange(result: ChangeResult): void {
       throw refusal(404, NOT_A_PERSON_MESSAGE);
     case "peopleForOneDate":
       throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
+    case "outsideNotAllowed":
+      throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
   }
 }
 
@@ -296,7 +303,11 @@ export const listInvitations = createServerFn({ method: "GET" })
   });
 
 // Names come from the directory, never from the request.
-const invitableIn = (draft: EventDraft) => readInvitable(env.DB, draft.people);
+const invitableIn = (draft: EventDraft) =>
+  readInvitable(
+    env.DB,
+    draft.people.filter((person) => typeof person === "string"),
+  );
 
 // Kept on every event the person makes, so it can't be a whole page long.
 const organiserName = (person: { name: string }) =>
@@ -319,6 +330,8 @@ export const createEvent = createServerFn({ method: "POST" })
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":
         throw refusal(404, NOT_A_PERSON_MESSAGE);
+      case "outsideNotAllowed":
+        throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
     }
   });
 
@@ -369,6 +382,24 @@ export const importCalendarFile = createServerFn({ method: "POST" })
       addSummary(summary, result.summary);
     }
     return summary;
+  });
+
+// Whether the dialog may offer addresses for an event whose emails go from this
+// organiser's address. It reads D1 only.
+export const getOutsideInviting = createServerFn({ method: "GET" })
+  .validator(parseOrganiserInput)
+  .handler(async ({ data }): Promise<OutsideInviting> => {
+    await me();
+    return outsideInviting(env.DB, data.organiser);
+  });
+
+export const retryInvitationEmail = createServerFn({ method: "POST" })
+  .validator(parseRetryEmailInput)
+  .handler(async ({ data }): Promise<void> => {
+    const calendar = await openCalendarAs((await me()).id, data.calendarId);
+    const result = await calendar.retryEmail(data.uid, data.recipient);
+    if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
+    if (result.status === "gone") throw refusal(404, EVENT_GONE_MESSAGE);
   });
 
 export const answerInvitation = createServerFn({ method: "POST" })

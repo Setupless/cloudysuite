@@ -2,12 +2,13 @@ import type { CalendarId, UserId } from "@cloudysuite/access";
 import { Button, Modal, Notice } from "@cloudysuite/ui";
 import {
   IconCalendarX,
+  IconMail,
   IconMapPin,
   IconRepeat,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type FormEvent,
   type ReactNode,
@@ -22,7 +23,7 @@ import {
   ensureMyCalendar,
   updateEvent,
 } from "../functions";
-import { call, calendarKeys } from "../queries";
+import { call, calendarKeys, outsideInvitingQuery } from "../queries";
 import {
   type CalendarEntry,
   type ChangeScope,
@@ -32,6 +33,7 @@ import {
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
+  type OutsideInviting,
   REPEAT_FREQUENCIES,
   type TimeZone,
 } from "../types";
@@ -44,6 +46,8 @@ import {
   type FormStart,
   formOf,
   type Guest,
+  guestKey,
+  guestName,
   newForm,
   SCOPE_LABELS,
   scopesFor,
@@ -157,19 +161,58 @@ function CalendarSwatch({ colour }: { colour: number }) {
   );
 }
 
-// Colleagues only for now, so the picker offers only the directory.
+// Why addresses can't be invited, said before saving. Emails go from the organiser's own
+// address, whoever makes the change.
+function outsideNote(
+  inviting: OutsideInviting | "checking" | "unknown",
+  organiserIsMe: boolean,
+  organiserName: string | null,
+): string | null {
+  switch (inviting) {
+    case "ready":
+      return null;
+    case "checking":
+      return "Checking whether invitations can be emailed…";
+    case "unknown":
+      return "We couldn't check whether invitations can be emailed, so only people in your organisation can be added. Close the event and open it again to try again.";
+    case "mailOff":
+      return "Mail is off, so people outside your organisation can't be invited and won't get an email. Colleagues still see it in their calendar.";
+    case "noSender":
+      return organiserIsMe
+        ? "You don't have a personal mailbox, so you can only invite people in your organisation. Invitations to anyone else go from your own address."
+        : `Emails can't go from ${organiserName ?? "the organiser"}'s address, so people outside your organisation can't be invited and won't hear about this change.`;
+  }
+}
+
 function InviteField({
   guests,
-  skip,
+  organiser,
+  organiserName,
   disabled,
   onChange,
 }: {
   guests: Guest[];
-  skip: ReadonlySet<string>;
+  // Whose address the emails go from, who is never one of their own guests.
+  organiser: UserId;
+  organiserName: string | null;
   disabled: boolean;
   onChange: (guests: Guest[]) => void;
 }) {
   const headingId = useId();
+  const me = useMe();
+  const query = useQuery(outsideInvitingQuery(organiser));
+  const inviting = query.isPending
+    ? "checking"
+    : query.isError
+      ? "unknown"
+      : query.data;
+  const note = outsideNote(inviting, organiser === me, organiserName);
+  const skip = new Set<string>([
+    organiser,
+    ...guests.map((guest) =>
+      guest.kind === "colleague" ? guest.userId : guest.email,
+    ),
+  ]);
   return (
     <div role="group" aria-labelledby={headingId} className={LABEL}>
       <span id={headingId}>Invite people</span>
@@ -177,13 +220,21 @@ function InviteField({
         <ul className="flex flex-wrap gap-1.5">
           {guests.map((guest) => (
             <li
-              key={guest.userId}
+              key={guestKey(guest)}
               className="flex items-center gap-1 rounded bg-selected py-0.5 pr-0.5 pl-2 text-[13px] font-normal text-text"
             >
-              <span dir="auto">{guest.name}</span>
+              {guest.kind === "outside" && (
+                <IconMail
+                  size={14}
+                  stroke={1.75}
+                  aria-hidden
+                  className="text-secondary"
+                />
+              )}
+              <span dir="auto">{guestName(guest)}</span>
               <button
                 type="button"
-                aria-label={`Don't invite ${guest.name}`}
+                aria-label={`Don't invite ${guestName(guest)}`}
                 disabled={disabled}
                 className="flex size-6 cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field focus-visible:outline-2"
                 onClick={() =>
@@ -202,12 +253,21 @@ function InviteField({
         adding={null}
         disabled={disabled}
         onAdd={async (person) =>
-          onChange([...guests, { userId: person.id, name: person.name }])
+          onChange([
+            ...guests,
+            { kind: "colleague", userId: person.id, name: person.name },
+          ])
         }
+        addresses={{
+          refused:
+            note &&
+            "People outside your organisation can't be invited to this event. The note below says why.",
+          onAdd: (email) => onChange([...guests, { kind: "outside", email }]),
+        }}
       />
       <span className="font-normal text-secondary">
-        They see it in their own calendar straight away, and can answer Yes,
-        Maybe, or No.
+        {note ??
+          "Colleagues see it in their own calendar straight away. Everyone gets an email they can answer from any calendar or mail app."}
       </span>
     </div>
   );
@@ -252,6 +312,10 @@ export function EventDialog({
     editing && editing.organiser.kind !== "invitation"
       ? editing.organiser.userId
       : me;
+  const organiserName =
+    editing && editing.organiser.kind !== "invitation"
+      ? editing.organiser.name
+      : null;
   const chosen = writable.find((entry) => choiceOf(entry) === choice);
   const [endDayAsked, setEndDayAsked] = useState(false);
   const [asking, setAsking] = useState<{
@@ -610,9 +674,8 @@ export function EventDialog({
         )}
         <InviteField
           guests={form.people}
-          skip={
-            new Set([organiser, ...form.people.map((guest) => guest.userId)])
-          }
+          organiser={organiser}
+          organiserName={organiserName}
           disabled={pending}
           onChange={(people) => set({ people })}
         />

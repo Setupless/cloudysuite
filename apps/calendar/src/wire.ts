@@ -20,6 +20,7 @@ import {
   type EventTime,
   type EventUid,
   IMPORT_TOO_LARGE_MESSAGE,
+  keyOfPerson,
   MAX_IMPORT_BYTES,
   GIVEN_ANSWERS,
   MAX_INVITED,
@@ -28,14 +29,19 @@ import {
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
   MAX_UID_LENGTH,
+  NOT_AN_ADDRESS_MESSAGE,
+  type PersonKey,
+  type PersonToInvite,
   REPEAT_FREQUENCIES,
   type Repeat,
   type RepeatEnd,
   type TimeZone,
 } from "./types";
+import { parseEmailAddress } from "./email-address";
 import { MAX_SEARCH_LENGTH } from "./search-query";
 
 const MAX_TIME_ZONE_LENGTH = 64;
+const MAX_EMAIL_LENGTH = 254;
 const MAX_CALENDAR_NAME_LENGTH = 100;
 const MAX_USER_ID_LENGTH = 128;
 const MAX_PEOPLE = 100;
@@ -283,14 +289,31 @@ function parseDraft(raw: unknown): EventDraft {
   if (!Array.isArray(people) || people.length > MAX_INVITED) {
     throw badRequest();
   }
+  const asked = new Map(
+    people
+      .map(parsePersonToInvite)
+      .map((person) => [keyOfPerson(person), person]),
+  );
   return {
     title,
     location: text(input.location, MAX_LOCATION_LENGTH).trim(),
     notes: text(input.notes, MAX_NOTES_LENGTH),
     time,
     repeat: parseRepeat(input.repeat, time),
-    people: [...new Set(people.map(requireUserId))],
+    people: [...asked.values()],
   };
+}
+
+// A colleague's id, or { email } for anyone else.
+function parsePersonToInvite(raw: unknown): PersonToInvite {
+  if (typeof raw === "string") return requireUserId(raw);
+  const email = parseEmailAddress(
+    typeof record(raw).email === "string"
+      ? text(record(raw).email, MAX_EMAIL_LENGTH)
+      : null,
+  );
+  if (!email) throw refusal(400, NOT_AN_ADDRESS_MESSAGE);
+  return { email };
 }
 
 function parseTarget(raw: unknown): EventTarget {
@@ -338,6 +361,27 @@ export function parseAnswerInput(raw: unknown) {
     ...parseCalendarInput(raw),
     uid: parseTarget({ uid: record(raw).uid, occurrenceId: null }).uid,
     answer,
+  };
+}
+
+export const parseOrganiserInput = (raw: unknown) => ({
+  organiser: requireUserId(record(raw).organiser),
+});
+
+export function parseRetryEmailInput(raw: unknown) {
+  const { recipient } = record(raw);
+  const key = typeof recipient === "string" ? recipient : "";
+  if (key.startsWith("user:")) requireUserId(key.slice(5));
+  else if (
+    !key.startsWith("mailto:") ||
+    parseEmailAddress(key.slice(7)) !== key.slice(7)
+  ) {
+    throw badRequest();
+  }
+  return {
+    ...parseCalendarInput(raw),
+    uid: parseTarget({ uid: record(raw).uid, occurrenceId: null }).uid,
+    recipient: key as PersonKey,
   };
 }
 

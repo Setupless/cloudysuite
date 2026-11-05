@@ -6,6 +6,7 @@ import type {
   EventTime,
   EventUid,
   OccurrenceId,
+  PersonKey,
 } from "./types";
 
 // One event, or one changed date of it, as the organiser's calendar holds it.
@@ -57,6 +58,53 @@ export type QueuedDelivery = {
   calendarId: CalendarId;
   version: number;
 };
+
+// A queued invitation email to one person. The version grows each time the event
+// changes again, so settling an older send can't settle the newer one.
+export type QueuedEmail = {
+  uid: EventUid;
+  recipient: PersonKey;
+  calendarId: CalendarId;
+  // Who made the latest change, or chose Try again, who must still be able to edit.
+  changedBy: UserId;
+  version: number;
+  // Sending is a claim from a run that never finished.
+  state: "queued" | "sending";
+  // Rate limits met so far.
+  tries: number;
+  // What the last email that went, or may have gone, said.
+  sent: EmailMethod | null;
+};
+
+// iTIP's REQUEST, for an invitation or an update, and CANCEL.
+export type EmailMethod = "request" | "cancel";
+
+export type EmailPlanOrganiser = { userId: UserId; name: string | null };
+
+// What one queued email says, read from the event as it is when it goes.
+export type EmailPlan =
+  | {
+      method: "request";
+      uid: EventUid;
+      organiser: EmailPlanOrganiser;
+      // The series, then its changed dates.
+      parts: DeliveredPart[];
+      people: Attendee[];
+      to: Attendee;
+      // Nothing reached them before, or the last thing was a cancellation.
+      first: boolean;
+    }
+  | {
+      method: "cancel";
+      uid: EventUid;
+      organiser: EmailPlanOrganiser;
+      // At a sequence above any that went before.
+      series: DeliveredPart;
+      to: PersonKey;
+      why: "uninvited" | "deleted";
+    }
+  // Nothing to say, as to someone taken off before anything reached them.
+  | { method: "none" };
 
 // Where a copy lives in the calendar it's sent to. Anyone can import a file with any UID,
 // so two calendars can each send one with the same UID, and a copy is named by both. One

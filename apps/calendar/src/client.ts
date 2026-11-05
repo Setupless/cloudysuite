@@ -3,6 +3,7 @@ import {
   type CalendarId,
   type CalendarRole,
   checkCalendarAccess,
+  levelOfRole,
   type UserId,
 } from "@cloudysuite/access";
 import type { SearchTerm } from "@cloudysuite/search";
@@ -23,7 +24,9 @@ import type {
   EventUid,
   Invitee,
   Occurrence,
+  PersonKey,
   RangeListing,
+  RetryResult,
   TimeZone,
 } from "./types";
 
@@ -51,6 +54,7 @@ export type CalendarClient = {
     groups: ImportGroup[],
   ): Promise<ImportResult>;
   answer(uid: EventUid, answer: Answer): Promise<AnswerResult>;
+  retryEmail(uid: EventUid, recipient: PersonKey): Promise<RetryResult>;
   countEvents(): Promise<number>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
@@ -96,6 +100,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.importEvents(actor, organiserName, groups)) as ImportResult,
     answer: async (uid, answer) =>
       (await stub.answerEvent(actor, uid, answer)) as AnswerResult,
+    retryEmail: async (uid, recipient) =>
+      (await stub.retryEmail(actor, uid, recipient)) as RetryResult,
     countEvents: () => stub.countEvents(actor),
     erase: async () => (await stub.erase(actor)) as EraseResult,
   };
@@ -110,6 +116,17 @@ export async function openCalendarAsPerson(
 ): Promise<CalendarClient | null> {
   const access = await checkCalendarAccess(env.DB, userId, calendarId);
   return access.allowed ? openCalendar(env, access.grant) : null;
+}
+
+// Whether someone who made a change can still make it, asked again before its emails go.
+// A calendar that's gone, someone taken off it, and someone suspended can't.
+export async function canStillEdit(
+  database: D1Database,
+  userId: UserId,
+  calendarId: CalendarId,
+): Promise<boolean> {
+  const access = await checkCalendarAccess(database, userId, calendarId);
+  return access.allowed && levelOfRole(access.grant.role) === "edit";
 }
 
 // For one Calendar object to hand another an invitation copy or an answer. It grants no

@@ -11,7 +11,11 @@ import {
   type DeliveredPart,
   type Delivery,
   type DeliveryResult,
+  type EmailMethod,
+  type EmailPlan,
+  type EmailPlanOrganiser,
   type QueuedDelivery,
+  type QueuedEmail,
   retryAt,
 } from "./invitations";
 import {
@@ -52,12 +56,20 @@ import {
   type EventUid,
   type ImportSummary,
   type Invitee,
+  keyOfPerson,
   MAX_OCCURRENCES,
+  type NotSent,
+  type NotSentReason,
   type Occurrence,
   type OccurrenceId,
   type Organiser,
+  type OutsideInviting,
+  type OutsideRefused,
+  type PersonKey,
+  type PersonToInvite,
   type RangeListing,
   type Repeat,
+  type RetryResult,
   type ShownRepeat,
   type Shortfall,
   SKIP_REASONS,
@@ -242,12 +254,36 @@ export type People = {
   reply: Reply | null;
 };
 
+// As read, with the invitation emails that didn't go, which only the organiser's
+// calendar has.
+export type HeldPeople = People & { notSent: ReadonlyMap<PersonKey, NotSent> };
+
 type PeopleRow = SqlRow & {
   uid: string;
   attendees: string;
   revision: number;
   reply: string | null;
 };
+
+type EmailRow = SqlRow & {
+  uid: string;
+  recipient: string;
+  calendar_id: string;
+  changed_by: string;
+  version: number;
+  state: string;
+  tries: number;
+  reason: string | null;
+  sent: string | null;
+  gone: string | null;
+};
+
+// What an email to someone about an event that's been deleted still needs.
+type GoneEvent = { organiser: EmailPlanOrganiser; series: DeliveredPart };
+
+// A claim that never finished is found by this wake-up, and only then, since one
+// object's alarm handlers never overlap.
+const SENDING_CHECK_MS = 60_000;
 
 // Dates removed from a copy here, which no later change from its organiser brings back.
 // Each is the day it was first on, so moving every date to a new time keeps it removed.
@@ -283,7 +319,24 @@ const inUids = "uid IN (SELECT value FROM json_each(?))";
 export function readPeople(
   db: SqlDriver,
   uids: readonly string[],
-): Map<string, People> {
+): Map<string, HeldPeople> {
+  const notSent = new Map<string, Map<PersonKey, NotSent>>();
+  for (const row of db
+    .exec<{ uid: string; recipient: string; state: string; reason: string }>(
+      `SELECT uid, recipient, state, reason FROM invitation_emails
+       WHERE state IN ('refused', 'unclear') AND ${inUids}`,
+      JSON.stringify(uids),
+    )
+    .toArray()) {
+    const forEvent = notSent.get(row.uid) ?? new Map();
+    notSent.set(row.uid, forEvent);
+    forEvent.set(
+      row.recipient as PersonKey,
+      row.state === "unclear"
+        ? { kind: "unclear" }
+        : { kind: "refused", reason: row.reason as NotSentReason },
+    );
+  }
   return new Map(
     db
       .exec<PeopleRow>(
@@ -297,6 +350,7 @@ export function readPeople(
           attendees: JSON.parse(row.attendees) as StoredAttendee[],
           revision: row.revision,
           reply: row.reply === null ? null : (JSON.parse(row.reply) as Reply),
+          notSent: notSent.get(row.uid) ?? new Map(),
         },
       ]),
   );
@@ -325,10 +379,17 @@ export function readRemovals(
   return removals;
 }
 
-const shownPeople = (people: People | undefined): Attendee[] =>
-  (people?.attendees ?? []).map(
-    ({ revision: _revision, ...attendee }) => attendee,
-  );
+const attendeeOf = ({ revision: _revision, ...attendee }: StoredAttendee) =>
+  attendee as Attendee;
+
+const deliveredPeople = (people: People): Attendee[] =>
+  people.attendees.map(attendeeOf);
+
+const shownPeople = (people: HeldPeople | undefined): Occurrence["people"] =>
+  (people?.attendees ?? []).map((attendee) => ({
+    ...attendeeOf(attendee),
+    notSent: people?.notSent.get(keyOfPerson(attendee)) ?? null,
+  }));
 
 const canEdit = (actor: Actor) => levelOfRole(actor.role) === "edit";
 
@@ -352,7 +413,7 @@ export const occurrenceOf = (
   event: StoredEvent,
   occurrenceId: OccurrenceId | null,
   time: EventTime,
-  people: People | undefined,
+  people: HeldPeople | undefined,
 ): Occurrence => ({
   uid: series.uid,
   occurrenceId,
@@ -374,43 +435,79 @@ export const occurrenceOf = (
 const sameTime = (a: EventTime, b: EventTime) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+// Colleagues only, since only they have a calendar here to deliver a copy to.
 const idsOf = (attendees: readonly StoredAttendee[]) =>
-  attendees.map((attendee) => attendee.userId);
+  attendees.flatMap((attendee) =>
+    attendee.kind === "colleague" ? [attendee.userId] : [],
+  );
+
+const keysOf = (attendees: readonly StoredAttendee[]) =>
+  attendees.map(keyOfPerson);
 
 const samePeople = (
   a: readonly StoredAttendee[],
   b: readonly StoredAttendee[],
-) =>
-  a.length === b.length &&
-  b.every((attendee) => a.some((held) => held.userId === attendee.userId));
+) => {
+  const held = new Set(keysOf(a));
+  return a.length === b.length && keysOf(b).every((key) => held.has(key));
+};
+
+type Planned =
+  | { status: "planned"; attendees: StoredAttendee[] }
+  | { status: "notInvitable" }
+  | OutsideRefused;
 
 // Who the dialog asked for, in its order. Someone already invited keeps their answer,
-// even if they've since been suspended. Anyone new must be someone the directory offers.
-// The organiser is never one of their own guests.
+// even if they've since been suspended. Anyone new must be someone the directory offers,
+// or an address while emails can go from the organiser's. The organiser is never one of
+// their own guests.
 function plannedPeople(
-  requested: readonly UserId[],
+  requested: readonly PersonToInvite[],
   held: readonly StoredAttendee[],
   invitable: readonly Invitee[],
   organiser: UserId,
-): StoredAttendee[] | null {
+  // Whether emails can go from the organiser's address, which only a new address needs.
+  outside: OutsideInviting,
+): Planned {
   const planned: StoredAttendee[] = [];
-  for (const userId of new Set(requested)) {
-    if (userId === organiser) continue;
-    const kept = held.find((attendee) => attendee.userId === userId);
-    const found = invitable.find((invitee) => invitee.userId === userId);
-    if (kept) planned.push(kept);
-    else if (found) {
+  const asked = new Map(
+    requested.map((person) => [keyOfPerson(person), person] as const),
+  );
+  for (const [key, person] of asked) {
+    if (person === organiser) continue;
+    const kept = held.find((attendee) => keyOfPerson(attendee) === key);
+    if (kept) {
+      planned.push(kept);
+      continue;
+    }
+    if (typeof person !== "string") {
+      if (outside !== "ready") {
+        return { status: "outsideNotAllowed", why: outside };
+      }
       planned.push({
-        kind: "colleague",
-        userId,
-        name: found.name,
+        kind: "outside",
+        email: person.email,
+        name: person.email,
         answer: "needsAnswer",
         revision: 0,
       });
-    } else return null;
+      continue;
+    }
+    const found = invitable.find((invitee) => invitee.userId === person);
+    if (!found) return { status: "notInvitable" };
+    planned.push({
+      kind: "colleague",
+      userId: person,
+      name: found.name,
+      answer: "needsAnswer",
+      revision: 0,
+    });
   }
   // Nothing changed, so the order they were first invited in stays.
-  return samePeople(held, planned) ? [...held] : planned;
+  return {
+    status: "planned",
+    attendees: samePeople(held, planned) ? [...held] : planned,
+  };
 }
 
 // The new half of a series that ends after a number of times takes the dates that are
@@ -598,6 +695,9 @@ export class EventStore {
   }
 
   // Everyone invited before or after a change, so someone taken off hears it's off.
+  // Colleagues get their copy and an email, and people outside an email. The email is
+  // written from the event as it is when it goes, like a copy, and goes from the
+  // organiser's address whoever made the change.
   #queueFor(
     uid: EventUid,
     before: readonly StoredAttendee[],
@@ -610,6 +710,42 @@ export class EventStore {
       [...idsOf(before), ...idsOf(after)],
       actor.calendarId,
       now,
+    );
+    for (const recipient of new Set([...keysOf(before), ...keysOf(after)])) {
+      this.db.exec(
+        `INSERT INTO invitation_emails (uid, recipient, calendar_id, changed_by, version,
+           state, tries, try_at)
+         VALUES (?, ?, ?, ?, 1, 'queued', 0, ?)
+         ON CONFLICT (uid, recipient) DO UPDATE SET version = version + 1,
+           state = 'queued', tries = 0, try_at = excluded.try_at, reason = NULL,
+           calendar_id = excluded.calendar_id, changed_by = excluded.changed_by`,
+        uid,
+        recipient,
+        actor.calendarId,
+        actor.userId,
+        now,
+      );
+    }
+  }
+
+  // Deleting an event takes its rows, so its cancellations keep what they need to say.
+  #keepForCancelling(uid: EventUid): void {
+    const series = this.#series(uid);
+    if (!series || series.organiser.kind !== "madeHere") return;
+    const gone: GoneEvent = {
+      organiser: {
+        userId: series.organiser.userId,
+        name: series.organiser.name,
+      },
+      series: {
+        ...deliveredPartOf(series),
+        sequence: this.#nextSequence(uid),
+      },
+    };
+    this.db.exec(
+      "UPDATE invitation_emails SET gone = ? WHERE uid = ?",
+      JSON.stringify(gone),
+      uid,
     );
   }
 
@@ -740,11 +876,19 @@ export class EventStore {
     organiserName: string,
     draft: EventDraft,
     invitable: readonly Invitee[],
+    outside: OutsideInviting,
     now: number,
   ): CreateResult {
     if (!canEdit(actor)) return { status: "noAccess" };
-    const attendees = plannedPeople(draft.people, [], invitable, actor.userId);
-    if (!attendees) return { status: "notInvitable" };
+    const planned = plannedPeople(
+      draft.people,
+      [],
+      invitable,
+      actor.userId,
+      outside,
+    );
+    if (planned.status !== "planned") return planned;
+    const { attendees } = planned;
     const uid = crypto.randomUUID() as EventUid;
     this.db.transaction(() => {
       this.#write(
@@ -781,6 +925,7 @@ export class EventStore {
     scope: ChangeScope,
     draft: EventDraft,
     invitable: readonly Invitee[],
+    outside: OutsideInviting,
     now: number,
   ): ChangeResult {
     if (!canEdit(actor)) return { status: "noAccess" };
@@ -791,13 +936,15 @@ export class EventStore {
     }
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
-    const after = plannedPeople(
+    const planned = plannedPeople(
       draft.people,
       before,
       invitable,
       series.organiser.userId,
+      outside,
     );
-    if (!after) return { status: "notInvitable" };
+    if (planned.status !== "planned") return planned;
+    const after = planned.attendees;
     const details: EventDetails = {
       title: draft.title,
       location: draft.location,
@@ -1041,6 +1188,7 @@ export class EventStore {
     this.db.transaction(() => {
       if (people && !people.reply) {
         this.#queueFor(uid, people.attendees, [], actor, now);
+        this.#keepForCancelling(uid);
       }
       this.db.exec(
         `INSERT INTO removed_events (uid, sequence, removed_at)
@@ -1085,7 +1233,9 @@ export class EventStore {
       this.#writePeople(uid, {
         ...held,
         attendees: held.attendees.map((attendee) =>
-          attendee.userId === actor.userId ? { ...attendee, answer } : attendee,
+          attendee.kind === "colleague" && attendee.userId === actor.userId
+            ? { ...attendee, answer }
+            : attendee,
         ),
         reply: given,
       });
@@ -1199,8 +1349,10 @@ export class EventStore {
           delivery.from,
           delivery.uid,
         );
-        const theirs = delivery.people.find(
-          (person) => person.userId === delivery.to,
+        const isReplier = (person: Attendee, replier: UserId) =>
+          person.kind === "colleague" && person.userId === replier;
+        const theirs = delivery.people.find((person) =>
+          isReplier(person, delivery.to),
         );
         // The organiser's record of this person's answer, unless the one given here hasn't
         // reached the organiser yet. So someone taken off and put back is asked again.
@@ -1214,7 +1366,7 @@ export class EventStore {
         this.#writePeople(uid, {
           attendees: delivery.people.map((person) => ({
             ...person,
-            answer: person.userId === reply.for ? reply.answer : person.answer,
+            answer: isReplier(person, reply.for) ? reply.answer : person.answer,
             revision: 0,
           })),
           revision: delivery.peopleRevision,
@@ -1285,7 +1437,8 @@ export class EventStore {
     const held = this.#people(notice.uid);
     if (!held || held.reply || !this.#series(notice.uid)) return;
     const attendee = held.attendees.find(
-      (person) => person.userId === notice.attendee,
+      (person) =>
+        person.kind === "colleague" && person.userId === notice.attendee,
     );
     if (!attendee || notice.revision <= attendee.revision) return;
     const attendees = held.attendees.map((person) =>
@@ -1343,7 +1496,10 @@ export class EventStore {
       series.organiser.kind !== "madeHere" ||
       !people ||
       people.reply ||
-      !people.attendees.some((attendee) => attendee.userId === userId)
+      !people.attendees.some(
+        (attendee) =>
+          attendee.kind === "colleague" && attendee.userId === userId,
+      )
     ) {
       const [removed] = this.#rows<{ sequence: number }>(
         "SELECT sequence FROM removed_events WHERE uid = ?",
@@ -1366,7 +1522,7 @@ export class EventStore {
         name: series.organiser.name,
       },
       parts: rows.map(deliveredPartOf),
-      people: shownPeople(people),
+      people: deliveredPeople(people),
       peopleRevision: people.revision,
     };
   }
@@ -1452,9 +1608,220 @@ export class EventStore {
       `SELECT min(next) AS next FROM (
          SELECT min(try_at) AS next FROM deliveries
          UNION ALL SELECT min(try_at) FROM answer_notices
+         UNION ALL SELECT min(try_at) FROM invitation_emails
        )`,
     );
     return row?.next ?? null;
+  }
+
+  dueEmails(now: number, limit: number): QueuedEmail[] {
+    return this.#rows<EmailRow>(
+      `SELECT * FROM invitation_emails WHERE try_at <= ? ORDER BY try_at LIMIT ?`,
+      now,
+      limit,
+    ).map((row) => ({
+      uid: row.uid as EventUid,
+      recipient: row.recipient as PersonKey,
+      calendarId: row.calendar_id as CalendarId,
+      changedBy: row.changed_by as UserId,
+      version: row.version,
+      state: row.state === "sending" ? "sending" : "queued",
+      tries: row.tries,
+      sent: row.sent as EmailMethod | null,
+    }));
+  }
+
+  // The event as it is now, for one person. Someone no longer invited is told it's off,
+  // and so is everyone once it's deleted, but only if anything reached them before.
+  emailFor(queued: QueuedEmail): EmailPlan {
+    const series = this.#series(queued.uid);
+    if (series && series.organiser.kind !== "madeHere")
+      return { method: "none" };
+    const people = series && this.#people(queued.uid);
+    const to = people?.attendees.find(
+      (attendee) => keyOfPerson(attendee) === queued.recipient,
+    );
+    if (series && people && !people.reply && to) {
+      const organiser = series.organiser as Extract<
+        Organiser,
+        { kind: "madeHere" }
+      >;
+      return {
+        method: "request",
+        uid: queued.uid,
+        organiser: { userId: organiser.userId, name: organiser.name },
+        parts: this.#rows<EventRow>(
+          "SELECT * FROM events WHERE uid = ? ORDER BY recurrence_id IS NOT NULL, recurrence_id",
+          queued.uid,
+        )
+          .map(parseRow)
+          .map(deliveredPartOf),
+        people: deliveredPeople(people),
+        to: attendeeOf(to),
+        first: queued.sent !== "request",
+      };
+    }
+    if (queued.sent === null) return { method: "none" };
+    if (series) {
+      const organiser = series.organiser as Extract<
+        Organiser,
+        { kind: "madeHere" }
+      >;
+      return {
+        method: "cancel",
+        uid: queued.uid,
+        organiser: { userId: organiser.userId, name: organiser.name },
+        series: deliveredPartOf(series),
+        to: queued.recipient,
+        why: "uninvited",
+      };
+    }
+    const [row] = this.#rows<{ gone: string | null }>(
+      "SELECT gone FROM invitation_emails WHERE uid = ? AND recipient = ?",
+      queued.uid,
+      queued.recipient,
+    );
+    if (!row?.gone) return { method: "none" };
+    const gone = JSON.parse(row.gone) as GoneEvent;
+    return {
+      method: "cancel",
+      uid: queued.uid,
+      organiser: gone.organiser,
+      series: gone.series,
+      to: queued.recipient,
+      why: "deleted",
+    };
+  }
+
+  // The record of intent, with what it says as what may have gone. Once this is on disk,
+  // a crash can only lead to unclear, never to a second send. False when a change got
+  // there first, which queued it again.
+  claimEmail(queued: QueuedEmail, method: EmailMethod, now: number): boolean {
+    return (
+      this.#rows(
+        `UPDATE invitation_emails SET state = 'sending', try_at = ?, sent = ?
+         WHERE uid = ? AND recipient = ? AND version = ? AND state = 'queued'
+         RETURNING 1`,
+        now + SENDING_CHECK_MS,
+        method,
+        queued.uid,
+        queued.recipient,
+        queued.version,
+      ).length > 0
+    );
+  }
+
+  // Each of these settles only the version it was about. A change made while it was on
+  // its way queued the newer one, which still goes.
+  #settleEmail(
+    queued: QueuedEmail,
+    state: "sent" | "refused" | "unclear",
+    reason: NotSentReason | null,
+    sent: EmailMethod | null,
+  ): void {
+    this.db.exec(
+      `UPDATE invitation_emails SET sent = ?,
+         state = CASE WHEN version = ? THEN ? ELSE state END,
+         reason = CASE WHEN version = ? THEN ? ELSE reason END,
+         try_at = CASE WHEN version = ? THEN NULL ELSE try_at END
+       WHERE uid = ? AND recipient = ?`,
+      sent,
+      queued.version,
+      state,
+      queued.version,
+      reason,
+      queued.version,
+      queued.uid,
+      queued.recipient,
+    );
+  }
+
+  emailWent(queued: QueuedEmail, method: EmailMethod): void {
+    this.#settleEmail(queued, "sent", null, method);
+  }
+
+  // It may have gone, so it's never sent again unless someone chooses Try again.
+  emailUnclear(queued: QueuedEmail, method: EmailMethod): void {
+    this.#settleEmail(queued, "unclear", null, method);
+  }
+
+  // Nothing went, so what reached them before is what still counts.
+  refuseEmail(queued: QueuedEmail, reason: NotSentReason): void {
+    this.#settleEmail(queued, "refused", reason, queued.sent);
+  }
+
+  refuseUnclaimedEmail(queued: QueuedEmail, reason: NotSentReason): void {
+    this.db.exec(
+      `UPDATE invitation_emails SET state = 'refused', reason = ?, try_at = NULL
+       WHERE uid = ? AND recipient = ? AND version = ? AND state = 'queued'`,
+      reason,
+      queued.uid,
+      queued.recipient,
+      queued.version,
+    );
+  }
+
+  // Nothing went, so what reached them before is what still counts.
+  postponeEmail(queued: QueuedEmail, tryAt: number): void {
+    this.db.exec(
+      `UPDATE invitation_emails SET sent = ?,
+         state = CASE WHEN version = ? THEN 'queued' ELSE state END,
+         tries = CASE WHEN version = ? THEN tries + 1 ELSE tries END,
+         try_at = CASE WHEN version = ? THEN ? ELSE try_at END
+       WHERE uid = ? AND recipient = ?`,
+      queued.sent,
+      queued.version,
+      queued.version,
+      queued.version,
+      tryAt,
+      queued.uid,
+      queued.recipient,
+    );
+  }
+
+  // Nothing to say, or nobody to say it to, as to a colleague with no mailbox.
+  dropEmail(queued: QueuedEmail): void {
+    this.db.exec(
+      "DELETE FROM invitation_emails WHERE uid = ? AND recipient = ? AND version = ?",
+      queued.uid,
+      queued.recipient,
+      queued.version,
+    );
+  }
+
+  // Only an email that didn't go, or may not have. One already on its way again, or
+  // gone since, is left as it is, so pressing it twice sends once. Whoever chose it must
+  // still be able to edit the calendar when it goes.
+  retryEmail(
+    actor: Actor,
+    uid: EventUid,
+    recipient: PersonKey,
+    now: number,
+  ): RetryResult {
+    if (!canEdit(actor)) return { status: "noAccess" };
+    const [row] = this.#rows<{ state: string }>(
+      "SELECT state FROM invitation_emails WHERE uid = ? AND recipient = ?",
+      uid,
+      recipient,
+    );
+    if (!row) return { status: "gone" };
+    this.db.exec(
+      `UPDATE invitation_emails SET state = 'queued', tries = 0, try_at = ?,
+         reason = NULL, changed_by = ?
+       WHERE uid = ? AND recipient = ? AND state IN ('refused', 'unclear')`,
+      now,
+      actor.userId,
+      uid,
+      recipient,
+    );
+    return { status: "done" };
+  }
+
+  organiserOf(uid: EventUid): UserId | null {
+    const series = this.#series(uid);
+    return series?.organiser.kind === "madeHere"
+      ? series.organiser.userId
+      : null;
   }
 
   // Each event goes in under the rule for invitations: a copy no newer than the one held
@@ -1608,7 +1975,8 @@ export class EventStore {
     this.db.transaction(() => {
       for (const row of invited) {
         const people = JSON.parse(row.attendees) as StoredAttendee[];
-        this.#queue(row.uid as EventUid, idsOf(people), actor.calendarId, now);
+        this.#queueFor(row.uid as EventUid, people, [], actor, now);
+        this.#keepForCancelling(row.uid as EventUid);
         this.db.exec(
           `INSERT INTO removed_events (uid, sequence, removed_at)
            SELECT uid, max(sequence), ? FROM events WHERE uid = ? GROUP BY uid

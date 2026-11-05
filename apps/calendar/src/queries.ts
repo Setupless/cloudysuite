@@ -4,11 +4,12 @@ import {
   QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
-import type { CalendarId } from "@cloudysuite/access";
+import type { CalendarId, UserId } from "@cloudysuite/access";
 import {
   countCalendarEvents,
   getCalendars,
   getMembers,
+  getOutsideInviting,
   getPeopleChoices,
   listEvents,
   listInvitations,
@@ -118,6 +119,14 @@ export const peopleChoicesQuery = () =>
   queryOptions({
     queryKey: calendarKeys.people,
     queryFn: () => call(() => getPeopleChoices()),
+  });
+
+// Asked each time the dialog opens, since Mail can be turned off at any time.
+export const outsideInvitingQuery = (organiser: UserId) =>
+  queryOptions({
+    queryKey: ["calendar", "outsideInviting", organiser] as const,
+    queryFn: () => call(() => getOutsideInviting({ data: { organiser } })),
+    staleTime: 0,
   });
 const UTC = "UTC" as TimeZone;
 
