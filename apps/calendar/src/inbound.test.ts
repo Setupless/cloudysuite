@@ -423,6 +423,50 @@ test("Spam, a shared mailbox, an import, and mail while Calendar is off add noth
   expect(folderOf(mailboxes.boss, "archive")).toHaveLength(1);
 });
 
+test("a forged invitation that arrives first doesn't keep the real one out", async () => {
+  // Someone else invited knows the UID, and sends an invitation of their own with it.
+  await arrive(
+    google(
+      { organiser: MALLORY, title: "Moved to my place", sequence: 9 },
+      { from: MALLORY },
+    ),
+  );
+  // Or names the real organiser, which only the organiser's own mail can prove.
+  await arrive(
+    google(
+      { title: "Called off, ignore Dana", sequence: 9 },
+      { from: MALLORY },
+    ),
+  );
+  await arrive(google());
+
+  const shown = await schedule();
+  expect(
+    shown
+      .map((one) => [
+        one.title,
+        one.organiser.kind === "outside" && one.organiser.email,
+      ])
+      .sort(),
+  ).toEqual([
+    ["Moved to my place", MALLORY],
+    ["Supplier review", DANA],
+  ]);
+  // Answering the real one tells its organiser, under the UID they sent.
+  const real = shown.find((one) => one.title === "Supplier review");
+  await as().answerInvitation({
+    data: { calendarId: await personalOf(), uid: real!.uid, answer: "yes" },
+  });
+  await calendars.settle();
+  expect(email.sent.map((one) => one.to)).toEqual([DANA]);
+  const reading = readCalendarFile(
+    partOfType(readEmail(email.sent[0]!.raw), "text/calendar").body,
+    SYDNEY,
+  );
+  if (reading.status !== "read") throw new Error(reading.status);
+  expect(reading.events[0]?.uid).toBe(GOOGLE_INVITE_UID as EventUid);
+});
+
 test("a removed invitation stays removed when its organiser changes it", async () => {
   await arrive(google());
   await as().deleteEvent({
