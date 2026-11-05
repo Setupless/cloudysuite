@@ -135,6 +135,14 @@ test("a source with no meeting link passes to the next one", () => {
   ).toEqual({ service: "Microsoft Teams", url: TEAMS, from: "notes" });
 });
 
+test("a cancelled event or date offers no Join", () => {
+  const all = { conference: MEET, location: ZOOM, notes: TEAMS };
+  expect(meetingLink({ ...all, cancelled: true })).toBeNull();
+  expect(meetingLink({ ...all, cancelled: false })?.service).toBe(
+    "Google Meet",
+  );
+});
+
 test("the first meeting link in a field wins", () => {
   expect(
     meetingLink({
