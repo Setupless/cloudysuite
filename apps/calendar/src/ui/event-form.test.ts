@@ -6,9 +6,8 @@ import {
   LONDON,
   SYDNEY,
 } from "../test-support";
-import type { CalendarEntry, Occurrence, OccurrenceId } from "../types";
+import type { Occurrence, OccurrenceId } from "../types";
 import {
-  controlsFor,
   draftOf,
   type EventForm,
   formOf,
@@ -41,7 +40,7 @@ function drafted(filled: EventForm) {
 // Saves through the real Calendar object, then reads the event back the way Edit does.
 async function savedAndOpened(filled: EventForm): Promise<Occurrence> {
   const alice = await kit.as(ALICE);
-  const result = await alice.create("Alice Stone", drafted(filled));
+  const result = await alice.create("Alice Stone", drafted(filled), []);
   if (result.status !== "created") throw new Error("expected an event");
   const { occurrences } = await alice.listRange({
     from: date("2026-11-01"),
@@ -250,18 +249,23 @@ test("moving the start keeps the event's length", () => {
 
 test("an event from another time zone keeps its zone, and shows on the device's clock", async () => {
   const alice = await kit.as(ALICE);
-  await alice.create("Alice Stone", {
-    title: "London sync",
-    location: "",
-    notes: "",
-    time: {
-      kind: "timed",
-      start: Date.parse("2026-11-05T09:00:00Z"),
-      end: Date.parse("2026-11-05T10:00:00Z"),
-      timeZone: LONDON,
+  await alice.create(
+    "Alice Stone",
+    {
+      title: "London sync",
+      location: "",
+      notes: "",
+      time: {
+        kind: "timed",
+        start: Date.parse("2026-11-05T09:00:00Z"),
+        end: Date.parse("2026-11-05T10:00:00Z"),
+        timeZone: LONDON,
+      },
+      repeat: { frequency: "weekly", end: { kind: "never" } },
+      people: [],
     },
-    repeat: { frequency: "weekly", end: { kind: "never" } },
-  });
+    [],
+  );
   const [seen] = (
     await alice.listRange({
       from: date("2026-11-05"),
@@ -296,12 +300,4 @@ test("the scope question asks only for a repeat, and not about one date when the
     "all",
   ]);
   expect(scopesFor(series, null)).toEqual(["this", "thisAndLater", "all"]);
-});
-
-test("Edit and Delete show only for events the person can change", () => {
-  const editor = { role: "editor" } satisfies Pick<CalendarEntry, "role">;
-  const viewer = { role: "viewer" } satisfies Pick<CalendarEntry, "role">;
-  expect(controlsFor({ changeable: true }, editor)).toBe("editAndDelete");
-  expect(controlsFor({ changeable: false }, editor)).toBe("removeOnly");
-  expect(controlsFor({ changeable: false }, viewer)).toBe("none");
 });

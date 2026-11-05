@@ -181,6 +181,9 @@ test("a hidden calendar's events are left out of Today", () => {
     notes: "",
     organiser: { kind: "madeHere", userId: "u1" as UserId, name: "Sam Rivera" },
     changeable: true,
+    people: [],
+    answer: null,
+    cancelled: false,
   });
   const events = shownEvents(
     {

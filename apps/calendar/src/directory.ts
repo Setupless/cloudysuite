@@ -1,6 +1,7 @@
 import {
   type CalendarId,
   type CalendarRole,
+  ensurePersonalCalendar,
   isBanned,
   PERSONAL_CALENDAR_COLOUR,
   TEAM_CALENDAR_COLOURS,
@@ -9,9 +10,62 @@ import {
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { calendarAccess, calendars, user } from "../../../src/db/schema";
-import type { CalendarEntry, Member } from "./types";
+import {
+  type CalendarEntry,
+  type Invitee,
+  MAX_PERSON_NAME_LENGTH,
+  type Member,
+} from "./types";
 
 export type TeamChange = "done" | "lastManager" | "notOnIt";
+
+// Out of the people asked for, those who can be invited now. Someone suspended can't
+// open anything, so they aren't invited, and someone removed has no row.
+export async function readInvitable(
+  database: D1Database,
+  people: readonly UserId[],
+): Promise<Invitee[]> {
+  if (people.length === 0) return [];
+  const rows = await drizzle(database)
+    .select({
+      id: user.id,
+      name: user.name,
+      banned: user.banned,
+      banExpires: user.banExpires,
+    })
+    .from(user)
+    .where(inArray(user.id, [...people]));
+  return rows
+    .filter((row) => !isBanned(row))
+    .map((row) => ({
+      userId: row.id,
+      name: row.name.slice(0, MAX_PERSON_NAME_LENGTH),
+    }));
+}
+
+export async function findPersonalCalendar(
+  database: D1Database,
+  userId: UserId,
+): Promise<CalendarId | null> {
+  const [row] = await drizzle(database)
+    .select({ id: calendars.id })
+    .from(calendars)
+    .where(and(eq(calendars.ownerId, userId), eq(calendars.kind, "personal")));
+  return row?.id ?? null;
+}
+
+// The first invitation that reaches someone counts as first use. Someone removed from the
+// organisation gets null, because their calendar has been handed over.
+export async function makePersonalCalendar(
+  database: D1Database,
+  userId: UserId,
+): Promise<CalendarId | null> {
+  const [person] = await drizzle(database)
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.id, userId));
+  return person ? ensurePersonalCalendar(database, userId) : null;
+}
 
 // Every calendar this person is on. Their personal calendar is always first, even before
 // it is made, because looking at Calendar changes nothing.

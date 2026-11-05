@@ -21,6 +21,8 @@ import {
   type EventUid,
   IMPORT_TOO_LARGE_MESSAGE,
   MAX_IMPORT_BYTES,
+  GIVEN_ANSWERS,
+  MAX_INVITED,
   MAX_LOCATION_LENGTH,
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
@@ -277,12 +279,17 @@ function parseDraft(raw: unknown): EventDraft {
     );
   }
   const time = parseTime(input.time);
+  const { people } = input;
+  if (!Array.isArray(people) || people.length > MAX_INVITED) {
+    throw badRequest();
+  }
   return {
     title,
     location: text(input.location, MAX_LOCATION_LENGTH).trim(),
     notes: text(input.notes, MAX_NOTES_LENGTH),
     time,
     repeat: parseRepeat(input.repeat, time),
+    people: [...new Set(people.map(requireUserId))],
   };
 }
 
@@ -323,3 +330,23 @@ export const parseEventRemovalInput = (raw: unknown) => ({
   target: parseTarget(record(raw).target),
   scope: parseScope(record(raw).scope),
 });
+
+export function parseAnswerInput(raw: unknown) {
+  const answer = GIVEN_ANSWERS.find((name) => name === record(raw).answer);
+  if (!answer) throw badRequest();
+  return {
+    ...parseCalendarInput(raw),
+    uid: parseTarget({ uid: record(raw).uid, occurrenceId: null }).uid,
+    answer,
+  };
+}
+
+export function parseInvitationsInput(raw: unknown) {
+  const { timeZone } = record(raw);
+  const zone =
+    typeof timeZone === "string" && timeZone.length <= MAX_TIME_ZONE_LENGTH
+      ? parseTimeZone(timeZone)
+      : null;
+  if (!zone) throw badRequest();
+  return { timeZone: zone };
+}

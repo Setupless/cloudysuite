@@ -51,15 +51,47 @@ export type Organiser =
   // edit here may change it. The name is kept because removing a person deletes their
   // user row. It's null on events made before names were kept.
   | { kind: "madeHere"; userId: UserId; name: string | null }
-  // A copy of an event organised somewhere else. It can be answered or removed.
+  // A copy of an event a colleague organised on another calendar here, which an answer
+  // goes straight to. It can be answered or removed. The copy has a UID of its own here,
+  // and this is the calendar that holds the event and the event's UID there.
+  | {
+      kind: "colleague";
+      userId: UserId;
+      name: string | null;
+      calendarId: CalendarId;
+      uid: EventUid;
+    }
+  // A copy of an event organised outside. It can be answered or removed.
   | { kind: "invitation"; email: string; name: string | null };
+
+export const ANSWERS = ["needsAnswer", "yes", "maybe", "no"] as const;
+export type Answer = (typeof ANSWERS)[number];
+export type GivenAnswer = Exclude<Answer, "needsAnswer">;
+export const GIVEN_ANSWERS = [
+  "yes",
+  "maybe",
+  "no",
+] as const satisfies readonly GivenAnswer[];
+
+// Someone invited. The kind leaves room for people outside, invited by address.
+export type Attendee = {
+  kind: "colleague";
+  userId: UserId;
+  name: string;
+  answer: Answer;
+};
+
+// Someone the directory says can be invited now, with the name it holds for them.
+export type Invitee = { userId: UserId; name: string };
 
 export type EventDetails = { title: string; location: string; notes: string };
 
-// What the dialog sends. A change to one date ignores the repeat.
+// What the dialog sends. A change to one date ignores the repeat, and can't change who's
+// invited, because every date of a repeat has the same people.
 export type EventDraft = EventDetails & {
   time: EventTime;
   repeat: Repeat | null;
+  people: UserId[];
 };
 
 export type Occurrence = EventDetails & {
@@ -71,6 +103,12 @@ export type Occurrence = EventDetails & {
   organiser: Organiser;
   // Decided by the same rule that refuses a change, so a button can match it.
   changeable: boolean;
+  // Everyone invited, in the order they were added.
+  people: Attendee[];
+  // The viewer's own answer, on a copy of an invitation sent to them, and null otherwise.
+  answer: Answer | null;
+  // The organiser called off this date, or the whole event.
+  cancelled: boolean;
 };
 
 // Whole days on the viewer's own calendar. `to` is the day after the last day shown.
@@ -89,13 +127,19 @@ export const MAX_TITLE_LENGTH = 500;
 export const MAX_LOCATION_LENGTH = 1000;
 export const MAX_NOTES_LENGTH = 10_000;
 export const MAX_REPEAT_TIMES = 999;
+// A name kept on an event, the organiser's or an invited person's.
+export const MAX_PERSON_NAME_LENGTH = 100;
+export const MAX_INVITED = 100;
 
 export type ChangeScope = "this" | "thisAndLater" | "all";
 
 export type EventTarget = { uid: EventUid; occurrenceId: OccurrenceId | null };
 
 export type CreateResult =
-  { status: "created"; uid: EventUid } | { status: "noAccess" };
+  | { status: "created"; uid: EventUid }
+  | { status: "noAccess" }
+  // Someone asked for can't be invited, because they were removed or suspended.
+  | { status: "notInvitable" };
 
 export type ChangeResult =
   | { status: "done" }
@@ -103,7 +147,13 @@ export type ChangeResult =
   | { status: "noAccess" }
   // Organised somewhere else, or a repeat from outside, which can only be removed.
   | { status: "readOnly" }
-  | { status: "gone" };
+  | { status: "gone" }
+  | { status: "notInvitable" }
+  // Who's invited changes from a date onwards, or for every date, never for one.
+  | { status: "peopleForOneDate" };
+
+// Gone also covers a copy that isn't this person's to answer.
+export type AnswerResult = { status: "done" } | { status: "gone" };
 
 export type EraseResult = { status: "done" } | { status: "noAccess" };
 
@@ -241,6 +291,8 @@ export const ONLY_MANAGERS_MESSAGE =
 export const LAST_MANAGER_MESSAGE =
   "A team calendar needs at least one manager. Make someone else a manager first.";
 export const NOT_ON_IT_MESSAGE = "That person isn't on this calendar.";
+export const PEOPLE_FOR_ONE_DATE_MESSAGE =
+  "Who's invited can't change for only one date. Choose This and later ones, or All of them.";
 export const NOT_A_PERSON_MESSAGE =
   "One of those people can't be added. They may have been removed or suspended.";
 export const PERSONAL_CALENDAR_MESSAGE =

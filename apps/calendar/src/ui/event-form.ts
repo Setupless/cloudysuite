@@ -1,4 +1,4 @@
-import { levelOfRole } from "@cloudysuite/access";
+import { type CalendarId, levelOfRole, type UserId } from "@cloudysuite/access";
 import {
   addDays,
   dateOfWall,
@@ -10,9 +10,11 @@ import {
 } from "../time";
 import {
   type CalendarEntry,
+  type CalendarOccurrence,
   type ChangeScope,
   type CivilDate,
   type EventDraft,
+  type EventTarget,
   type EventTime,
   MAX_REPEAT_TIMES,
   type Occurrence,
@@ -51,7 +53,11 @@ export type EventForm = {
   notes: string;
   // The event's own time zone, which a repeat keeps to. A new event takes the device's.
   timeZone: TimeZone;
+  // Who's invited, in the order they were added.
+  people: Guest[];
 };
+
+export type Guest = { userId: UserId; name: string };
 
 export type FormField = keyof EventForm;
 
@@ -59,9 +65,18 @@ export type CheckedForm =
   | { ok: true; draft: EventDraft }
   | { ok: false; field: FormField; message: string };
 
-// What the card and panel offer for an event. An invitation copy, or a repeat from
-// outside, can't be changed, but whoever can edit the calendar can still remove it.
-export type EventControls = "editAndDelete" | "removeOnly" | "none";
+// The calendar and event that a button on the card or panel acts on.
+export type EventPlace = {
+  calendarId: CalendarId;
+  calendar: CalendarEntry;
+  target: EventTarget;
+};
+
+export type EventAction =
+  | { kind: "edit"; place: EventPlace }
+  | { kind: "delete"; place: EventPlace }
+  // Takes the event off its own calendar only.
+  | { kind: "remove"; place: EventPlace };
 
 export const SCOPE_LABELS: Record<ChangeScope, string> = {
   this: "Only this one",
@@ -131,6 +146,7 @@ export function newForm(start: FormStart, zone: TimeZone): EventForm {
     location: "",
     notes: "",
     timeZone: zone,
+    people: [],
   };
 }
 
@@ -153,6 +169,7 @@ export function formOf(event: Occurrence, zone: TimeZone): EventForm {
     ...repeatFields(event.repeat),
     location: event.location,
     notes: event.notes,
+    people: event.people.map(({ userId, name }) => ({ userId, name })),
   };
   if (time.kind === "allDay") {
     return {
@@ -285,6 +302,7 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
       notes: form.notes,
       time: timed.time,
       repeat: repeated.repeat,
+      people: form.people.map((guest) => guest.userId),
     },
   };
 }
@@ -292,26 +310,81 @@ export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {
 const sameRepeat = (a: Occurrence["repeat"], b: Repeat | null) =>
   JSON.stringify(repeatFields(a)) === JSON.stringify(repeatFields(b));
 
+const samePeople = (event: Occurrence, draft: EventDraft) =>
+  event.people.length === draft.people.length &&
+  event.people.every((person) => draft.people.includes(person.userId));
+
 // Null when there is nothing to ask, because the event doesn't repeat. "Only this one"
-// leaves the repeat as it was, so it isn't offered when the repeat changed.
+// leaves the repeat and the people as they were, so it isn't offered when either changed.
 export function scopesFor(
   event: Occurrence,
   draft: EventDraft | null,
 ): ChangeScope[] | null {
   if (event.occurrenceId === null) return null;
-  if (draft && !sameRepeat(event.repeat, draft.repeat)) {
+  if (
+    draft &&
+    (!sameRepeat(event.repeat, draft.repeat) || !samePeople(event, draft))
+  ) {
     return ["thisAndLater", "all"];
   }
   return ["this", "thisAndLater", "all"];
 }
 
-export function controlsFor(
-  event: Pick<Occurrence, "changeable">,
-  calendar: Pick<CalendarEntry, "role">,
-): EventControls {
-  if (event.changeable) return "editAndDelete";
-  return levelOfRole(calendar.role) === "edit" ? "removeOnly" : "none";
-}
-
 export const writableCalendars = (calendars: CalendarEntry[]) =>
   calendars.filter((entry) => levelOfRole(entry.role) === "edit");
+
+const changing = (place: EventPlace): EventAction[] => [
+  { kind: "edit", place },
+  { kind: "delete", place },
+];
+
+type ShownOccurrence = CalendarOccurrence & { calendar: CalendarEntry };
+
+// The event a colleague's copy follows, when the person can edit the calendar that
+// holds it. A custom repeat can't be changed there either, and a called-off date is
+// already gone from it.
+function sourceOf(
+  event: ShownOccurrence,
+  calendars: CalendarEntry[],
+): EventPlace | null {
+  const { organiser } = event;
+  if (
+    organiser.kind !== "colleague" ||
+    event.cancelled ||
+    event.repeat?.frequency === "custom"
+  ) {
+    return null;
+  }
+  const calendar = writableCalendars(calendars).find(
+    (entry) => entry.id === organiser.calendarId,
+  );
+  return calendar
+    ? {
+        calendarId: organiser.calendarId,
+        calendar,
+        target: { uid: organiser.uid, occurrenceId: event.occurrenceId },
+      }
+    : null;
+}
+
+// An invitation copy, or a repeat from outside, can't be changed, but whoever can edit
+// its calendar can remove it. A copy's Edit and Delete change the event it follows, and
+// the server checks access to that calendar again.
+export function actionsFor(
+  event: ShownOccurrence,
+  calendars: CalendarEntry[],
+): EventAction[] {
+  const own: EventPlace = {
+    calendarId: event.calendarId,
+    calendar: event.calendar,
+    target: { uid: event.uid, occurrenceId: event.occurrenceId },
+  };
+  if (event.changeable) return changing(own);
+  const source = sourceOf(event, calendars);
+  return [
+    ...(source ? changing(source) : []),
+    ...(levelOfRole(event.calendar.role) === "edit"
+      ? [{ kind: "remove" as const, place: own }]
+      : []),
+  ];
+}

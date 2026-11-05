@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconClock,
   IconMapPin,
+  IconUsers,
 } from "@tabler/icons-react";
 import {
   type DehydratedState,
@@ -12,14 +13,23 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { calendarsQuery, eventsQuery } from "../queries";
-import { searchOf, todayIn } from "../schedule";
+import { calendarsQuery, eventsQuery, invitationsQuery } from "../queries";
+import { keyOf, searchOf, todayIn } from "../schedule";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
 import { dayNumber, dayTitle, timeText, weekdayShort } from "./event-text";
+import { AnswerButtons } from "./invitation-parts";
 import { JoinButton, meetingOf } from "./join-button";
+import { useMe } from "./me";
+import { comingLine, peopleSummary } from "./people-text";
+import { daySpanOf } from "./schedule-layout";
 import { deviceZone } from "./schedule-screen";
-import { type ShownEvent, shownEvents, spokenLabel } from "./shown-event";
+import {
+  type ShownEvent,
+  shownEvents,
+  spokenLabel,
+  whenOf,
+} from "./shown-event";
 import {
   type HoursOnDay,
   type NextEvent,
@@ -107,6 +117,7 @@ function NextCard({
   zone: TimeZone;
   now: number;
 }) {
+  const me = useMe();
   if (next.kind === "none") {
     return (
       <div className="flex flex-col justify-center rounded border border-line p-3.5 text-secondary">
@@ -121,6 +132,7 @@ function NextCard({
       ? `Next, ${untilText(next.start, now)}`
       : `Nothing else today. Next, tomorrow at ${timeText(next.start)}`;
   const meeting = meetingOf(event);
+  const coming = comingLine(event.people, me);
   // The event link covers the whole card, and Join sits above it, because one link
   // can't hold another.
   return (
@@ -130,7 +142,9 @@ function NextCard({
       <EventLink
         event={event}
         day={day}
-        label={`${heading}. ${spokenLabel(event, zone, plan.today)}`}
+        label={[heading, spokenLabel(event, zone, plan.today), coming]
+          .filter(Boolean)
+          .join(". ")}
         className="flex min-w-0 flex-col gap-2.5 outline-none after:absolute after:-inset-px after:rounded after:outline-accent focus-visible:after:outline-2"
       >
         <span className="text-xs font-semibold text-accent">{heading}</span>
@@ -161,9 +175,109 @@ function NextCard({
             <span className="truncate">{event.calendar.name}</span>
           </span>
         </span>
+        {coming && (
+          <span className="flex min-w-0 items-start gap-1.5 text-[13px] text-secondary">
+            <IconUsers
+              size={15}
+              stroke={1.75}
+              className="mt-px flex-none"
+              aria-hidden
+            />
+            <span className="min-w-0">{coming}</span>
+          </span>
+        )}
       </EventLink>
       {meeting && <JoinButton link={meeting} />}
     </div>
+  );
+}
+
+function InvitationRow({
+  event,
+  zone,
+  today,
+}: {
+  event: ShownEvent;
+  zone: TimeZone;
+  today: CivilDate;
+}) {
+  const { days, hours } = whenOf(event, zone, today);
+  const summary = peopleSummary(event, useMe());
+  // Schedule leaves a hidden calendar out, so there'd be nothing to open there.
+  const opens = !event.calendar.hidden;
+  const details = (
+    <>
+      <span
+        className={`truncate font-semibold ${opens ? "hover:underline" : ""}`}
+      >
+        {event.title}
+      </span>
+      <span className="text-[13px] text-secondary">
+        {hours ? `${days}, ${hours}` : days}
+      </span>
+      {summary && <span className="text-[13px] text-secondary">{summary}</span>}
+    </>
+  );
+  const shape = "flex min-w-0 flex-1 flex-col gap-0.5 text-sm";
+  return (
+    <li className="flex flex-col gap-2 border-b border-line px-1 py-2.5 sm:flex-row sm:items-center">
+      {opens ? (
+        <EventLink
+          event={event}
+          day={daySpanOf(event.time, zone).first}
+          label={`${spokenLabel(event, zone, today)}. ${summary ?? ""}`}
+          className={`${shape} rounded ${FOCUS}`}
+        >
+          {details}
+        </EventLink>
+      ) : (
+        <div className={shape}>{details}</div>
+      )}
+      <AnswerButtons event={event} />
+    </li>
+  );
+}
+
+// Unanswered copies in the person's own calendar, even when they've hidden it, so an
+// invitation can't be missed.
+function Invitations({ zone, today }: { zone: TimeZone; today: CivilDate }) {
+  const calendars = useQuery(calendarsQuery());
+  const invitations = useQuery(invitationsQuery(zone));
+  const personal = calendars.data?.[0];
+  const events: ShownEvent[] = (invitations.data ?? []).flatMap((occurrence) =>
+    personal?.id === occurrence.calendarId
+      ? [{ ...occurrence, key: keyOf(occurrence), calendar: personal }]
+      : [],
+  );
+  return (
+    <section className="min-w-0">
+      <h2 className={SECTION}>
+        Invitations
+        {events.length > 0 && (
+          <span className="text-[13px] font-normal text-secondary">
+            {events.length} waiting for an answer
+          </span>
+        )}
+      </h2>
+      {invitations.error && (
+        <Notice tone="danger">{invitations.error.message}</Notice>
+      )}
+      <ul>
+        {events.map((event) => (
+          <InvitationRow
+            key={event.key}
+            event={event}
+            zone={zone}
+            today={today}
+          />
+        ))}
+      </ul>
+      {invitations.isSuccess && events.length === 0 && (
+        <p className="px-1 py-3 text-sm text-secondary">
+          Nothing waiting for an answer.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -408,8 +522,13 @@ function LiveToday() {
   const window = useMemo(() => todayWindow(today), [today]);
   const calendars = useQuery(calendarsQuery());
   const listing = useQuery(eventsQuery(window));
+  // An event called off, or one the person said No to, isn't part of their day. Schedule
+  // still shows both, struck through.
   const events = useMemo(
-    () => shownEvents(listing.data, calendars.data),
+    () =>
+      shownEvents(listing.data, calendars.data).filter(
+        (event) => !event.cancelled && event.answer !== "no",
+      ),
     [listing.data, calendars.data],
   );
   const plan = useMemo(
@@ -446,6 +565,8 @@ function LiveToday() {
             </div>
           </>
         )}
+        {/* It loads on its own, so invitations still show when the events can't. */}
+        {(ready || failure) && <Invitations zone={zone} today={today} />}
       </div>
     </>
   );

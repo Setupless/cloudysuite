@@ -11,6 +11,7 @@ import {
   draft,
   LONDON,
   SYDNEY,
+  TEAM,
 } from "./test-support";
 import type {
   EventTime,
@@ -75,7 +76,7 @@ const shown = (occurrences: Occurrence[]) =>
 async function created(time: EventTime, more: Parameters<typeof draft>[1]) {
   const result = await (
     await kit.as(ALICE)
-  ).create("Alice Stone", draft(time, more));
+  ).create("Alice Stone", draft(time, more), []);
   if (result.status !== "created") throw new Error("expected an event");
   return result.uid;
 }
@@ -101,8 +102,10 @@ test("Can view sees a calendar's events but can't add, change, or remove one", a
     timed("2026-11-05T13:00:00+11:00", "2026-11-05T14:00:00+11:00"),
   );
   const target = { uid, occurrenceId: null };
-  expect(await bob.create("Bob Lee", change)).toEqual({ status: "noAccess" });
-  expect(await bob.update(target, "all", change)).toEqual({
+  expect(await bob.create("Bob Lee", change, [])).toEqual({
+    status: "noAccess",
+  });
+  expect(await bob.update(target, "all", change, [])).toEqual({
     status: "noAccess",
   });
   expect(await bob.remove(target, "all")).toEqual({ status: "noAccess" });
@@ -153,6 +156,7 @@ test("Can edit changes an event someone else made on the team calendar", async (
       draft(timed("2026-11-05T15:00:00+11:00", "2026-11-05T16:00:00+11:00"), {
         title: "Moved by Bob",
       }),
+      [],
     ),
   ).toEqual({ status: "done" });
   expect(shown((await listed("2026-11-05", "2026-11-06")).occurrences)).toEqual(
@@ -318,6 +322,7 @@ test("changing only this one moves one date and leaves the rest", async () => {
       draft(timed("2026-11-10T14:00:00+11:00", "2026-11-10T14:30:00+11:00"), {
         title: "Moved standup",
       }),
+      [],
     ),
   ).toEqual({ status: "done" });
 
@@ -345,6 +350,7 @@ test("this and later ones splits the series, and each half then changes alone", 
         title: "Planning",
         repeat: weekly(),
       }),
+      [],
     ),
   ).toEqual({ status: "done" });
 
@@ -370,6 +376,7 @@ test("this and later ones splits the series, and each half then changes alone", 
         title: "Standup",
         repeat: first?.repeat as Repeat,
       }),
+      [],
     ),
   ).toEqual({ status: "done" });
   expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
@@ -397,6 +404,7 @@ test("splitting a series that ends after ten times keeps ten dates in all", asyn
       title: "Later",
       repeat: weekly({ kind: "afterTimes", times: 10 }),
     }),
+    [],
   );
   const { occurrences } = await listed("2026-11-01", "2027-06-01");
   expect(occurrences.map((occurrence) => occurrence.title)).toEqual([
@@ -406,6 +414,53 @@ test("splitting a series that ends after ten times keeps ten dates in all", asyn
   expect(occurrences.at(-1)?.repeat).toEqual(
     weekly({ kind: "afterTimes", times: 7 }),
   );
+});
+
+test("this and later ones from the first date changes the whole series, and leaves no empty one", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+    { repeat: weekly({ kind: "afterTimes", times: 4 }) },
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261101T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-02T10:00:00+11:00", "2026-11-02T10:15:00+11:00"), {
+        title: "Later",
+        repeat: weekly({ kind: "afterTimes", times: 4 }),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
+    [
+      ["Later", "2026-11-02 10:00"],
+      ["Later", "2026-11-09 10:00"],
+      ["Later", "2026-11-16 10:00"],
+      ["Later", "2026-11-23 10:00"],
+    ],
+  );
+  expect(await alice.countEvents()).toBe(1);
+});
+
+test("removing this and later ones from the first date removes the event, and keeps its record", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+    { repeat: weekly() },
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.remove(
+      { uid, occurrenceId: "20261101T220000Z" as OccurrenceId },
+      "thisAndLater",
+    ),
+  ).toEqual({ status: "done" });
+  expect((await listed("2026-11-01", "2026-12-01")).occurrences).toEqual([]);
+  expect(await alice.countEvents()).toBe(0);
+  expect(
+    kit.sqlite().query("SELECT uid, sequence FROM removed_events").all(),
+  ).toEqual([{ uid, sequence: 0 }]);
 });
 
 test("removing one date, then later dates, then the rest", async () => {
@@ -445,8 +500,8 @@ test("deleting an event keeps its UID and sequence, so the same copy can't come 
   const later = draft(
     timed("2026-11-05T13:00:00+11:00", "2026-11-05T14:00:00+11:00"),
   );
-  await alice.update({ uid, occurrenceId: null }, "all", later);
-  await alice.update({ uid, occurrenceId: null }, "all", later);
+  await alice.update({ uid, occurrenceId: null }, "all", later, []);
+  await alice.update({ uid, occurrenceId: null }, "all", later, []);
   expect(await alice.remove({ uid, occurrenceId: null }, "all")).toEqual({
     status: "done",
   });
@@ -455,9 +510,9 @@ test("deleting an event keeps its UID and sequence, so the same copy can't come 
   expect(
     kit.sqlite().query("SELECT uid, sequence FROM removed_events").all(),
   ).toEqual([{ uid, sequence: 2 }]);
-  expect(await alice.update({ uid, occurrenceId: null }, "all", later)).toEqual(
-    { status: "gone" },
-  );
+  expect(
+    await alice.update({ uid, occurrenceId: null }, "all", later, []),
+  ).toEqual({ status: "gone" });
 });
 
 test("an invitation from someone else can be removed but not changed", async () => {
@@ -476,7 +531,7 @@ test("an invitation from someone else can be removed but not changed", async () 
 
   const target = { uid: seen!.uid, occurrenceId: null };
   expect(
-    await alice.update(target, "all", draft(seen!.time, { title: "Mine" })),
+    await alice.update(target, "all", draft(seen!.time, { title: "Mine" }), []),
   ).toEqual({ status: "readOnly" });
   expect(await alice.remove(target, "all")).toEqual({ status: "done" });
   expect((await listed("2026-11-10", "2026-11-11")).occurrences).toEqual([]);
@@ -505,7 +560,7 @@ test("a repeat from outside keeps its own dates, and can only be removed", async
   expect(first?.changeable).toBe(false);
 
   const target = { uid: first!.uid, occurrenceId: second!.occurrenceId };
-  expect(await alice.update(target, "this", draft(second!.time))).toEqual({
+  expect(await alice.update(target, "this", draft(second!.time), [])).toEqual({
     status: "readOnly",
   });
   expect(await alice.remove(target, "thisAndLater")).toEqual({
@@ -536,7 +591,7 @@ test("an event made before names were kept still shows, and can still be changed
   applyMigrations(db, MIGRATIONS);
 
   const store = new EventStore(db);
-  const alice = { userId: ALICE, role: "manager" as const };
+  const alice = { userId: ALICE, role: "manager" as const, calendarId: TEAM };
   const [seen] = store.listRange(
     alice,
     range("2026-11-05", "2026-11-06"),
@@ -552,6 +607,7 @@ test("an event made before names were kept still shows, and can still be changed
       { uid: seen!.uid, occurrenceId: null },
       "all",
       draft(seen!.time, { title: "Older review, renamed" }),
+      [],
       0,
     ),
   ).toEqual({ status: "done" });

@@ -1,7 +1,7 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
 import { NAV_ITEM, NAV_ITEM_ACTIVE, useToast } from "@cloudysuite/ui";
-import type { CalendarId } from "@cloudysuite/access";
+import type { CalendarId, UserId } from "@cloudysuite/access";
 import {
   IconCalendarWeek,
   IconCheck,
@@ -26,6 +26,7 @@ import { call, calendarKeys, calendarsQuery } from "../queries";
 import type { CalendarEntry } from "../types";
 import { CalendarSettings } from "./calendar-settings";
 import { calendarBorder, calendarFill } from "./colours";
+import { MeProvider } from "./me";
 import { NameDialog } from "./name-dialog";
 import { SearchBox } from "./search-box";
 
@@ -210,7 +211,9 @@ export function CalendarLayout({
 }) {
   return (
     <HydrationBoundary state={prefetched}>
-      <Shell user={user}>{children}</Shell>
+      <MeProvider id={user.id as UserId}>
+        <Shell user={user}>{children}</Shell>
+      </MeProvider>
     </HydrationBoundary>
   );
 }
