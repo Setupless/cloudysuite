@@ -43,6 +43,15 @@
   --color-avatar-5: #5a6b8c;
   --color-avatar-6: #a04a5a;
 
+  /* An event's fill: its calendar's colour, mixed 15% into the page in light and 23% in dark. */
+  --color-event-1: light-dark(#e1e9f2, #232f3d);
+  --color-event-2: light-dark(#ede6ec, #352a35);
+  --color-event-3: light-dark(#e2ece9, #243230);
+  --color-event-4: light-dark(#f1e7e1, #3a2c24);
+  --color-event-5: light-dark(#e6e9ee, #2a2e37);
+  --color-event-6: light-dark(#f1e4e6, #3a272c);
+  --color-weekend: light-dark(#f8f8fa, #242427);
+
   --font-sans: Inter, -apple-system, system-ui, sans-serif;
   --font-mono: ui-monospace, monospace;
   --radius: 9px;

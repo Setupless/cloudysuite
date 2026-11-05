@@ -1,5 +1,5 @@
 import { useHydrated } from "@cloudysuite/ui";
-import { IconCalendarWeek, IconHome } from "@tabler/icons-react";
+import { IconHome } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 
@@ -53,14 +53,6 @@ export function TodayScreen() {
       icon={IconHome}
     >
       Your day will show here: what's next, the rest of today, and tomorrow.
-    </Screen>
-  );
-}
-
-export function ScheduleScreen() {
-  return (
-    <Screen title="Schedule" icon={IconCalendarWeek}>
-      Your full calendar will show here, by day, week, or month.
     </Screen>
   );
 }

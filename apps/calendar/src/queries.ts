@@ -5,7 +5,17 @@ import {
   getCalendars,
   getMembers,
   getPeopleChoices,
+  listEvents,
 } from "./functions";
+import {
+  type DayWindow,
+  placeOf,
+  type ScheduleSearch,
+  todayIn,
+  visibleDays,
+} from "./schedule";
+import { addDays } from "./time";
+import type { TimeZone } from "./types";
 
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";
@@ -61,6 +71,8 @@ export const calendarKeys = {
   eventCount: (calendarId: CalendarId) =>
     ["calendar", "eventCount", calendarId] as const,
   people: ["calendar", "people"] as const,
+  events: ({ from, to }: DayWindow) =>
+    ["calendar", "events", from, to] as const,
 };
 
 export const calendarsQuery = () =>
@@ -89,6 +101,36 @@ export const peopleChoicesQuery = () =>
     queryKey: calendarKeys.people,
     queryFn: () => call(() => getPeopleChoices()),
   });
+const UTC = "UTC" as TimeZone;
+
+// The server doesn't know the reader's time zone, so the ask is in whole UTC days with a
+// day to spare on each side, which holds every event on the reader's own days. The page
+// places them on its own clock.
+export const eventsQuery = (window: DayWindow) =>
+  queryOptions({
+    queryKey: calendarKeys.events(window),
+    queryFn: () =>
+      call(() =>
+        listEvents({
+          data: {
+            from: addDays(window.from, -1),
+            to: addDays(window.to, 1),
+            timeZone: UTC,
+          },
+        }),
+      ),
+  });
+
+// The first HTML holds the events, so the page draws them as soon as it can. Without a
+// date in the address, the server's own day stands in for the reader's, which is the
+// same day for most of the day in most places. When it isn't, the page asks again.
+export async function prefetchSchedule(search: ScheduleSearch) {
+  if (!import.meta.env.SSR) return undefined;
+  const client = new QueryClient();
+  const place = placeOf(search, todayIn(UTC, Date.now()));
+  await client.prefetchQuery(eventsQuery(visibleDays(place)));
+  return dehydrate(client);
+}
 
 // The first HTML holds the sidebar's calendars, so a reload shows them at once.
 export async function prefetchCalendars() {
