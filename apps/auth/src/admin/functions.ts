@@ -40,10 +40,11 @@ import {
   appointNextManagers,
   claimDrive,
   type DriveToClaim,
-  handOverFiles,
+  handOver,
   listDrivesToClaim,
-  readFilesToHand,
+  readToHand,
 } from "./handover";
+import { needsRecipient, SPACE_KINDS } from "./handover-text";
 import {
   readDriveId,
   readFlag,
@@ -250,10 +251,10 @@ export const unsuspendMember = createServerFn({ method: "POST" })
   });
 
 const CHOOSE_RECIPIENT = refuse(
-  "Choose who receives their files before you remove them.",
+  "Choose who receives their files and calendars before you remove them.",
 );
 const RECIPIENT_CANT = refuse(
-  "That person can't receive files right now. Choose someone else.",
+  "That person can't take these over right now. Choose someone else.",
 );
 
 async function recipientIsReady(userId: UserId): Promise<boolean> {
@@ -265,7 +266,8 @@ async function recipientIsReady(userId: UserId): Promise<boolean> {
 }
 
 // Handing over comes first and is one transaction. If removing the account then fails,
-// choosing Remove again finds the files already handed over and finishes the job.
+// choosing Remove again finds the files and calendars already handed over and finishes
+// the job.
 export const removeMember = createServerFn({ method: "POST" })
   .middleware([adminOnly])
   .validator((input: { userId: string; recipientId: string | null }) => ({
@@ -280,14 +282,14 @@ export const removeMember = createServerFn({ method: "POST" })
       .where(eq(user.id, data.userId));
     if (!person) return PERSON_GONE;
 
-    const files = (await readFilesToHand(env.DB)).get(data.userId);
-    if (files && (files.myFiles || files.aloneIn > 0)) {
+    const toHand = (await readToHand(env.DB)).get(data.userId);
+    if (toHand && SPACE_KINDS.some((kind) => needsRecipient(toHand[kind]))) {
       if (!data.recipientId) return CHOOSE_RECIPIENT;
     }
     if (data.recipientId === data.userId) return RECIPIENT_CANT;
     if (data.recipientId) {
       if (!(await recipientIsReady(data.recipientId))) return RECIPIENT_CANT;
-      await handOverFiles(env.DB, data.userId, person.name, data.recipientId);
+      await handOver(env.DB, data.userId, person.name, data.recipientId);
     } else {
       await appointNextManagers(env.DB, data.userId);
     }
