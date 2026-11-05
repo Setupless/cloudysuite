@@ -3,7 +3,7 @@ import { addDays, startOfDay } from "../time";
 import type { CivilDate, EventTime, TimeZone } from "../types";
 import { daySpanOf } from "./schedule-layout";
 
-type Item = { time: EventTime; title: string };
+type Item = { time: EventTime; title: string; cancelled: boolean };
 type Timed = Extract<EventTime, { kind: "timed" }>;
 
 export type NextEvent<Event> =
@@ -65,11 +65,14 @@ function onDay<Event extends Item>(
     );
 }
 
+// A cancelled event stays on the day, marked as such, but isn't anything to go to.
 function firstStartingAfter<Event extends Item>(
   events: readonly Event[],
   after: number,
 ): { event: Event; start: number } | undefined {
-  const event = events.filter(isTimed).find(({ time }) => time.start > after);
+  const event = events
+    .filter(isTimed)
+    .find(({ time, cancelled }) => !cancelled && time.start > after);
   return event && { event, start: event.time.start };
 }
 

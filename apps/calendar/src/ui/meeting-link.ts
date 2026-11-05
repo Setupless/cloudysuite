@@ -64,11 +64,14 @@ function meetingIn(
   return null;
 }
 
+// A cancelled event or date has no meeting to join.
 export function meetingLink({
   conference,
   location,
   notes,
-}: MeetingSources): MeetingLink | null {
+  cancelled,
+}: MeetingSources & { cancelled: boolean }): MeetingLink | null {
+  if (cancelled) return null;
   return (
     (conference === null ? null : meetingAt(conference, "conference")) ??
     meetingIn(location, "location") ??

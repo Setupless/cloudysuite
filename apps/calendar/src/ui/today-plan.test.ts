@@ -274,6 +274,7 @@ test("on the night Los Angeles turns its clocks back, Tomorrow and the time unti
         end: start + minutes * MINUTE,
         timeZone: LOS_ANGELES,
       },
+      cancelled: false,
     };
   };
   const events = [
