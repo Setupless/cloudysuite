@@ -71,7 +71,10 @@ async function add(
   more: Partial<EventDraft> = {},
   client: CalendarClient = alice,
 ): Promise<EventUid> {
-  const result = await client.create("Alice Stone", draft(time, { title, ...more }));
+  const result = await client.create(
+    "Alice Stone",
+    draft(time, { title, ...more }),
+  );
   if (result.status !== "created") throw new Error(result.status);
   return result.uid;
 }
