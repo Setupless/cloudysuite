@@ -10,6 +10,7 @@ import {
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { calendarAccess, calendars, user } from "../../../src/db/schema";
+import { chunked } from "./chunked";
 import {
   type CalendarEntry,
   type Invitee,
@@ -19,28 +20,36 @@ import {
 
 export type TeamChange = "done" | "lastManager" | "notOnIt";
 
-// Out of the people asked for, those who can be invited now. Someone suspended can't
-// open anything, so they aren't invited, and someone removed has no row.
+// Out of the people asked for, those not suspended. Someone suspended can't open
+// anything, and someone removed has no row.
+async function readActive(database: D1Database, people: readonly UserId[]) {
+  const db = drizzle(database);
+  const [first, ...rest] = chunked(people).map((part) =>
+    db
+      .select({
+        id: user.id,
+        name: user.name,
+        banned: user.banned,
+        banExpires: user.banExpires,
+      })
+      .from(user)
+      .where(inArray(user.id, part)),
+  );
+  if (!first) return [];
+  return (await db.batch([first, ...rest]))
+    .flat()
+    .filter((row) => !isBanned(row));
+}
+
+// Those who can be invited now.
 export async function readInvitable(
   database: D1Database,
   people: readonly UserId[],
 ): Promise<Invitee[]> {
-  if (people.length === 0) return [];
-  const rows = await drizzle(database)
-    .select({
-      id: user.id,
-      name: user.name,
-      banned: user.banned,
-      banExpires: user.banExpires,
-    })
-    .from(user)
-    .where(inArray(user.id, [...people]));
-  return rows
-    .filter((row) => !isBanned(row))
-    .map((row) => ({
-      userId: row.id,
-      name: row.name.slice(0, MAX_PERSON_NAME_LENGTH),
-    }));
+  return (await readActive(database, people)).map((row) => ({
+    userId: row.id,
+    name: row.name.slice(0, MAX_PERSON_NAME_LENGTH),
+  }));
 }
 
 export async function findPersonalCalendar(
@@ -238,11 +247,7 @@ export async function readAddable(
   database: D1Database,
   people: readonly UserId[],
 ): Promise<UserId[]> {
-  const rows = await drizzle(database)
-    .select({ id: user.id, banned: user.banned, banExpires: user.banExpires })
-    .from(user)
-    .where(inArray(user.id, [...people]));
-  return rows.filter((row) => !isBanned(row)).map((row) => row.id);
+  return (await readActive(database, people)).map((row) => row.id);
 }
 
 // Someone already on it keeps the role they have, so adding people can't demote anyone.
