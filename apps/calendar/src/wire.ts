@@ -19,16 +19,16 @@ import {
   type EventTarget,
   type EventTime,
   type EventUid,
+  MAX_LOCATION_LENGTH,
+  MAX_NOTES_LENGTH,
+  MAX_REPEAT_TIMES,
+  MAX_TITLE_LENGTH,
   REPEAT_FREQUENCIES,
   type Repeat,
   type RepeatEnd,
 } from "./types";
 
-const MAX_TITLE_LENGTH = 500;
-const MAX_LOCATION_LENGTH = 1000;
-const MAX_NOTES_LENGTH = 10_000;
 const MAX_CALENDAR_NAME_LENGTH = 100;
-const MAX_REPEAT_TIMES = 999;
 const MAX_UID_LENGTH = 255;
 const MAX_USER_ID_LENGTH = 128;
 const MAX_PEOPLE = 100;

@@ -33,8 +33,12 @@ export class Calendar extends DurableObject<Env> {
     return this.#store.listRange(actor, range);
   }
 
-  createEvent(actor: Actor, draft: EventDraft): CreateResult {
-    return this.#store.create(actor, draft, Date.now());
+  createEvent(
+    actor: Actor,
+    organiserName: string,
+    draft: EventDraft,
+  ): CreateResult {
+    return this.#store.create(actor, organiserName, draft, Date.now());
   }
 
   updateEvent(

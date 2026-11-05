@@ -44,4 +44,11 @@ export const MIGRATIONS: Migrations = [
       removed_at INTEGER NOT NULL
     ) WITHOUT ROWID`,
   ],
+  [
+    // An event made here now keeps its organiser's name. Older ones get null, so every
+    // row has the same shape.
+    `UPDATE events SET organiser = json_set(organiser, '$.name', NULL)
+     WHERE json_extract(organiser, '$.kind') = 'madeHere'
+       AND json_type(organiser, '$.name') IS NULL`,
+  ],
 ];

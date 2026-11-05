@@ -1,4 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
+import { applyMigrations } from "@cloudysuite/object-sql";
+import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
+import { MIGRATIONS } from "./migrations";
+import { EventStore } from "./store";
 import {
   ALICE,
   BOB,
@@ -69,7 +73,9 @@ const shown = (occurrences: Occurrence[]) =>
   });
 
 async function created(time: EventTime, more: Parameters<typeof draft>[1]) {
-  const result = await (await kit.as(ALICE)).create(draft(time, more));
+  const result = await (
+    await kit.as(ALICE)
+  ).create("Alice Stone", draft(time, more));
   if (result.status !== "created") throw new Error("expected an event");
   return result.uid;
 }
@@ -95,7 +101,7 @@ test("Can view sees a calendar's events but can't add, change, or remove one", a
     timed("2026-11-05T13:00:00+11:00", "2026-11-05T14:00:00+11:00"),
   );
   const target = { uid, occurrenceId: null };
-  expect(await bob.create(change)).toEqual({ status: "noAccess" });
+  expect(await bob.create("Bob Lee", change)).toEqual({ status: "noAccess" });
   expect(await bob.update(target, "all", change)).toEqual({
     status: "noAccess",
   });
@@ -134,7 +140,11 @@ test("Can edit changes an event someone else made on the team calendar", async (
   const [seen] = (await bob.listRange(range("2026-11-05", "2026-11-06")))
     .occurrences;
   expect(seen?.changeable).toBe(true);
-  expect(seen?.organiser).toEqual({ kind: "madeHere", userId: ALICE });
+  expect(seen?.organiser).toEqual({
+    kind: "madeHere",
+    userId: ALICE,
+    name: "Alice Stone",
+  });
 
   expect(
     await bob.update(
@@ -450,7 +460,7 @@ test("a repeat from outside keeps its own dates, and can only be removed", async
     end: Date.parse("2026-11-03T08:30:00+11:00"),
     timeZone: SYDNEY,
     rule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH",
-    organiser: { kind: "madeHere", userId: ALICE },
+    organiser: { kind: "madeHere", userId: ALICE, name: "Alice Stone" },
   });
   const alice = await kit.as(ALICE);
   const { occurrences } = await listed("2026-11-01", "2026-11-29");
@@ -475,4 +485,48 @@ test("a repeat from outside keeps its own dates, and can only be removed", async
   expect(
     shown((await listed("2026-11-01", "2026-11-29")).occurrences),
   ).toHaveLength(3);
+});
+
+test("an event made before names were kept still shows, and can still be changed", () => {
+  const { db } = createSqlDriver();
+  applyMigrations(db, MIGRATIONS.slice(0, 1));
+  const start = Date.parse("2026-11-05T11:00:00+11:00");
+  const end = start + 3_600_000;
+  db.exec(
+    `INSERT INTO events (uid, title, location, notes, starts_at, ends_at, tzid,
+       organiser, sequence, created_at, updated_at, span_start, span_end)
+     VALUES ('old', 'Older review', '', '', ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
+    start,
+    end,
+    SYDNEY,
+    JSON.stringify({ kind: "madeHere", userId: ALICE }),
+    start,
+    end,
+  );
+  applyMigrations(db, MIGRATIONS);
+
+  const store = new EventStore(db);
+  const alice = { userId: ALICE, role: "manager" as const };
+  const [seen] = store.listRange(
+    alice,
+    range("2026-11-05", "2026-11-06"),
+  ).occurrences;
+  expect(seen).toMatchObject({
+    title: "Older review",
+    organiser: { kind: "madeHere", userId: ALICE, name: null },
+    changeable: true,
+  });
+  expect(
+    store.update(
+      alice,
+      { uid: seen!.uid, occurrenceId: null },
+      "all",
+      draft(seen!.time, { title: "Older review, renamed" }),
+      0,
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    store.listRange(alice, range("2026-11-05", "2026-11-06")).occurrences[0]
+      ?.title,
+  ).toBe("Older review, renamed");
 });

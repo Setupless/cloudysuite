@@ -82,7 +82,7 @@ beforeEach(async () => {
     end: Date.parse("2026-11-05T12:00:00+11:00"),
     timeZone: SYDNEY,
     rule: null,
-    organiser: { kind: "madeHere", userId: people.manager },
+    organiser: { kind: "madeHere", userId: people.manager, name: "Boss" },
   });
 });
 
@@ -426,7 +426,9 @@ test("removing someone hands their calendar to the person chosen, events and all
     kit.rows(`SELECT 1 FROM calendar_access WHERE user_id = '${removed}'`),
   ).toEqual([]);
 
-  // Their event on the team calendar stays, and Can edit there can still change it.
+  // Their event on the team calendar stays with their name, though their user row is
+  // gone, and Can edit there can still change it.
+  expect(kit.rows(`SELECT 1 FROM user WHERE id = '${removed}'`)).toEqual([]);
   await as(people.manager).updateEvent({
     data: {
       calendarId: TEAM,
@@ -445,7 +447,7 @@ test("removing someone hands their calendar to the person chosen, events and all
     expect.objectContaining({
       calendarId: TEAM,
       title: "Planning, moved",
-      organiser: { kind: "madeHere", userId: removed },
+      organiser: { kind: "madeHere", userId: removed, name: "Sam Rivera" },
     }),
   );
 });

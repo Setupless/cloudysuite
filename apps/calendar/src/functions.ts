@@ -248,8 +248,9 @@ export const listEvents = createServerFn({ method: "GET" })
 export const createEvent = createServerFn({ method: "POST" })
   .validator(parseNewEventInput)
   .handler(async ({ data }): Promise<EventUid> => {
-    const calendar = await openCalendarAs((await me()).id, data.calendarId);
-    const result = await calendar.create(data.draft);
+    const person = await me();
+    const calendar = await openCalendarAs(person.id, data.calendarId);
+    const result = await calendar.create(person.name, data.draft);
     if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
     return result.uid;
   });
