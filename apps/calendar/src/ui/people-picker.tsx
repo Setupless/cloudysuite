@@ -3,9 +3,9 @@ import { Avatar, Notice, Working } from "@cloudysuite/ui";
 import { IconMail } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { parseEmailAddress } from "../email-address";
 import { peopleChoicesQuery } from "../queries";
 import type { EmailAddress, Person } from "../types";
+import { peopleChoices } from "./people-choices";
 
 const CHOICE =
   "flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-accent enabled:hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60";
@@ -61,25 +61,12 @@ export function PeoplePicker({
     input.current?.focus();
   }, [disabled]);
 
-  const wanted = text.trim().toLowerCase();
-  const people =
-    wanted === ""
-      ? []
-      : (choices.data ?? []).filter(
-          (person) =>
-            !skip.has(person.id) &&
-            (person.name.toLowerCase().includes(wanted) ||
-              person.email.toLowerCase().includes(wanted)),
-        );
-  // A colleague's own address finds the colleague instead.
-  const address = addresses && parseEmailAddress(wanted);
-  const offered =
-    address &&
-    !skip.has(address) &&
-    !(choices.data ?? []).some((person) => person.email === address)
-      ? address
-      : null;
-  const unfinished = addresses && !address && wanted.includes("@");
+  const { wanted, people, offered, unfinished, onEnter } = peopleChoices(
+    text,
+    choices.data ?? [],
+    skip,
+    addresses ? { refused: addresses.refused !== null } : null,
+  );
 
   async function add(person: Person) {
     // Cleared now, so the list doesn't offer the person being added again. A clicked
@@ -121,7 +108,7 @@ export function PeoplePicker({
           autoComplete="off"
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
-          // Enter picks the first match, rather than sending a form around the box. An
+          // Enter picks a match, rather than sending a form around the box. An
           // Enter that ends typing with an input method only confirms the text.
           onKeyDown={(event) => {
             if (
@@ -132,9 +119,8 @@ export function PeoplePicker({
               return;
             }
             event.preventDefault();
-            const [first] = people;
-            if (first) void add(first);
-            else if (offered && !addresses?.refused) addAddress(offered);
+            if (onEnter?.kind === "person") void add(onEnter.person);
+            else if (onEnter) addAddress(onEnter.address);
           }}
           className="min-w-0 flex-1 rounded border border-line bg-field px-3 py-2 text-sm text-text outline-accent focus-visible:outline-2 disabled:opacity-60"
         />
