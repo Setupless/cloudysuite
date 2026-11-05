@@ -744,3 +744,168 @@ test("a colleague with no mailbox gets their copy and no email", async () => {
   expect(await notSent()).toEqual({});
   expect(objects.alarmOf(TEAM)).toBeNull();
 });
+
+test("deleting a team calendar sends everyone invited one cancellation", async () => {
+  const uid = await invite([people.colleague, outside(OUTSIDE)]);
+  await as(people.manager).deleteTeamCalendar({ data: { calendarId: TEAM } });
+  await objects.settle();
+  for (const address of [OUTSIDE, "jo@example.com"]) {
+    const [, cancellation, ...more] = sentTo(address);
+    expect(more).toEqual([]);
+    const cancelled = invitationIn(cancellation!);
+    expect(cancelled.read.subject).toStartWith("Cancelled: Weekly planning");
+    expect(cancelled.events[0]).toMatchObject({ uid, cancelled: true });
+  }
+  expect(objects.alarmOf(TEAM)).toBeNull();
+});
+
+test("deleting a team calendar sends nothing from a suspended organiser's address", async () => {
+  await invite([outside(OUTSIDE)], {}, people.editor);
+  kit.sqlite.run("UPDATE user SET banned = 1 WHERE id = ?", [people.editor]);
+  await as(people.manager).deleteTeamCalendar({ data: { calendarId: TEAM } });
+  await objects.settle();
+  expect(sentTo(OUTSIDE)).toHaveLength(1);
+});
+
+test("nothing in a title, place or notes can add a line to the invitation", async () => {
+  await invite([outside(OUTSIDE)], {
+    title: "Budget\rATTENDEE:mailto:injected@evil.example",
+    location: "Room 4\u2028ORGANIZER:mailto:ceo@example.com",
+    notes:
+      "x\rORGANIZER:mailto:ceo@example.com\u0085ATTENDEE:mailto:two@evil.example",
+  });
+  const { ics, events } = invitationIn(email.sent[0]!);
+  expect(ics).not.toMatch(/\r(?!\n)/);
+  // As a reader that breaks lines at any of these would see it.
+  const lines = ics
+    .replace(/\r\n[ \t]/g, "")
+    .split(/\r\n|[\r\n\u0085\u2028\u2029]/);
+  expect(lines.filter((line) => line.startsWith("ATTENDEE"))).toHaveLength(1);
+  expect(lines.filter((line) => line.startsWith("ORGANIZER"))).toEqual([
+    "ORGANIZER;CN=Boss:mailto:boss@example.com",
+  ]);
+  expect(events[0]?.attendees).toHaveLength(1);
+});
+
+test("calling off one date sends a cancellation for that date alone", async () => {
+  const uid = await invite([people.colleague, outside(OUTSIDE)], {
+    repeat: WEEKLY,
+  });
+  const remove = (occurrenceId: OccurrenceId) =>
+    as(people.manager).deleteEvent({
+      data: { calendarId: TEAM, target: { uid, occurrenceId }, scope: "this" },
+    });
+  await remove(SECOND);
+  await objects.settle();
+  for (const address of [OUTSIDE, "jo@example.com"]) {
+    const [, off, ...more] = sentTo(address);
+    expect(more).toEqual([]);
+    const cancelled = invitationIn(off!);
+    expect(cancelled.read.subject).toBe(
+      "Cancelled: Weekly planning, Tue 17 Nov, 10:00 to 11:00 (Australia/Sydney)",
+    );
+    expect(cancelled.calendar.headers.get("content-type")).toBe(
+      "text/calendar; charset=UTF-8; method=CANCEL",
+    );
+    expect(cancelled.ics).toContain(
+      "RECURRENCE-ID;TZID=Australia/Sydney:20261117T100000",
+    );
+    expect(cancelled.ics).not.toContain("RRULE");
+    expect(cancelled.events).toHaveLength(1);
+    expect(cancelled.events[0]).toMatchObject({
+      uid,
+      recurrenceId: SECOND,
+      cancelled: true,
+      sequence: 1,
+    });
+  }
+
+  // The next email is an update to the event they still have, without that date.
+  await change(uid, {
+    title: "Planning, renamed",
+    repeat: WEEKLY,
+    people: [people.colleague, outside(OUTSIDE)],
+  });
+  const update = invitationIn(sentTo(OUTSIDE)[2]!);
+  expect(update.read.subject).toStartWith(
+    "Updated invitation: Planning, renamed",
+  );
+  expect(update.events[0]).toMatchObject({ uid, exdates: [SECOND] });
+
+  // Two dates called off before anything goes make one update without either.
+  const third = "20261123T230000Z" as OccurrenceId;
+  const fourth = "20261130T230000Z" as OccurrenceId;
+  await remove(third);
+  await remove(fourth);
+  await objects.settle();
+  const [last, ...after] = sentTo(OUTSIDE).slice(3);
+  expect(after).toEqual([]);
+  const both = invitationIn(last!);
+  expect(both.read.subject).toStartWith("Updated invitation:");
+  expect(both.events[0]).toMatchObject({
+    uid,
+    exdates: [SECOND, third, fourth],
+  });
+});
+
+test("only the person, or someone who can edit the event, learns whether emails can go from an organiser", async () => {
+  const uid = await invite([]);
+  const about = { calendarId: TEAM, uid };
+  expect(
+    await as(people.editor).getOutsideInviting({ data: { event: about } }),
+  ).toBe("ready");
+  expect(
+    await refused(
+      as(people.viewer).getOutsideInviting({ data: { event: about } }),
+    ),
+  ).toMatchObject({ status: 403 });
+  expect(
+    await refused(
+      as(people.colleague).getOutsideInviting({ data: { event: about } }),
+    ),
+  ).toMatchObject({ status: 404 });
+  kit.sqlite.run("UPDATE user SET banned = 1 WHERE id = ?", [people.manager]);
+  expect(
+    await as(people.editor).getOutsideInviting({ data: { event: about } }),
+  ).toBe("noSender");
+  kit.sqlite.run("DELETE FROM mailbox_access WHERE user_id = ?", [
+    people.colleague,
+  ]);
+  expect(
+    await as(people.colleague).getOutsideInviting({ data: { event: null } }),
+  ).toBe("noSender");
+  // Anyone else, named by their id, isn't something to ask about.
+  expect(
+    await refused(
+      Promise.resolve().then(() =>
+        as(people.colleague).getOutsideInviting({
+          data: { organiser: people.editor } as never,
+        }),
+      ),
+    ),
+  ).toMatchObject({ status: 400 });
+});
+
+test("a colleague's own address, or their alias, invites them as a colleague", async () => {
+  const { mailbox_id } = kit.sqlite
+    .query("SELECT mailbox_id FROM addresses WHERE address = 'jo@example.com'")
+    .get() as { mailbox_id: string };
+  kit.sqlite.run(
+    "INSERT INTO addresses (address, domain, mailbox_id, kind) VALUES ('jo.okafor@example.com', 'example.com', ?, 'alias')",
+    [mailbox_id],
+  );
+  await invite([
+    outside("Jo@Example.com"),
+    outside("jo.okafor@example.com"),
+    people.colleague,
+  ]);
+  expect((await organisersView()).people).toEqual([
+    expect.objectContaining({ kind: "colleague", userId: people.colleague }),
+  ]);
+  expect(email.sent.map((one) => one.to)).toEqual(["jo@example.com"]);
+  expect(
+    await as(people.colleague).listInvitations({
+      data: { timeZone: SYDNEY },
+    }),
+  ).toHaveLength(1);
+});
