@@ -4,6 +4,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { SqlDriver, SqlRow, SqlValue } from "@cloudysuite/object-sql";
+import type { OutsideEvent } from "./outside/ics";
 import {
   type Budget,
   datesOf,
@@ -37,17 +38,116 @@ import {
   type EventTarget,
   type EventTime,
   type EventUid,
+  type ImportSummary,
   MAX_OCCURRENCES,
   type Occurrence,
   type OccurrenceId,
   type Organiser,
   type RangeListing,
   type Repeat,
+  type Shortfall,
   type ShownRepeat,
+  SKIP_REASONS,
+  type SkipReason,
   type TimeZone,
 } from "./types";
 
 export type Actor = { userId: UserId; role: CalendarRole };
+
+// What the store keeps of one event in a file.
+export type ImportedPart = EventDetails & {
+  recurrenceId: OccurrenceId | null;
+  time: EventTime;
+  rule: string | null;
+  exdates: OccurrenceId[];
+  sequence: number;
+  shortfall: Shortfall | null;
+  cancelled: boolean;
+};
+
+// One event: its series, or null when the file only changes dates of a series held
+// here, and its changed dates.
+export type ImportGroup = {
+  uid: EventUid;
+  series: ImportedPart | null;
+  changes: ImportedPart[];
+};
+
+export type ImportResult =
+  { status: "done"; summary: ImportSummary } | { status: "noAccess" };
+
+type ImportOutcome =
+  "added" | "updated" | "unchanged" | "organisedElsewhere" | SkipReason;
+
+const partOf = (event: OutsideEvent): ImportedPart => ({
+  title: event.title,
+  location: event.location,
+  notes: event.notes,
+  recurrenceId: event.recurrenceId,
+  time: event.time,
+  rule: event.rule,
+  exdates: event.exdates,
+  sequence: event.sequence,
+  shortfall: event.shortfall,
+  cancelled: event.cancelled,
+});
+
+// A file can hold the same event or date twice. The higher sequence wins, then the first.
+export function groupForImport(events: OutsideEvent[]): ImportGroup[] {
+  const groups = new Map<EventUid, ImportGroup>();
+  const newer = (held: ImportedPart | null | undefined, part: ImportedPart) =>
+    !held || part.sequence > held.sequence;
+  for (const event of events) {
+    const group = groups.get(event.uid) ?? {
+      uid: event.uid,
+      series: null,
+      changes: [],
+    };
+    groups.set(event.uid, group);
+    const part = partOf(event);
+    if (part.recurrenceId === null) {
+      if (newer(group.series, part)) group.series = part;
+      continue;
+    }
+    const index = group.changes.findIndex(
+      (change) => change.recurrenceId === part.recurrenceId,
+    );
+    if (index === -1) group.changes.push(part);
+    else if (newer(group.changes[index], part)) group.changes[index] = part;
+  }
+  return [...groups.values()];
+}
+
+export const emptySummary = (): ImportSummary => ({
+  added: 0,
+  updated: 0,
+  unchanged: 0,
+  organisedElsewhere: 0,
+  firstDateOnly: 0,
+  mainRepeatOnly: 0,
+  skipped: {},
+});
+
+export function countSkip(
+  summary: ImportSummary,
+  reason: SkipReason,
+  count: number,
+): void {
+  summary.skipped[reason] = (summary.skipped[reason] ?? 0) + count;
+}
+
+export function addSummary(total: ImportSummary, part: ImportSummary): void {
+  total.added += part.added;
+  total.updated += part.updated;
+  total.unchanged += part.unchanged;
+  total.organisedElsewhere += part.organisedElsewhere;
+  total.firstDateOnly += part.firstDateOnly;
+  total.mainRepeatOnly += part.mainRepeatOnly;
+  for (const reason of SKIP_REASONS) {
+    const count = part.skipped[reason];
+    if (count) countSkip(total, reason, count);
+  }
+}
 
 // About 200 ms of ical.js on the slowest rules, shared by every series in one call.
 export const STEPS_PER_CALL = 100_000;
@@ -562,6 +662,131 @@ export class EventStore {
       this.db.exec("DELETE FROM events WHERE uid = ?", uid);
     });
     return { status: "done" };
+  }
+
+  // Each event goes in under the rule for invitations: a copy no newer than the one held
+  // for that event or date changes nothing, so the same file twice changes nothing, and
+  // a retry after a crash finishes the work without doing any of it twice.
+  importEvents(
+    actor: Actor,
+    organiserName: string,
+    groups: ImportGroup[],
+    now: number,
+  ): ImportResult {
+    if (!canEdit(actor)) return { status: "noAccess" };
+    const importer: Organiser = {
+      kind: "madeHere",
+      userId: actor.userId,
+      name: organiserName,
+    };
+    const summary = emptySummary();
+    for (const group of groups) {
+      const outcome = this.db.transaction(() =>
+        this.#importGroup(importer, group, now),
+      );
+      if (outcome === "added" || outcome === "updated") {
+        summary[outcome]++;
+        const shortfall = group.series?.shortfall;
+        if (shortfall) summary[shortfall]++;
+      } else if (outcome === "unchanged" || outcome === "organisedElsewhere") {
+        summary[outcome]++;
+      } else {
+        countSkip(summary, outcome, 1);
+      }
+    }
+    return { status: "done", summary };
+  }
+
+  #importGroup(
+    importer: Organiser,
+    group: ImportGroup,
+    now: number,
+  ): ImportOutcome {
+    const { uid, series } = group;
+    // Removing an event is the person's choice, and import can't change what they
+    // couldn't change by hand, such as an invitation organised somewhere else.
+    const [removed] = this.#rows(
+      "SELECT uid FROM removed_events WHERE uid = ?",
+      uid,
+    );
+    const held = this.#series(uid);
+    if (removed) return "unchanged";
+    if (held?.organiser.kind === "invitation") return "organisedElsewhere";
+    if (series?.cancelled) return held ? "unchanged" : "cancelled";
+
+    if (series && (!held || series.sequence > held.sequence)) {
+      const cancelled = group.changes.flatMap((change) =>
+        change.cancelled ? [change.recurrenceId as OccurrenceId] : [],
+      );
+      const written: StoredEvent = {
+        uid,
+        recurrenceId: null,
+        title: series.title,
+        location: series.location,
+        notes: series.notes,
+        time: series.time,
+        rule: series.rule,
+        // A date removed here stays removed.
+        exdates: [
+          ...new Set([
+            ...(held?.exdates ?? []),
+            ...series.exdates,
+            ...cancelled,
+          ]),
+        ].sort(),
+        organiser: held?.organiser ?? importer,
+        sequence: series.sequence,
+      };
+      if (held) this.#dropChanges(uid, null);
+      this.#write(written, now);
+      for (const change of group.changes) {
+        if (!change.cancelled) this.#writeChange(written, change, now);
+      }
+      return held ? "updated" : "added";
+    }
+
+    if (!held) return "noSeries";
+    let changed = false;
+    for (const change of group.changes) {
+      const id = change.recurrenceId as OccurrenceId;
+      const before = this.#series(uid) as StoredEvent;
+      const heldChange = this.#changeOf(uid, id);
+      if (
+        before.exdates.includes(id) ||
+        change.sequence <= Math.max(before.sequence, heldChange?.sequence ?? 0)
+      ) {
+        continue;
+      }
+      changed = true;
+      if (!change.cancelled) {
+        this.#writeChange(before, change, now);
+        continue;
+      }
+      this.db.exec(
+        "DELETE FROM events WHERE uid = ? AND recurrence_id = ?",
+        uid,
+        id,
+      );
+      this.#write({ ...before, exdates: [...before.exdates, id].sort() }, now);
+    }
+    return changed ? "updated" : "unchanged";
+  }
+
+  #writeChange(series: StoredEvent, change: ImportedPart, now: number): void {
+    this.#write(
+      {
+        ...series,
+        title: change.title,
+        location: change.location,
+        notes: change.notes,
+        recurrenceId: change.recurrenceId,
+        time: change.time,
+        rule: null,
+        exdates: [],
+        sequence: change.sequence,
+      },
+      now,
+    );
   }
 
   // A series counts once, however many dates it has or how many of them were changed.

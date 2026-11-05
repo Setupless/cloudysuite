@@ -3,7 +3,12 @@ import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { SearchTerm } from "@cloudysuite/search";
 import { findEvents } from "./event-search";
 import { MIGRATIONS } from "./migrations";
-import { type Actor, EventStore } from "./store";
+import {
+  type Actor,
+  EventStore,
+  type ImportGroup,
+  type ImportResult,
+} from "./store";
 import type {
   ChangeResult,
   ChangeScope,
@@ -70,6 +75,14 @@ export class Calendar extends DurableObject<Env> {
     scope: ChangeScope,
   ): ChangeResult {
     return this.#store.remove(actor, target, scope, Date.now());
+  }
+
+  importEvents(
+    actor: Actor,
+    organiserName: string,
+    groups: ImportGroup[],
+  ): ImportResult {
+    return this.#store.importEvents(actor, organiserName, groups, Date.now());
   }
 
   // Anyone on the calendar sees its events, so anyone on it may know how many there are.

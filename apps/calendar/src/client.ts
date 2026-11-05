@@ -6,7 +6,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { SearchTerm } from "@cloudysuite/search";
-import type { Actor } from "./store";
+import type { Actor, ImportGroup, ImportResult } from "./store";
 import { calendarStub } from "./stub";
 import type {
   ChangeResult,
@@ -33,6 +33,10 @@ export type CalendarClient = {
     draft: EventDraft,
   ): Promise<ChangeResult>;
   remove(target: EventTarget, scope: ChangeScope): Promise<ChangeResult>;
+  importEvents(
+    organiserName: string,
+    groups: ImportGroup[],
+  ): Promise<ImportResult>;
   countEvents(): Promise<number>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
@@ -57,6 +61,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.updateEvent(actor, target, scope, draft)) as ChangeResult,
     remove: async (target, scope) =>
       (await stub.removeEvent(actor, target, scope)) as ChangeResult,
+    importEvents: async (organiserName, groups) =>
+      (await stub.importEvents(actor, organiserName, groups)) as ImportResult,
     countEvents: () => stub.countEvents(actor),
     erase: async () => (await stub.erase(actor)) as EraseResult,
   };

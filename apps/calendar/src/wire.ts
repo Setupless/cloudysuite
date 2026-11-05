@@ -19,10 +19,13 @@ import {
   type EventTarget,
   type EventTime,
   type EventUid,
+  IMPORT_TOO_LARGE_MESSAGE,
+  MAX_IMPORT_BYTES,
   MAX_LOCATION_LENGTH,
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
+  MAX_UID_LENGTH,
   REPEAT_FREQUENCIES,
   type Repeat,
   type RepeatEnd,
@@ -32,7 +35,6 @@ import { MAX_SEARCH_LENGTH } from "./search-query";
 
 const MAX_TIME_ZONE_LENGTH = 64;
 const MAX_CALENDAR_NAME_LENGTH = 100;
-const MAX_UID_LENGTH = 255;
 const MAX_USER_ID_LENGTH = 128;
 const MAX_PEOPLE = 100;
 const MINUTE_MS = 60_000;
@@ -190,6 +192,18 @@ export function parseEventSearchInput(raw: unknown) {
     text: input.text.slice(0, MAX_SEARCH_LENGTH + 1),
     timeZone: zone ?? ("UTC" as TimeZone),
   };
+}
+
+// The file's size in bytes is checked again once read. This only stops a huge one early.
+export function parseImportInput(raw: unknown) {
+  const input = record(raw);
+  const timeZone =
+    typeof input.timeZone === "string" ? parseTimeZone(input.timeZone) : null;
+  if (typeof input.file !== "string" || !timeZone) throw badRequest();
+  if (input.file.length > MAX_IMPORT_BYTES) {
+    throw refusal(413, IMPORT_TOO_LARGE_MESSAGE);
+  }
+  return { ...parseCalendarInput(raw), file: input.file, timeZone };
 }
 
 function parseTime(raw: unknown): EventTime {

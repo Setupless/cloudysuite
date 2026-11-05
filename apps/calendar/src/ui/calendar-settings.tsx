@@ -12,25 +12,32 @@ import {
 import {
   IconCheck,
   IconDoorExit,
+  IconFileImport,
   IconTrash,
   IconTrashX,
   IconX,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import {
   addMembers,
   changeMemberRole,
   deleteTeamCalendar,
   ensureMyCalendar,
+  importCalendarFile,
   leaveTeamCalendar,
   removeCalendarMember,
   renameTeamCalendar,
   setCalendarColour,
 } from "../functions";
 import { call, calendarKeys, eventCountQuery, membersQuery } from "../queries";
-import type { CalendarEntry } from "../types";
+import {
+  type CalendarEntry,
+  IMPORT_TOO_LARGE_MESSAGE,
+  MAX_IMPORT_BYTES,
+} from "../types";
 import { COLOUR_NAMES, calendarFill } from "./colours";
+import { importLines } from "./import-text";
 import { PeoplePicker, ROLE_SELECT, ROLES } from "./people-picker";
 
 const ROLE_LABELS = Object.fromEntries(
@@ -50,6 +57,7 @@ type Running =
   | { kind: "role"; personId: string; role: CalendarRole }
   | { kind: "remove"; personId: string }
   | { kind: "add"; name: string }
+  | { kind: "import" }
   | { kind: "leave" }
   | { kind: "delete" }
   | null;
@@ -87,7 +95,86 @@ function useRunning() {
       setError((failure as Error).message);
     }
   }
-  return { running, error, hold, run };
+  return { running, error, setError, hold, run };
+}
+
+function ImportEvents({
+  calendarId,
+  disabled,
+  pending,
+  onImport,
+  onRefuse,
+}: {
+  calendarId: () => Promise<CalendarId>;
+  disabled: boolean;
+  pending: boolean;
+  onImport: (change: () => Promise<unknown>) => void;
+  onRefuse: (message: string) => void;
+}) {
+  const picker = useRef<HTMLInputElement>(null);
+  const [summary, setSummary] = useState<{
+    file: string;
+    lines: string[];
+  } | null>(null);
+  function choose(file: File | undefined) {
+    if (picker.current) picker.current.value = "";
+    if (!file) return;
+    setSummary(null);
+    if (file.size > MAX_IMPORT_BYTES) {
+      onRefuse(IMPORT_TOO_LARGE_MESSAGE);
+      return;
+    }
+    onImport(async () => {
+      const result = await importCalendarFile({
+        data: {
+          calendarId: await calendarId(),
+          file: await file.text(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+      });
+      setSummary({ file: file.name, lines: importLines(result) });
+    });
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className={HEADING}>Import</h3>
+      <p className="text-sm text-secondary">
+        Add events from a calendar file, the .ics kind that Google Calendar,
+        Outlook, and Apple Calendar save.
+      </p>
+      <input
+        ref={picker}
+        type="file"
+        accept=".ics,text/calendar"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(event) => choose(event.target.files?.[0])}
+      />
+      <span className="self-start">
+        <Button
+          variant="quiet"
+          icon={IconFileImport}
+          disabled={disabled}
+          pending={pending}
+          onClick={() => picker.current?.click()}
+        >
+          {pending ? "Importing…" : "Import events from a file"}
+        </Button>
+      </span>
+      {summary && (
+        <div
+          role="status"
+          className="flex flex-col gap-1 rounded bg-sidebar px-3 py-2 text-sm text-text"
+        >
+          <p className="font-medium break-words">From {summary.file}:</p>
+          {summary.lines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function ColourChoice({
@@ -138,7 +225,7 @@ function PersonalSettings({
   entry: CalendarEntry;
   onClose: () => void;
 }) {
-  const { running, error, run } = useRunning();
+  const { running, error, setError, run } = useRunning();
   const shown = running?.kind === "colour" ? running.colour : entry.colour;
   return (
     <Modal
@@ -160,6 +247,13 @@ function PersonalSettings({
             await setCalendarColour({ data: { calendarId, colour } });
           })
         }
+      />
+      <ImportEvents
+        calendarId={async () => entry.id ?? (await ensureMyCalendar())}
+        disabled={running !== null}
+        pending={running?.kind === "import"}
+        onImport={(change) => void run({ kind: "import" }, change)}
+        onRefuse={setError}
       />
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end">
@@ -288,9 +382,10 @@ function TeamSettings({
 }) {
   const toast = useToast();
   const members = useQuery(membersQuery(calendarId));
-  const { running, error, hold, run } = useRunning();
+  const { running, error, setError, hold, run } = useRunning();
   const [confirming, setConfirming] = useState(false);
   const canManage = entry.role === "manager";
+  const canEdit = entry.role !== "viewer";
   const busy = running !== null;
   const lines = members.data ?? [];
 
@@ -425,6 +520,15 @@ function TeamSettings({
           );
         })}
       </ul>
+      {canEdit && (
+        <ImportEvents
+          calendarId={async () => calendarId}
+          disabled={busy}
+          pending={running?.kind === "import"}
+          onImport={(change) => void run({ kind: "import" }, change)}
+          onRefuse={setError}
+        />
+      )}
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex gap-2">
         {canManage && (
