@@ -384,6 +384,7 @@ function TeamSettings({
   const members = useQuery(membersQuery(calendarId));
   const { running, error, setError, hold, run } = useRunning();
   const [confirming, setConfirming] = useState(false);
+  const [newRole, setNewRole] = useState<CalendarRole>("editor");
   const canManage = entry.role === "manager";
   const canEdit = entry.role !== "viewer";
   const busy = running !== null;
@@ -432,15 +433,32 @@ function TeamSettings({
       <h3 className={HEADING}>People</h3>
       {canManage && (
         <PeoplePicker
+          label="Add a person"
           skip={new Set(lines.map((line) => line.person.id))}
           adding={running?.kind === "add" ? running.name : null}
           disabled={busy}
-          onAdd={(person, role) =>
+          onAdd={(person) =>
             hold({ kind: "add", name: person.name }, () =>
-              addMembers({ data: { calendarId, people: [person.id], role } }),
+              addMembers({
+                data: { calendarId, people: [person.id], role: newRole },
+              }),
             )
           }
-        />
+        >
+          <select
+            aria-label="What they can do"
+            value={newRole}
+            disabled={busy}
+            onChange={(event) => setNewRole(event.target.value as CalendarRole)}
+            className={ROLE_SELECT}
+          >
+            {ROLES.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </PeoplePicker>
       )}
       {members.isError && (
         <Notice tone="danger">{members.error.message}</Notice>

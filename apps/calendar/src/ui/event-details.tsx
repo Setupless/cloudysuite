@@ -3,6 +3,7 @@ import type { Icon } from "@tabler/icons-react";
 import {
   IconArrowsDiagonal,
   IconCalendar,
+  IconCalendarCancel,
   IconCalendarX,
   IconClock,
   IconMapPin,
@@ -22,6 +23,7 @@ import type { CivilDate, TimeZone } from "../types";
 import { calendarFill } from "./colours";
 import { controlsFor } from "./event-form";
 import { repeatText, whoCanSee, withLinks } from "./event-text";
+import { AnswerButtons, PeopleList, PeopleSummary } from "./invitation-parts";
 import { JoinButton, meetingOf } from "./join-button";
 import { type ShownEvent, whenOf } from "./shown-event";
 
@@ -92,6 +94,13 @@ function EventFacts({
       : hours || repeat || undefined;
   return (
     <ul className="flex flex-col gap-2.5 text-[13px]">
+      {event.cancelled && (
+        <Fact icon={IconCalendarCancel}>
+          <p className="font-semibold text-danger">
+            Cancelled by the organiser
+          </p>
+        </Fact>
+      )}
       <Fact icon={IconClock} detail={detail}>
         <p>{days}</p>
       </Fact>
@@ -291,7 +300,9 @@ export function EventCard({
         onClose={() => onClose(true)}
       />
       <EventFacts event={event} zone={zone} today={today} />
+      <PeopleSummary event={event} />
       {meeting && <JoinButton link={meeting} />}
+      <AnswerButtons event={event} />
       <div className="flex flex-wrap gap-1.5">
         <Button
           variant="toolbar"
@@ -340,11 +351,13 @@ export function EventPanel({
           <p className="text-xs break-all text-secondary">{meeting.url}</p>
         </div>
       )}
+      <AnswerButtons event={event} />
       {event.notes && (
         <p dir="auto" className="text-[13px] break-words whitespace-pre-wrap">
           <LinkedText text={event.notes} />
         </p>
       )}
+      <PeopleList event={event} />
       <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
         <EventActions event={event} {...actions} />
       </div>

@@ -48,12 +48,18 @@ export type EventHandlers = {
   onSlot: (date: CivilDate, minute: number) => void;
 };
 
+// An invitation not yet answered is dashed, like an outline still to fill in. One the
+// person said No to, or that was called off, is struck through.
 function eventColours(event: ShownEvent, open: boolean, tinted: boolean) {
   const { colour } = event.calendar;
-  if (open) return `${calendarFill(colour)} text-on-avatar`;
+  const off = event.cancelled || event.answer === "no" ? "line-through" : "";
+  if (open) return `${calendarFill(colour)} text-on-avatar ${off}`;
+  if (event.answer === "needsAnswer" && !event.cancelled) {
+    return `border border-dashed ${calendarBorder(colour)} bg-page text-text hover:bg-field`;
+  }
   return tinted
-    ? `${calendarTint(colour)} text-text`
-    : "text-text hover:bg-field";
+    ? `${calendarTint(colour)} text-text ${off}`
+    : `text-text hover:bg-field ${off}`;
 }
 
 export function EventButton({

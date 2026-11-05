@@ -43,7 +43,14 @@ export function spokenLabel(
   today: CivilDate,
 ): string {
   const { days, hours } = whenOf(event, zone, today);
-  return [event.title, days, hours, event.calendar.name]
+  const state = event.cancelled
+    ? "cancelled"
+    : event.answer === "needsAnswer"
+      ? "invitation, not answered yet"
+      : event.answer === "no"
+        ? "not going"
+        : null;
+  return [event.title, days, hours, event.calendar.name, state]
     .filter(Boolean)
     .join(", ");
 }

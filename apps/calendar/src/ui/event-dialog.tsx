@@ -1,10 +1,11 @@
-import type { CalendarId } from "@cloudysuite/access";
+import type { CalendarId, UserId } from "@cloudysuite/access";
 import { Button, Modal, Notice } from "@cloudysuite/ui";
 import {
   IconCalendarX,
   IconMapPin,
   IconRepeat,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -42,6 +43,7 @@ import {
   type FormField,
   type FormStart,
   formOf,
+  type Guest,
   newForm,
   SCOPE_LABELS,
   scopesFor,
@@ -49,6 +51,8 @@ import {
   writableCalendars,
 } from "./event-form";
 import { REPEAT_NAMES, whoCanSee } from "./event-text";
+import { useMe } from "./me";
+import { PeoplePicker } from "./people-picker";
 import type { ShownEvent } from "./shown-event";
 
 const LABEL =
@@ -61,7 +65,8 @@ const CHECK = "size-4 flex-none accent-accent";
 const LINK =
   "cursor-pointer rounded text-[13px] text-accent outline-accent hover:underline focus-visible:outline-2";
 
-const LAST_USED = "cloudysuite.calendar.lastUsed";
+// Each person's own, because people can share a browser.
+const lastUsedKey = (me: UserId) => `cloudysuite.calendar.lastUsed.${me}`;
 
 export type Opening =
   { kind: "new"; start: FormStart } | { kind: "edit"; event: ShownEvent };
@@ -71,24 +76,27 @@ type Choice = CalendarId | "personal";
 const choiceOf = (entry: CalendarEntry): Choice => entry.id ?? "personal";
 
 // Storage can be turned off in the browser, and then the personal calendar comes first.
-function lastUsed(): string | null {
+function lastUsed(me: UserId): string | null {
   try {
-    return localStorage.getItem(LAST_USED);
+    return localStorage.getItem(lastUsedKey(me));
   } catch {
     return null;
   }
 }
 
-function rememberUsed(calendarId: CalendarId): void {
+function rememberUsed(me: UserId, calendarId: CalendarId): void {
   try {
-    localStorage.setItem(LAST_USED, calendarId);
+    localStorage.setItem(lastUsedKey(me), calendarId);
   } catch {
     return;
   }
 }
 
-const firstChoice = (writable: CalendarEntry[]): Choice | undefined => {
-  const last = lastUsed();
+const firstChoice = (
+  writable: CalendarEntry[],
+  me: UserId,
+): Choice | undefined => {
+  const last = lastUsed(me);
   const entry =
     writable.find((candidate) => candidate.id === last) ??
     writable.find((candidate) => candidate.kind === "personal") ??
@@ -148,6 +156,62 @@ function CalendarSwatch({ colour }: { colour: number }) {
   );
 }
 
+// Colleagues only for now, so the picker offers only the directory.
+function InviteField({
+  guests,
+  skip,
+  disabled,
+  onChange,
+}: {
+  guests: Guest[];
+  skip: ReadonlySet<string>;
+  disabled: boolean;
+  onChange: (guests: Guest[]) => void;
+}) {
+  const headingId = useId();
+  return (
+    <div role="group" aria-labelledby={headingId} className={LABEL}>
+      <span id={headingId}>Invite people</span>
+      {guests.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {guests.map((guest) => (
+            <li
+              key={guest.userId}
+              className="flex items-center gap-1 rounded bg-selected py-0.5 pr-0.5 pl-2 text-[13px] font-normal text-text"
+            >
+              <span dir="auto">{guest.name}</span>
+              <button
+                type="button"
+                aria-label={`Don't invite ${guest.name}`}
+                disabled={disabled}
+                className="flex size-6 cursor-pointer items-center justify-center rounded text-secondary outline-accent hover:bg-field focus-visible:outline-2"
+                onClick={() =>
+                  onChange(guests.filter((other) => other !== guest))
+                }
+              >
+                <IconX size={14} stroke={1.75} aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <PeoplePicker
+        label="Invite people"
+        skip={skip}
+        adding={null}
+        disabled={disabled}
+        onAdd={async (person) =>
+          onChange([...guests, { userId: person.id, name: person.name }])
+        }
+      />
+      <span className="font-normal text-secondary">
+        They see it in their own calendar straight away, and can answer Yes,
+        Maybe, or No.
+      </span>
+    </div>
+  );
+}
+
 function SeenBy({ entry }: { entry: CalendarEntry }) {
   return (
     <span className="font-normal text-secondary">
@@ -172,6 +236,7 @@ export function EventDialog({
   onClose: () => void;
 }) {
   const client = useQueryClient();
+  const me = useMe();
   const editing = opening.kind === "edit" ? opening.event : null;
   const [form, setForm] = useState(() =>
     opening.kind === "edit"
@@ -179,7 +244,10 @@ export function EventDialog({
       : newForm(opening.start, zone),
   );
   const writable = writableCalendars(calendars);
-  const [choice, setChoice] = useState(() => firstChoice(writable));
+  const [choice, setChoice] = useState(() => firstChoice(writable, me));
+  // The organiser is never one of their own guests.
+  const organiser =
+    editing?.organiser.kind === "madeHere" ? editing.organiser.userId : me;
   const chosen = editing
     ? editing.calendar
     : writable.find((entry) => choiceOf(entry) === choice);
@@ -240,7 +308,7 @@ export function EventDialog({
             ? await call(() => ensureMyCalendar())
             : choice;
         uid = await call(() => createEvent({ data: { calendarId, draft } }));
-        rememberUsed(calendarId);
+        rememberUsed(me, calendarId);
       }
       await client.invalidateQueries({ queryKey: calendarKeys.all });
       onSaved(uid);
@@ -538,6 +606,14 @@ export function EventDialog({
             {chosen && <SeenBy entry={chosen} />}
           </label>
         )}
+        <InviteField
+          guests={form.people}
+          skip={
+            new Set([organiser, ...form.people.map((guest) => guest.userId)])
+          }
+          disabled={pending}
+          onChange={(people) => set({ people })}
+        />
         <label className={LABEL}>
           Where
           <span className={WITH_ICON}>
@@ -599,7 +675,7 @@ export function DeleteEventDialog({
 }) {
   const client = useQueryClient();
   const removing = controlsFor(event, event.calendar) === "removeOnly";
-  const scopes = removing ? null : scopesFor(event, null);
+  const scopes = scopesFor(event, null);
   const [scope, setScope] = useState<ChangeScope>("this");
   const [failure, setFailure] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -650,6 +726,11 @@ export function DeleteEventDialog({
             This can't be undone.
           </p>
         )
+      )}
+      {!removing && event.people.length > 0 && (
+        <p className="text-sm text-secondary">
+          Everyone invited sees it as cancelled in their own calendar.
+        </p>
       )}
       {failure && <Notice tone="danger">{failure}</Notice>}
       <Actions>

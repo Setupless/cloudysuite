@@ -1,7 +1,7 @@
 import type { CalendarRole } from "@cloudysuite/access";
 import { Avatar, Notice, Working } from "@cloudysuite/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { peopleChoicesQuery } from "../queries";
 import type { Person } from "../types";
 
@@ -20,21 +20,25 @@ export const ROLES = [
 ] as const satisfies readonly { value: CalendarRole; label: string }[];
 
 export function PeoplePicker({
+  label,
   skip,
   adding,
   disabled,
   onAdd,
+  children,
 }: {
-  // People already on the calendar, who don't need offering again.
+  label: string;
+  // People already chosen, who don't need offering again.
   skip: ReadonlySet<string>;
   // Who's being added, named while the list catches up.
   adding: string | null;
   disabled: boolean;
-  onAdd: (person: Person, role: CalendarRole) => Promise<void>;
+  onAdd: (person: Person) => Promise<void>;
+  // More choices beside the box, such as what the person can do.
+  children?: ReactNode;
 }) {
   const choices = useQuery(peopleChoicesQuery());
   const [text, setText] = useState("");
-  const [role, setRole] = useState<CalendarRole>("editor");
   const [error, setError] = useState<string | null>(null);
   const listId = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -64,7 +68,7 @@ export function PeoplePicker({
     setError(null);
     refocus.current = true;
     try {
-      await onAdd(person, role);
+      await onAdd(person);
     } catch (failure) {
       setText(typed);
       setError((failure as Error).message);
@@ -78,27 +82,22 @@ export function PeoplePicker({
           ref={input}
           type="search"
           value={text}
-          aria-label="Add a person"
+          aria-label={label}
           aria-controls={listId}
           placeholder="Add a person"
           autoComplete="off"
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
+          // Enter picks the first match, rather than sending a form around the box.
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || wanted === "") return;
+            event.preventDefault();
+            const [first] = people;
+            if (first) void add(first);
+          }}
           className="min-w-0 flex-1 rounded border border-line bg-field px-3 py-2 text-sm text-text outline-accent focus-visible:outline-2 disabled:opacity-60"
         />
-        <select
-          aria-label="What they can do"
-          value={role}
-          disabled={disabled}
-          onChange={(event) => setRole(event.target.value as CalendarRole)}
-          className={ROLE_SELECT}
-        >
-          {ROLES.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        {children}
       </div>
       <div id={listId} className="flex max-h-44 flex-col overflow-y-auto">
         {people.slice(0, CHOICES_SHOWN).map((person) => (

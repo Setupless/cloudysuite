@@ -11,6 +11,7 @@ import {
   getMembers,
   getPeopleChoices,
   listEvents,
+  listInvitations,
 } from "./functions";
 import {
   type DayWindow,
@@ -83,7 +84,14 @@ export const calendarKeys = {
   searches: ["calendar", "search"] as const,
   search: (text: string, zone: TimeZone) =>
     ["calendar", "search", text, zone] as const,
+  invitations: (zone: TimeZone) => ["calendar", "invitations", zone] as const,
 };
+
+export const invitationsQuery = (timeZone: TimeZone) =>
+  queryOptions({
+    queryKey: calendarKeys.invitations(timeZone),
+    queryFn: () => call(() => listInvitations({ data: { timeZone } })),
+  });
 
 export const calendarsQuery = () =>
   queryOptions({
