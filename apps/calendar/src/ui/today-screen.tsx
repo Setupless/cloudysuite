@@ -297,7 +297,7 @@ function WeekStrip({
         <h2 className="font-semibold text-secondary">This week</h2>
         <Link
           to="/calendar/schedule"
-          className={`rounded text-accent hover:underline ${FOCUS}`}
+          className={`inline-flex min-h-6 items-center rounded text-accent hover:underline ${FOCUS}`}
         >
           Open schedule
         </Link>
@@ -410,12 +410,12 @@ function RestOfToday({
       <h2 className={SECTION}>Rest of today</h2>
       <ul>
         {finished.length > 0 && !showFinished && (
-          <li className="flex items-center gap-2 border-b border-line px-1 py-2.5 text-sm text-secondary">
+          <li className="flex items-center gap-2 border-b border-line px-1 py-2 text-sm text-secondary">
             <IconCheck size={15} stroke={1.75} aria-hidden />
             {finished.length} finished earlier
             <button
               type="button"
-              className={`cursor-pointer rounded text-accent hover:underline ${FOCUS}`}
+              className={`min-h-6 cursor-pointer rounded text-accent hover:underline ${FOCUS}`}
               onClick={() => setShowFinished(true)}
             >
               Show
@@ -424,10 +424,10 @@ function RestOfToday({
         )}
         {showFinished && finished.map((event) => row(event, true))}
         {showFinished && finished.length > 0 && (
-          <li className="border-b border-line px-1 py-2.5 text-sm">
+          <li className="border-b border-line px-1 py-2 text-sm">
             <button
               type="button"
-              className={`cursor-pointer rounded text-accent hover:underline ${FOCUS}`}
+              className={`min-h-6 cursor-pointer rounded text-accent hover:underline ${FOCUS}`}
               onClick={() => setShowFinished(false)}
             >
               Hide finished
@@ -546,8 +546,14 @@ function LiveToday() {
           <AllDayChip key={event.key} event={event} zone={zone} today={today} />
         ))}
       </Heading>
-      <div className="flex flex-col gap-5 px-4 pb-6">
+      <div
+        className="flex flex-col gap-5 px-4 pb-6"
+        aria-busy={(!ready && !failure) || undefined}
+      >
         {failure && <Notice tone="danger">{failure.message}</Notice>}
+        {!ready && !failure && (
+          <p className="px-1 py-3 text-sm text-secondary">Loading your day…</p>
+        )}
         {listing.data && !listing.data.complete && (
           <Notice tone="info">
             There are too many events this week to show them all.

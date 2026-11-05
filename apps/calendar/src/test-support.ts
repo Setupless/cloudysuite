@@ -120,9 +120,15 @@ export async function createCalendarTest() {
       object: InstanceType<typeof Calendar>;
       alarm: number | null;
     };
+    const kv = new Map<string, unknown>();
     const ctx = {
       storage: {
         sql: { exec: db.exec },
+        kv: {
+          get: (key: string) => kv.get(key),
+          put: (key: string, value: unknown) => kv.set(key, value),
+          delete: (key: string) => kv.delete(key),
+        },
         transactionSync: db.transaction,
         setAlarm: async (at: number) => {
           if (at <= 0) throw new Error("setAlarm() needs a time above 0");

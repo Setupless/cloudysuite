@@ -46,6 +46,7 @@ const noJoin: [string, string][] = [
   ["a host in the path", "https://evil.com/meet.google.com"],
   ["a host in the query", "https://evil.com/?next=https://meet.google.com/x"],
   ["a host as userinfo", "https://meet.google.com@evil.com/abc-defg-hij"],
+  ["the real host after a backslash", "https://evil.com\\@meet.google.com"],
   ["userinfo on the real host", "https://sam@meet.google.com/abc-defg-hij"],
   ["a password on the real host", "https://sam:pw@zoom.us/j/1"],
   ["a port", "https://meet.google.com:8443/abc-defg-hij"],
@@ -71,6 +72,36 @@ test.each(noJoin)("%s gets no Join button", (_, link) => {
   expect(
     meetingLink({ conference: null, location: "", notes: `Join ${link}` }),
   ).toBeNull();
+});
+
+// The URL parser reads a backslash as a slash and decodes %2E and full-width dots, so
+// each of these names Meet's own host, and the button opens nowhere else.
+const realHost: [string, string][] = [
+  ["a backslash before @", "https://meet.google.com\\@evil.com/x"],
+  ["%2E for each dot", "https://meet%2Egoogle%2Ecom/x"],
+  ["full-width dots", "https://meet．google．com/x"],
+];
+
+test.each(realHost)("%s still joins Meet at its real host", (_, link) => {
+  for (const sources of [
+    { conference: link, location: "", notes: "" },
+    { conference: null, location: link, notes: "" },
+    { conference: null, location: "", notes: `Join ${link}` },
+  ]) {
+    const found = meetingLink(sources);
+    expect(found?.service).toBe("Google Meet");
+    expect(new URL(found!.url).host).toBe("meet.google.com");
+  }
+});
+
+test("a Markdown link in the notes opens the Meet address it shows, not the hidden one", () => {
+  const found = meetingLink({
+    conference: null,
+    location: "",
+    notes: "[https://meet.google.com/x](https://evil.com)",
+  });
+  expect(found?.service).toBe("Google Meet");
+  expect(new URL(found!.url).host).toBe("meet.google.com");
 });
 
 test("a link inside text is found without the punctuation after it", () => {

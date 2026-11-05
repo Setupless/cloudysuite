@@ -104,8 +104,8 @@ beforeEach(async () => {
   add(MY_FILES, ben, "manager", 1);
   add(ALONE, ben, "manager", 1);
   add(MANAGED, ben, "manager", 1);
-  add(MANAGED, cam, "viewer", 2);
-  add(MANAGED, ada, "editor", 3);
+  add(MANAGED, cam, "viewer", 3);
+  add(MANAGED, ada, "editor", 2);
   add(SHARED_OUT, ada, "manager", 1);
   add(SHARED_OUT, ben, "editor", 2);
 

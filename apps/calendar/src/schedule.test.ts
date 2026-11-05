@@ -57,6 +57,24 @@ test("an address with a wrong part opens the default for that part", () => {
   });
 });
 
+test("a date whose page reaches past the years Calendar keeps opens today instead", () => {
+  expect(parseScheduleSearch({ view: "month", date: "2199-12-15" })).toEqual({
+    view: "month",
+  });
+  expect(parseScheduleSearch({ date: "2199-12-31" })).toEqual({});
+  expect(parseScheduleSearch({ view: "day", date: "1900-01-01" })).toEqual({
+    view: "day",
+  });
+  expect(parseScheduleSearch({ view: "month", date: "2199-11-15" })).toEqual({
+    view: "month",
+    date: date("2199-11-15"),
+  });
+  expect(parseScheduleSearch({ view: "day", date: "2199-12-29" })).toEqual({
+    view: "day",
+    date: date("2199-12-29"),
+  });
+});
+
 test("Day, Week, and Month cover whole days across Sydney's change on 4 October", () => {
   expect(visibleDays(place("day", "2026-10-04"))).toEqual({
     from: date("2026-10-04"),
