@@ -3,8 +3,11 @@ import type { Icon } from "@tabler/icons-react";
 import {
   IconArrowsDiagonal,
   IconCalendar,
+  IconCalendarX,
   IconClock,
   IconMapPin,
+  IconPencil,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import {
@@ -17,6 +20,7 @@ import {
 } from "react";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarFill } from "./colours";
+import { controlsFor } from "./event-form";
 import { repeatText, whoCanSee, withLinks } from "./event-text";
 import { type ShownEvent, whenOf } from "./shown-event";
 
@@ -138,6 +142,54 @@ function EventHeading({
   );
 }
 
+// Called with the button pressed, so focus can go back to it.
+export type EventActionHandlers = {
+  onEdit: (button: HTMLElement) => void;
+  onDelete: (button: HTMLElement) => void;
+};
+
+function EventActions({
+  event,
+  onEdit,
+  onDelete,
+}: EventActionHandlers & { event: ShownEvent }) {
+  switch (controlsFor(event, event.calendar)) {
+    case "none":
+      return null;
+    case "removeOnly":
+      return (
+        <Button
+          variant="toolbar"
+          icon={IconCalendarX}
+          onClick={(click) => onDelete(click.currentTarget)}
+        >
+          {event.calendar.kind === "personal"
+            ? "Remove from my calendar"
+            : "Remove from calendar"}
+        </Button>
+      );
+    case "editAndDelete":
+      return (
+        <>
+          <Button
+            variant="toolbar"
+            icon={IconPencil}
+            onClick={(click) => onEdit(click.currentTarget)}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="toolbar"
+            icon={IconTrash}
+            onClick={(click) => onDelete(click.currentTarget)}
+          >
+            Delete
+          </Button>
+        </>
+      );
+  }
+}
+
 const clamp = (value: number, low: number, high: number) =>
   Math.min(Math.max(value, low), Math.max(low, high));
 
@@ -173,7 +225,8 @@ export function EventCard({
   today,
   onClose,
   onOpenDetails,
-}: {
+  ...actions
+}: EventActionHandlers & {
   event: ShownEvent;
   anchor: HTMLElement;
   zone: TimeZone;
@@ -236,7 +289,7 @@ export function EventCard({
         onClose={() => onClose(true)}
       />
       <EventFacts event={event} zone={zone} today={today} />
-      <div className="flex">
+      <div className="flex flex-wrap gap-1.5">
         <Button
           variant="toolbar"
           icon={IconArrowsDiagonal}
@@ -244,6 +297,7 @@ export function EventCard({
         >
           Open details
         </Button>
+        <EventActions event={event} {...actions} />
       </div>
     </div>
   );
@@ -254,7 +308,8 @@ export function EventPanel({
   zone,
   today,
   onClose,
-}: {
+  ...actions
+}: EventActionHandlers & {
   event: ShownEvent;
   zone: TimeZone;
   today: CivilDate;
@@ -280,6 +335,9 @@ export function EventPanel({
           <LinkedText text={event.notes} />
         </p>
       )}
+      <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
+        <EventActions event={event} {...actions} />
+      </div>
     </aside>
   );
 }

@@ -44,6 +44,8 @@ export type EventHandlers = {
   opensCard: boolean;
   onOpen: (event: ShownEvent, anchor: HTMLElement) => void;
   onOpenDay: (date: CivilDate) => void;
+  // A click on an empty part of a day, in minutes after its midnight.
+  onSlot: (date: CivilDate, minute: number) => void;
 };
 
 function eventColours(event: ShownEvent, open: boolean, tinted: boolean) {
@@ -76,6 +78,7 @@ export function EventButton({
       aria-label={spokenLabel(event, zone, today)}
       aria-haspopup={opensCard ? "dialog" : undefined}
       aria-expanded={open}
+      data-event-key={event.key}
       style={style}
       className={`cursor-pointer text-left ${FOCUS} ${eventColours(event, open, tinted)} ${className}`}
       onClick={(click) => onOpen(event, click.currentTarget)}
@@ -299,6 +302,11 @@ export function TimeGrid({
             role="group"
             aria-label={dayTitle(day, today)}
             data-column
+            onClick={(click) => {
+              if (click.target === click.currentTarget) {
+                handlers.onSlot(day, click.nativeEvent.offsetY / PX_PER_MINUTE);
+              }
+            }}
             className={`relative h-[1152px] border-l border-line bg-[repeating-linear-gradient(to_bottom,transparent_0_47px,var(--color-line)_47px_48px)] ${isWeekend(day) ? "bg-weekend" : ""}`}
           >
             {layout.columns[index]?.map((block) => (

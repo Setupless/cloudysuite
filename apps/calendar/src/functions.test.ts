@@ -12,6 +12,7 @@ import {
 } from "../../auth/src/admin/test-kit";
 import { createCalendarTest, date, draft, SYDNEY, TEAM } from "./test-support";
 import {
+  type ChangeScope,
   type EventTime,
   LAST_MANAGER_MESSAGE,
   NO_ACCESS_MESSAGE,
@@ -19,7 +20,10 @@ import {
   type OccurrenceId,
   ONLY_MANAGERS_MESSAGE,
   PERSONAL_CALENDAR_MESSAGE,
+  READ_ONLY_MESSAGE,
+  VIEW_ONLY_MESSAGE,
 } from "./types";
+import { controlsFor, draftOf, formOf } from "./ui/event-form";
 
 // Outside Vite a server function never reaches its handler, so this runs the validator
 // and handler as the compiled server function would.
@@ -450,4 +454,173 @@ test("removing someone hands their calendar to the person chosen, events and all
       organiser: { kind: "madeHere", userId: removed, name: "Sam Rivera" },
     }),
   );
+});
+
+const SERIES_DAYS = [
+  "2026-11-02",
+  "2026-11-09",
+  "2026-11-16",
+  "2026-11-23",
+  "2026-11-30",
+  "2026-12-07",
+  "2026-12-14",
+  "2026-12-21",
+  "2026-12-28",
+  "2027-01-04",
+];
+
+async function seriesNow() {
+  const { occurrences } = await as(people.editor).listEvents({
+    data: {
+      from: date("2026-11-01"),
+      to: date("2027-03-01"),
+      timeZone: SYDNEY,
+    },
+  });
+  return occurrences
+    .filter((occurrence) => occurrence.title !== "Spring launch review")
+    .map((occurrence) => [
+      occurrence.title,
+      new Date((occurrence.time as { start: number }).start).toLocaleDateString(
+        "en-CA",
+        { timeZone: SYDNEY },
+      ),
+    ]);
+}
+
+const titled = (titleOn: (index: number) => string | null) =>
+  SERIES_DAYS.flatMap((day, index) => {
+    const title = titleOn(index);
+    return title ? [[title, day]] : [];
+  });
+
+test.each([
+  ["save", "this", titled((i) => (i === 3 ? "Changed" : "Standup"))],
+  ["save", "thisAndLater", titled((i) => (i >= 3 ? "Changed" : "Standup"))],
+  ["save", "all", titled(() => "Changed")],
+  ["delete", "this", titled((i) => (i === 3 ? null : "Standup"))],
+  ["delete", "thisAndLater", titled((i) => (i >= 3 ? null : "Standup"))],
+  ["delete", "all", titled(() => null)],
+] as const)(
+  "%s with %s on the fourth of ten dates covers what it says",
+  async (action, scope: ChangeScope, expected) => {
+    await as(people.editor).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: draft(
+          timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+          {
+            title: "Standup",
+            repeat: {
+              frequency: "weekly",
+              end: { kind: "afterTimes", times: 10 },
+            },
+          },
+        ),
+      },
+    });
+    const { occurrences } = await as(people.editor).listEvents({
+      data: {
+        from: date("2026-11-23"),
+        to: date("2026-11-24"),
+        timeZone: SYDNEY,
+      },
+    });
+    const fourth = occurrences[0]!;
+    const target = { uid: fourth.uid, occurrenceId: fourth.occurrenceId };
+
+    if (action === "save") {
+      const checked = draftOf(
+        { ...formOf(fourth, SYDNEY), title: "Changed" },
+        SYDNEY,
+      );
+      if (!checked.ok) throw new Error(checked.message);
+      await as(people.editor).updateEvent({
+        data: { calendarId: TEAM, target, scope, draft: checked.draft },
+      });
+    } else {
+      await as(people.editor).deleteEvent({
+        data: { calendarId: TEAM, target, scope },
+      });
+    }
+    expect(await seriesNow()).toEqual(expected);
+  },
+);
+
+test("Can view is refused making, changing, or deleting an event, and sees no buttons for it", async () => {
+  const target = { uid: "launch-review", occurrenceId: null };
+  const meeting = draft(
+    timed("2026-11-06T09:00:00+11:00", "2026-11-06T10:00:00+11:00"),
+  );
+  const viewer = as(people.viewer);
+  const before = calendarNow().events;
+  for (const attempt of [
+    () => viewer.createEvent({ data: { calendarId: TEAM, draft: meeting } }),
+    () =>
+      viewer.updateEvent({
+        data: { calendarId: TEAM, target, scope: "all", draft: meeting },
+      }),
+    () =>
+      viewer.deleteEvent({ data: { calendarId: TEAM, target, scope: "all" } }),
+  ]) {
+    expect(await refused(attempt())).toEqual({
+      status: 403,
+      message: VIEW_ONLY_MESSAGE,
+    });
+  }
+  expect(calendarNow().events).toEqual(before);
+  const [seen] = (
+    await viewer.listEvents({
+      data: {
+        from: date("2026-11-05"),
+        to: date("2026-11-06"),
+        timeZone: SYDNEY,
+      },
+    })
+  ).occurrences;
+  expect(controlsFor(seen!, (await teamFor(people.viewer))!)).toBe("none");
+});
+
+test("an invitation copy has no Edit, is refused a change, and can be removed", async () => {
+  objects.arrive({
+    uid: "supplier@example.net",
+    title: "Supplier call",
+    start: Date.parse("2026-11-10T15:00:00+11:00"),
+    end: Date.parse("2026-11-10T15:30:00+11:00"),
+    timeZone: SYDNEY,
+    rule: null,
+    organiser: { kind: "invitation", email: "jo@example.net", name: "Jo" },
+  });
+  const editor = as(people.editor);
+  const day = {
+    from: date("2026-11-10"),
+    to: date("2026-11-11"),
+    timeZone: SYDNEY,
+  };
+  const [copy] = (await editor.listEvents({ data: day })).occurrences;
+  expect(controlsFor(copy!, (await teamFor(people.editor))!)).toBe(
+    "removeOnly",
+  );
+
+  const target = { uid: copy!.uid, occurrenceId: null };
+  const checked = draftOf(
+    { ...formOf(copy!, SYDNEY), title: "Mine now" },
+    SYDNEY,
+  );
+  if (!checked.ok) throw new Error(checked.message);
+  expect(
+    await refused(
+      editor.updateEvent({
+        data: { calendarId: TEAM, target, scope: "all", draft: checked.draft },
+      }),
+    ),
+  ).toEqual({ status: 403, message: READ_ONLY_MESSAGE });
+  expect((await editor.listEvents({ data: day })).occurrences).toMatchObject([
+    { title: "Supplier call" },
+  ]);
+
+  await editor.deleteEvent({
+    data: { calendarId: TEAM, target, scope: "all" },
+  });
+  expect((await editor.listEvents({ data: day })).occurrences).toEqual([]);
 });
