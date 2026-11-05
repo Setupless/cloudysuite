@@ -78,8 +78,10 @@ export type QueuedEmail = {
 
 // iTIP's REQUEST, for an invitation or an update, and CANCEL.
 export type EmailMethod = "request" | "cancel";
-
 export type EmailPlanOrganiser = { userId: UserId; name: string | null };
+
+// The event was deleted, or its whole team calendar was.
+export type Gone = "deleted" | "calendarDeleted";
 
 // What one queued email says, read from the event as it is when it goes.
 export type EmailPlan =
@@ -101,7 +103,7 @@ export type EmailPlan =
       // At a sequence above any that went before.
       series: DeliveredPart;
       to: PersonKey;
-      why: "uninvited" | "deleted";
+      why: "uninvited" | Gone;
     }
   // Nothing to say, as to someone taken off before anything reached them.
   | { method: "none" };

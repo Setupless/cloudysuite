@@ -153,9 +153,9 @@ function wordsOf(email: InvitationEmail): Words {
   return {
     subject: `Cancelled: ${title}, ${when}`,
     opening:
-      plan.why === "deleted"
-        ? `${organiser} cancelled ${title}.`
-        : `${organiser} took you off the list for ${title}, so you're no longer invited.`,
+      plan.why === "uninvited"
+        ? `${organiser} took you off the list for ${title}, so you're no longer invited.`
+        : `${organiser} cancelled ${title}.`,
     details,
     notes: "",
     closing: null,

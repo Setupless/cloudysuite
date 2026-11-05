@@ -115,7 +115,10 @@ async function sendOne(
   try {
     [facts, canEdit] = await Promise.all([
       readSendingFacts(database, plan.organiser.userId, colleaguesIn(plan, to)),
-      canStillEdit(database, queued.changedBy, queued.calendarId),
+      // Nobody can edit a deleted calendar. Its manager was checked as they deleted it.
+      plan.method === "cancel" && plan.why === "calendarDeleted"
+        ? true
+        : canStillEdit(database, queued.changedBy, queued.calendarId),
     ]);
   } catch (error) {
     console.error("Could not check whether an invitation may go.", error);
@@ -176,7 +179,7 @@ async function sendOne(
     }
     return;
   }
-  if (plan.method === "cancel" && plan.why === "deleted") {
+  if (plan.method === "cancel" && plan.why !== "uninvited") {
     store.dropEmail(queued);
   } else {
     store.emailWent(queued, plan.method);

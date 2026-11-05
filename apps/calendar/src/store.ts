@@ -14,6 +14,7 @@ import {
   type EmailMethod,
   type EmailPlan,
   type EmailPlanOrganiser,
+  type Gone,
   type QueuedDelivery,
   type QueuedEmail,
   retryAt,
@@ -279,7 +280,11 @@ type EmailRow = SqlRow & {
 };
 
 // What an email to someone about an event that's been deleted still needs.
-type GoneEvent = { organiser: EmailPlanOrganiser; series: DeliveredPart };
+type GoneEvent = {
+  organiser: EmailPlanOrganiser;
+  series: DeliveredPart;
+  why: Gone;
+};
 
 // A claim that never finished is found by this wake-up, and only then, since one
 // object's alarm handlers never overlap.
@@ -729,7 +734,7 @@ export class EventStore {
   }
 
   // Deleting an event takes its rows, so its cancellations keep what they need to say.
-  #keepForCancelling(uid: EventUid): void {
+  #keepForCancelling(uid: EventUid, why: Gone): void {
     const series = this.#series(uid);
     if (!series || series.organiser.kind !== "madeHere") return;
     const gone: GoneEvent = {
@@ -741,6 +746,7 @@ export class EventStore {
         ...deliveredPartOf(series),
         sequence: this.#nextSequence(uid),
       },
+      why,
     };
     this.db.exec(
       "UPDATE invitation_emails SET gone = ? WHERE uid = ?",
@@ -1188,7 +1194,7 @@ export class EventStore {
     this.db.transaction(() => {
       if (people && !people.reply) {
         this.#queueFor(uid, people.attendees, [], actor, now);
-        this.#keepForCancelling(uid);
+        this.#keepForCancelling(uid, "deleted");
       }
       this.db.exec(
         `INSERT INTO removed_events (uid, sequence, removed_at)
@@ -1689,7 +1695,7 @@ export class EventStore {
       organiser: gone.organiser,
       series: gone.series,
       to: queued.recipient,
-      why: "deleted",
+      why: gone.why,
     };
   }
 
@@ -1976,7 +1982,7 @@ export class EventStore {
       for (const row of invited) {
         const people = JSON.parse(row.attendees) as StoredAttendee[];
         this.#queueFor(row.uid as EventUid, people, [], actor, now);
-        this.#keepForCancelling(row.uid as EventUid);
+        this.#keepForCancelling(row.uid as EventUid, "calendarDeleted");
         this.db.exec(
           `INSERT INTO removed_events (uid, sequence, removed_at)
            SELECT uid, max(sequence), ? FROM events WHERE uid = ? GROUP BY uid
