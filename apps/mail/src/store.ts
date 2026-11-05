@@ -205,8 +205,6 @@ function toMessageDetail(
 
 export type ThreadFacts = { folders: Folder[]; labelIds: LabelId[] };
 
-type Stored = MessageRef & { status: "stored" };
-
 export type MessageContentRefs = { body: BodyRef[]; inline: AttachmentRef[] };
 
 function toSummary(
@@ -317,9 +315,7 @@ export class MailboxStore {
     });
   }
 
-  // `stored` runs in the same transaction, so a job a new message needs is written with
-  // it or not at all.
-  commit(message: NewMessage, stored?: (result: Stored) => void): CommitResult {
+  commit(message: NewMessage): CommitResult {
     return this.#db.transaction(() => {
       if (message.source === "inbound") {
         this.#db.exec(
@@ -358,14 +354,12 @@ export class MailboxStore {
       );
       this.#rememberCorrespondents(message, placement.folder);
       this.refreshThread(threadId);
-      const result: Stored = {
+      return {
         status: "stored",
         messageId,
         threadId,
         folder: placement.folder,
       };
-      stored?.(result);
-      return result;
     });
   }
 

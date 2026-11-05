@@ -9,9 +9,9 @@ import { provedSenderDomain } from "./spam/signals";
 import type { MessageId, NewMessage } from "./types";
 
 // Calendar reads invitations, updates, cancellations, and replies from inbound mail. Each
-// message with a calendar part waits here, written in the transaction that stores it,
-// and the alarm hands it over. Only Calendar's one entry for this is called, after the
-// message is safe, so nothing Calendar does can lose or hold up mail.
+// message with a calendar part waits here, written once the message is stored, and the
+// alarm hands it over. Only Calendar's one entry for this is called, after the message
+// is safe, so nothing Calendar does can lose or hold up mail.
 
 const CALENDAR_TYPES = ["text/calendar", "application/ics"];
 // Each hand-off waits on the directory and on calendars, so a run hands over a few and

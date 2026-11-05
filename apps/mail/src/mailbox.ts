@@ -112,29 +112,27 @@ export class Mailbox extends DurableObject<Env> {
 
   // `inbound` is set only by the inbound path. A Durable Object cannot reliably read its
   // own name during an alarm, so the jobs need to be told which mailbox this is. Spam
-  // adds nothing to a calendar, because the filter judged it unwanted.
+  // adds nothing to a calendar, because the filter judged it unwanted. The jobs are
+  // written after the message's own transaction, so one that can't be written can never
+  // undo the message.
   async commit(
     message: NewMessage,
     inbound: InboundCommit | null = null,
   ): Promise<CommitResult> {
-    const result = this.#store.commit(
-      message,
-      inbound
-        ? ({ messageId, folder }) => {
-            const now = Date.now();
-            if (inbound.notify && announces(folder)) {
-              this.#push.enqueue(messageId, inbound.to, now);
-            }
-            if (
-              inbound.calendar &&
-              folder !== "spam" &&
-              carriesCalendar(message)
-            ) {
-              this.#calendar.enqueue(messageId, message, inbound.to, now);
-            }
-          }
-        : undefined,
-    );
+    const result = this.#store.commit(message);
+    if (inbound && result.status === "stored") {
+      const now = Date.now();
+      if (inbound.notify && announces(result.folder)) {
+        this.#push.enqueue(result.messageId, inbound.to, now);
+      }
+      if (
+        inbound.calendar &&
+        result.folder !== "spam" &&
+        carriesCalendar(message)
+      ) {
+        this.#calendar.enqueue(result.messageId, message, inbound.to, now);
+      }
+    }
     await this.#scheduleNextWakeUp();
     return result;
   }
