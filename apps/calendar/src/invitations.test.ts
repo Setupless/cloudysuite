@@ -781,6 +781,31 @@ test("someone taken off and put back before their copy heard is asked again too"
   expect(answers((await seen(people.manager))[0])).toEqual(expected);
 });
 
+test("an answer still on its way isn't undone by a change that crosses it", async () => {
+  const uid = await invite([people.outsider]);
+  objects.unreachable.add(TEAM);
+  try {
+    await answer(people.outsider, uid, "yes");
+    await change(uid, { people: [people.outsider, people.editor] });
+    expect((await seen(people.outsider))[0]?.answer).toBe("yes");
+
+    objects.unreachable.delete(TEAM);
+    const mine = await personalOf(people.outsider);
+    setSystemTime(new Date(objects.alarmOf(mine)!));
+    await objects.settle();
+  } finally {
+    setSystemTime();
+  }
+  expect(answers((await seen(people.manager))[0])).toEqual({
+    "Jo Okafor": "yes",
+    "Maya Chen": "needsAnswer",
+  });
+  expect(answers((await seen(people.outsider))[0])).toEqual({
+    "Jo Okafor": "yes",
+    "Maya Chen": "needsAnswer",
+  });
+});
+
 test("an answer given again still reaches the organiser", async () => {
   const uid = await invite([people.outsider]);
   await answer(people.outsider, uid, "yes");

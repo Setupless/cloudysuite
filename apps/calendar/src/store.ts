@@ -540,11 +540,9 @@ export class EventStore {
     );
   }
 
-  #writePeople(uid: EventUid, people: People | null): void {
-    if (people === null || people.attendees.length === 0) {
-      this.db.exec("DELETE FROM event_people WHERE uid = ?", uid);
-      return;
-    }
+  // A list that empties keeps its row, so its revision keeps growing, and a copy takes the
+  // list as newer once someone is put back on it.
+  #writePeople(uid: EventUid, people: People): void {
     this.db.exec(
       `INSERT INTO event_people (uid, attendees, revision, reply) VALUES (?, ?, ?, ?)
        ON CONFLICT (uid) DO UPDATE SET attendees = excluded.attendees,
@@ -748,7 +746,9 @@ export class EventStore {
         },
         now,
       );
-      this.#writePeople(uid, { attendees, revision: 1, reply: null });
+      if (attendees.length > 0) {
+        this.#writePeople(uid, { attendees, revision: 1, reply: null });
+      }
       this.#queueFor(uid, [], attendees, actor, now);
     });
     return { status: "created", uid };
@@ -860,7 +860,13 @@ export class EventStore {
         },
         now,
       );
-      this.#writePeople(uid, { attendees: carried, revision: 1, reply: null });
+      if (carried.length > 0) {
+        this.#writePeople(uid, {
+          attendees: carried,
+          revision: 1,
+          reply: null,
+        });
+      }
       this.#queueFor(uid, [], carried, actor, now);
     });
     return { status: "done" };
@@ -1032,7 +1038,8 @@ export class EventStore {
   }
 
   // Only the person the copy was sent to answers it, even once their calendar has been
-  // handed to someone else. The answer stays here, and a notice takes it to the organiser.
+  // handed to someone else. The answer stays here, and a notice takes it to the organiser,
+  // even when it's the answer already shown, so pressing it again always reaches them.
   answer(
     actor: Actor,
     uid: EventUid,
@@ -1051,7 +1058,6 @@ export class EventStore {
     ) {
       return { status: "gone" };
     }
-    if (reply.answer === answer) return { status: "done" };
     const given = { ...reply, answer, revision: reply.revision + 1 };
     const calendarId = series.organiser.calendarId;
     this.db.transaction(() => {
@@ -1127,9 +1133,10 @@ export class EventStore {
       cancelled: false,
     });
     const removal = readRemovals(this.db, [uid]).get(uid);
+    const newerSeries = !held || seriesPart.sequence > held.sequence;
     let changed = false;
     this.db.transaction(() => {
-      if (!held || seriesPart.sequence > held.sequence) {
+      if (newerSeries) {
         changed = true;
         this.#replaceCopySeries(
           held,
@@ -1143,19 +1150,37 @@ export class EventStore {
         const id = part.recurrenceId;
         if (id === null || isRemovedHere(removal, id)) continue;
         const heldChange = this.#changeOf(uid, id);
-        if (heldChange && heldChange.sequence >= part.sequence) continue;
+        // A newer series comes with the whole event as the organiser has it now, so each
+        // changed date with it counts, even one here that was called off with the event.
+        if (
+          !newerSeries &&
+          heldChange &&
+          heldChange.sequence >= part.sequence
+        ) {
+          continue;
+        }
         changed = true;
         this.#write(copyOf(part), now);
       }
       const heldPeople = this.#people(uid);
       if (!heldPeople || delivery.peopleRevision > heldPeople.revision) {
         changed = true;
-        const reply = heldPeople?.reply ?? {
-          for: delivery.to,
+        const given = heldPeople?.reply;
+        const [onItsWay] = this.#rows(
+          "SELECT 1 FROM answer_notices WHERE uid = ?",
+          uid,
+        );
+        const theirs = delivery.people.find(
+          (person) => person.userId === delivery.to,
+        );
+        // The organiser's record of this person's answer, unless the one given here hasn't
+        // reached the organiser yet. So someone taken off and put back is asked again.
+        const reply: Reply = {
+          ...(given ?? { for: delivery.to, revision: 0 }),
           answer:
-            delivery.people.find((person) => person.userId === delivery.to)
-              ?.answer ?? "needsAnswer",
-          revision: 0,
+            given && onItsWay
+              ? given.answer
+              : (theirs?.answer ?? "needsAnswer"),
         };
         this.#writePeople(uid, {
           attendees: delivery.people.map((person) => ({
