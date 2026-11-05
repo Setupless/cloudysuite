@@ -712,6 +712,34 @@ test("an invitation that arrives again changes nothing, not even the answer give
   ]);
 });
 
+test("the mail is kept when its notification or its hand-off to Calendar can't be queued", async () => {
+  const box = mail.instanceOf(mailboxes.boss);
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    box.sqlite.run("DROP TABLE push_outbox");
+    await deliver(
+      [
+        "From: Pat <pat@friend.example.net>",
+        "To: boss@example.com",
+        "Subject: Lunch on Friday",
+        "Message-ID: <lunch@friend.example.net>",
+        "Date: Thu, 05 Nov 2026 00:00:00 +0000",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "Are you free?",
+      ].join("\r\n"),
+    ).catch(() => {});
+    box.sqlite.run("DROP TABLE calendar_handoffs");
+    await deliver(google()).catch(() => {});
+  } finally {
+    logged.mockRestore();
+  }
+  expect(folderOf(mailboxes.boss, "inbox").sort()).toEqual([
+    "Invitation: Supplier review",
+    "Lunch on Friday",
+  ]);
+});
+
 test("the mail is kept when Calendar can't be reached, and the invitation lands on a later try", async () => {
   const personal = await ensurePersonalCalendar(kit.database, kit.admin);
   calendars.unreachable.add(personal);
