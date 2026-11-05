@@ -1,7 +1,7 @@
 import type { UserId } from "@cloudysuite/access";
 import { judgeSendError, retryDelay } from "@cloudysuite/mail/send-outcome";
 import { canStillEdit } from "../client";
-import type { EmailPlan, QueuedEmail } from "../invitations";
+import { type EmailPlan, heldAfter, type QueuedEmail } from "../invitations";
 import type { EventStore } from "../store";
 import type {
   Attendee,
@@ -159,7 +159,8 @@ async function sendOne(
     id: crypto.randomUUID(),
   });
 
-  if (!store.claimEmail(queued, plan.method, now)) return;
+  const held = heldAfter(plan);
+  if (!store.claimEmail(queued, held, now)) return;
   await context.saveProgress();
   try {
     await email.send({
@@ -175,14 +176,18 @@ async function sendOne(
       store.refuseEmail(queued, REFUSED[outcome.failure] ?? "invalidMessage");
     } else {
       console.error("An invitation email ended without a clear answer.", error);
-      store.emailUnclear(queued, plan.method);
+      store.emailUnclear(queued, held);
     }
     return;
   }
-  if (plan.method === "cancel" && plan.why !== "uninvited") {
+  // Nothing more can be said about an event that's gone.
+  if (
+    plan.method === "cancel" &&
+    (plan.why === "deleted" || plan.why === "calendarDeleted")
+  ) {
     store.dropEmail(queued);
   } else {
-    store.emailWent(queued, plan.method);
+    store.emailWent(queued, held);
   }
 }
 

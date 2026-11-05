@@ -109,7 +109,12 @@ type Words = {
 
 function wordsOf(email: InvitationEmail): Words {
   const { plan, from, now } = email;
-  const series = plan.method === "request" ? plan.parts[0]! : plan.series;
+  const series =
+    plan.method === "request"
+      ? plan.parts[0]!
+      : plan.why === "dateCancelled"
+        ? plan.date
+        : plan.series;
   const title = series.title;
   const when = whenText(series.time, now);
   const organiser = nameOf(from);
@@ -152,10 +157,12 @@ function wordsOf(email: InvitationEmail): Words {
   }
   return {
     subject: `Cancelled: ${title}, ${when}`,
-    opening:
-      plan.why === "uninvited"
-        ? `${organiser} took you off the list for ${title}, so you're no longer invited.`
-        : `${organiser} cancelled ${title}.`,
+    opening: {
+      uninvited: `${organiser} took you off the list for ${title}, so you're no longer invited.`,
+      dateCancelled: `${organiser} cancelled ${title} on this date only. The other dates haven't changed.`,
+      deleted: `${organiser} cancelled ${title}.`,
+      calendarDeleted: `${organiser} cancelled ${title}.`,
+    }[plan.why],
     details,
     notes: "",
     closing: null,

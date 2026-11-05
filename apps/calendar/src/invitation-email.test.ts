@@ -810,7 +810,7 @@ test("calling off one date sends a cancellation for that date alone", async () =
     expect(cancelled.ics).toContain(
       "RECURRENCE-ID;TZID=Australia/Sydney:20261117T100000",
     );
-    expect(cancelled.ics).not.toContain("RRULE");
+    expect(cancelled.ics).not.toContain("RRULE:FREQ=WEEKLY");
     expect(cancelled.events).toHaveLength(1);
     expect(cancelled.events[0]).toMatchObject({
       uid,

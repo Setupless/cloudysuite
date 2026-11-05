@@ -110,9 +110,7 @@ const cleanName = (name: string) =>
 // ical.js escapes a line feed but writes a carriage return as it is, which some readers
 // take as the end of the line. Line breaks become line feeds, and other breaks spaces.
 const cleanText = (text: string) =>
-  text
-    .replace(/\r\n?/g, "\n")
-    .replace(/[^\P{Cc}\t\n]|[\p{Zl}\p{Zp}]/gu, " ");
+  text.replace(/\r\n?/g, "\n").replace(/[^\P{Cc}\t\n]|[\p{Zl}\p{Zp}]/gu, " ");
 
 function addPerson(
   event: ICAL.Component,
@@ -222,10 +220,18 @@ export function invitationIcs(input: IcsInput): string {
     "method",
     plan.method === "request" ? "REQUEST" : "CANCEL",
   );
-  const parts = plan.method === "request" ? plan.parts : [plan.series];
-  const series = parts[0] as DeliveredPart;
-  for (const zone of zonesOf(parts)) {
-    const first = parts.find(
+  const series =
+    plan.method === "request" ? (plan.parts[0] as DeliveredPart) : plan.series;
+  const parts =
+    plan.method === "request"
+      ? plan.parts
+      : plan.why === "dateCancelled"
+        ? [plan.date]
+        : [plan.series];
+  // A cancelled date is named on the series' own clock, which may not be its own.
+  const timed = [series, ...parts];
+  for (const zone of zonesOf(timed)) {
+    const first = timed.find(
       (part) => part.time.kind === "timed" && part.time.timeZone === zone,
     )?.time as Extract<EventTime, { kind: "timed" }>;
     calendar.addSubcomponent(timeZoneComponent(zone, first.start));

@@ -78,6 +78,18 @@ export type QueuedEmail = {
 
 // iTIP's REQUEST, for an invitation or an update, and CANCEL.
 export type EmailMethod = "request" | "cancel";
+
+// One date as they last saw it, at the series' sequence for the change that called it off.
+export type CancelledDate = DeliveredPart & { recurrenceId: OccurrenceId };
+
+// Whether the person still has the event once this email reaches them, which is what the
+// queue keeps as sent. A cancelled date leaves them the rest of the series.
+export const heldAfter = (
+  plan: Exclude<EmailPlan, { method: "none" }>,
+): EmailMethod =>
+  plan.method === "cancel" && plan.why !== "dateCancelled"
+    ? "cancel"
+    : "request";
 export type EmailPlanOrganiser = { userId: UserId; name: string | null };
 
 // The event was deleted, or its whole team calendar was.
@@ -104,6 +116,16 @@ export type EmailPlan =
       series: DeliveredPart;
       to: PersonKey;
       why: "uninvited" | Gone;
+    }
+  // One date of a series they still have, as RFC 5546 cancels a single instance.
+  | {
+      method: "cancel";
+      uid: EventUid;
+      organiser: EmailPlanOrganiser;
+      series: DeliveredPart;
+      date: CancelledDate;
+      to: PersonKey;
+      why: "dateCancelled";
     }
   // Nothing to say, as to someone taken off before anything reached them.
   | { method: "none" };

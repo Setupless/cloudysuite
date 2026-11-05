@@ -132,8 +132,10 @@ export const MIGRATIONS: Migrations = [
     // state is queued, sending, sent, refused, or unclear, and try_at is set only while
     // queued or sending. A claim that never finished is found as sending, and becomes
     // unclear, never a second send. `sent` is what the last email that went, or may
-    // have gone, said: request or cancel. `gone` is the event as it was, once deleted,
-    // so its cancellation can still say what was called off.
+    // have gone, left them with: request while they still have the event, or cancel.
+    // `gone` is the event as it was, once deleted, so its cancellation can still say
+    // what was called off. `cancelled_date` is the one date the change called off, when
+    // that's all the email needs to say.
     `CREATE TABLE invitation_emails (
       uid TEXT NOT NULL,
       recipient TEXT NOT NULL,
@@ -146,6 +148,7 @@ export const MIGRATIONS: Migrations = [
       reason TEXT,
       sent TEXT,
       gone TEXT,
+      cancelled_date TEXT,
       PRIMARY KEY (uid, recipient),
       CHECK ((try_at IS NULL) = (state NOT IN ('queued', 'sending')))
     ) WITHOUT ROWID`,

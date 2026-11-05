@@ -13,6 +13,7 @@ import {
   type DeliveryResult,
   type EmailMethod,
   type EmailPlan,
+  type CancelledDate,
   type EmailPlanOrganiser,
   type Gone,
   type QueuedDelivery,
@@ -702,13 +703,17 @@ export class EventStore {
   // Everyone invited before or after a change, so someone taken off hears it's off.
   // Colleagues get their copy and an email, and people outside an email. The email is
   // written from the event as it is when it goes, like a copy, and goes from the
-  // organiser's address whoever made the change.
+  // organiser's address whoever made the change. A change that only calls off one date
+  // is a cancellation of that date, but only to someone whose last email went and left
+  // them the event. Anyone else, or a second change before it goes, gets the whole
+  // event as it is then.
   #queueFor(
     uid: EventUid,
     before: readonly StoredAttendee[],
     after: readonly StoredAttendee[],
     actor: Actor,
     now: number,
+    cancelledDate: CancelledDate | null = null,
   ): void {
     this.#queue(
       uid,
@@ -723,12 +728,14 @@ export class EventStore {
          VALUES (?, ?, ?, ?, 1, 'queued', 0, ?)
          ON CONFLICT (uid, recipient) DO UPDATE SET version = version + 1,
            state = 'queued', tries = 0, try_at = excluded.try_at, reason = NULL,
-           calendar_id = excluded.calendar_id, changed_by = excluded.changed_by`,
+           calendar_id = excluded.calendar_id, changed_by = excluded.changed_by,
+           cancelled_date = CASE WHEN state = 'sent' AND sent = 'request' THEN ? END`,
         uid,
         recipient,
         actor.calendarId,
         actor.userId,
         now,
+        cancelledDate && JSON.stringify(cancelledDate),
       );
     }
   }
@@ -1118,6 +1125,19 @@ export class EventStore {
     if (scope === "this") {
       this.db.transaction(() => {
         const sequence = this.#nextSequence(series.uid);
+        const [changed] = this.#rows<EventRow>(
+          "SELECT * FROM events WHERE uid = ? AND recurrence_id = ?",
+          series.uid,
+          id,
+        ).map(parseRow);
+        const cancelled: CancelledDate = {
+          ...deliveredPartOf(changed ?? series),
+          recurrenceId: id,
+          time: changed?.time ?? timeOfDate(series, id),
+          rule: null,
+          exdates: [],
+          sequence,
+        };
         this.db.exec(
           "DELETE FROM events WHERE uid = ? AND recurrence_id = ?",
           series.uid,
@@ -1131,7 +1151,7 @@ export class EventStore {
           },
           now,
         );
-        this.#queueFor(series.uid, people, people, actor, now);
+        this.#queueFor(series.uid, people, people, actor, now, cancelled);
       });
       return { status: "done" };
     }
@@ -1637,8 +1657,9 @@ export class EventStore {
     }));
   }
 
-  // The event as it is now, for one person. Someone no longer invited is told it's off,
-  // and so is everyone once it's deleted, but only if anything reached them before.
+  // The event as it is now, for one person, or the one date that was called off. Someone
+  // no longer invited is told it's off, and so is everyone once it's deleted, but only if
+  // anything reached them before.
   emailFor(queued: QueuedEmail): EmailPlan {
     const series = this.#series(queued.uid);
     if (series && series.organiser.kind !== "madeHere")
@@ -1647,11 +1668,30 @@ export class EventStore {
     const to = people?.attendees.find(
       (attendee) => keyOfPerson(attendee) === queued.recipient,
     );
+    const [row] = this.#rows<{
+      gone: string | null;
+      cancelled_date: string | null;
+    }>(
+      "SELECT gone, cancelled_date FROM invitation_emails WHERE uid = ? AND recipient = ?",
+      queued.uid,
+      queued.recipient,
+    );
     if (series && people && !people.reply && to) {
       const organiser = series.organiser as Extract<
         Organiser,
         { kind: "madeHere" }
       >;
+      if (row?.cancelled_date) {
+        return {
+          method: "cancel",
+          uid: queued.uid,
+          organiser: { userId: organiser.userId, name: organiser.name },
+          series: deliveredPartOf(series),
+          date: JSON.parse(row.cancelled_date) as CancelledDate,
+          to: queued.recipient,
+          why: "dateCancelled",
+        };
+      }
       return {
         method: "request",
         uid: queued.uid,
@@ -1682,11 +1722,6 @@ export class EventStore {
         why: "uninvited",
       };
     }
-    const [row] = this.#rows<{ gone: string | null }>(
-      "SELECT gone FROM invitation_emails WHERE uid = ? AND recipient = ?",
-      queued.uid,
-      queued.recipient,
-    );
     if (!row?.gone) return { method: "none" };
     const gone = JSON.parse(row.gone) as GoneEvent;
     return {

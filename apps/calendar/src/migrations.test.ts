@@ -8,6 +8,6 @@ test("released migrations do not change", async () => {
     "e415d164b7a47e335e3bd444974597feba0ff358fb124a303d0dcd0b614aa846",
     "180136c0abfad5a72202566638833ae27536ab32e450294fe3d9c237552de4e5",
     "404a9b8e62c58fc1b592cad8668e215859352a0c4bddc71f234917cf8e5141b4",
-    "827a09f36df8dfbcdd3923422a09a538c9392c3cdaeb6c15731a7234d0d5d3be",
+    "6b8abbad2d1f76bba271aa3720cebcb18ada52a5db5d9abe462e86abddf15756",
   ]);
 });
