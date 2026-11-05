@@ -3,16 +3,13 @@ import {
   type CalendarRole,
   isBanned,
   PERSONAL_CALENDAR_COLOUR,
+  TEAM_CALENDAR_COLOURS,
   type UserId,
 } from "@cloudysuite/access";
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { calendarAccess, calendars, user } from "../../../src/db/schema";
 import type { CalendarEntry, Member } from "./types";
-
-// Each new team calendar takes the next of these. A personal calendar starts on its own
-// colour, so a new team calendar never looks like one.
-const TEAM_COLOURS = [1, 2, 3, 5, 6];
 
 export type TeamChange = "done" | "lastManager" | "notOnIt";
 
@@ -76,7 +73,10 @@ export async function createTeam(
       id,
       kind: "team",
       name,
-      colour: TEAM_COLOURS[(existing?.total ?? 0) % TEAM_COLOURS.length] ?? 1,
+      colour:
+        TEAM_CALENDAR_COLOURS[
+          (existing?.total ?? 0) % TEAM_CALENDAR_COLOURS.length
+        ] ?? 1,
     }),
     db
       .insert(calendarAccess)
