@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   type CalendarId,
   ensurePersonalCalendar,
+  readOthers,
   type UserId,
 } from "@cloudysuite/access";
 import { createServerFn } from "@tanstack/react-start";
@@ -36,6 +37,8 @@ import {
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
+  PERSONAL_CALENDAR_MESSAGE,
+  type Person,
   READ_ONLY_MESSAGE,
   VIEW_ONLY_MESSAGE,
 } from "./types";
@@ -67,12 +70,16 @@ async function openAsManager(
 }
 
 // A personal calendar is one person's, and invitations land there, so it has no members
-// to manage and can't be deleted.
+// to manage and can't be deleted or left.
+async function requireTeam(calendarId: CalendarId): Promise<void> {
+  if ((await readKind(env.DB, calendarId)) !== "team") {
+    throw refusal(403, PERSONAL_CALENDAR_MESSAGE);
+  }
+}
+
 async function openTeamAsManager(userId: UserId, calendarId: CalendarId) {
   const calendar = await openAsManager(userId, calendarId);
-  if ((await readKind(env.DB, calendarId)) !== "team") {
-    throw refusal(403, ONLY_MANAGERS_MESSAGE);
-  }
+  await requireTeam(calendarId);
   return calendar;
 }
 
@@ -132,6 +139,13 @@ export const setCalendarColour = createServerFn({ method: "POST" })
     await setColour(env.DB, data.calendarId, data.colour);
   });
 
+// Wakes the Calendar object, so only the delete confirmation asks.
+export const countCalendarEvents = createServerFn({ method: "GET" })
+  .validator(parseCalendarInput)
+  .handler(async ({ data }): Promise<number> =>
+    (await openCalendarAs((await me()).id, data.calendarId)).countEvents(),
+  );
+
 // D1 first, so the calendar is gone for everyone at once. If emptying the object then
 // fails, nobody can reach what's left.
 export const deleteTeamCalendar = createServerFn({ method: "POST" })
@@ -159,6 +173,11 @@ export const getMembers = createServerFn({ method: "GET" })
     return readMembers(env.DB, data.calendarId);
   });
 
+// Everyone who could be added. It names no calendar, so it reads D1 only.
+export const getPeopleChoices = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Person[]> => readOthers(env.DB, (await me()).id),
+);
+
 export const addMembers = createServerFn({ method: "POST" })
   .validator(parseAddMembersInput)
   .handler(async ({ data }): Promise<void> => {
@@ -184,6 +203,15 @@ export const removeCalendarMember = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<void> => {
     await openTeamAsManager((await me()).id, data.calendarId);
     answerTeamChange(await removeMember(env.DB, data.calendarId, data.userId));
+  });
+
+export const leaveTeamCalendar = createServerFn({ method: "POST" })
+  .validator(parseCalendarInput)
+  .handler(async ({ data }): Promise<void> => {
+    const { id } = await me();
+    await openCalendarAs(id, data.calendarId);
+    await requireTeam(data.calendarId);
+    answerTeamChange(await removeMember(env.DB, data.calendarId, id));
   });
 
 export const listEvents = createServerFn({ method: "GET" })
