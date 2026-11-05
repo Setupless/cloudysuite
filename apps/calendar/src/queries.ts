@@ -1,4 +1,9 @@
-import { dehydrate, QueryClient, queryOptions } from "@tanstack/react-query";
+import {
+  dehydrate,
+  keepPreviousData,
+  QueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import type { CalendarId } from "@cloudysuite/access";
 import {
   countCalendarEvents,
@@ -14,6 +19,7 @@ import {
   todayIn,
   visibleDays,
 } from "./schedule";
+import { searchEvents } from "./search-functions";
 import { addDays } from "./time";
 import type { TimeZone } from "./types";
 import { todayWindow } from "./ui/today-plan";
@@ -74,6 +80,9 @@ export const calendarKeys = {
   people: ["calendar", "people"] as const,
   events: ({ from, to }: DayWindow) =>
     ["calendar", "events", from, to] as const,
+  searches: ["calendar", "search"] as const,
+  search: (text: string, zone: TimeZone) =>
+    ["calendar", "search", text, zone] as const,
 };
 
 export const calendarsQuery = () =>
@@ -120,6 +129,14 @@ export const eventsQuery = (window: DayWindow) =>
           },
         }),
       ),
+  });
+
+// The zone decides which all-day events are past, and which date a repeat shows.
+export const searchQuery = (text: string, zone: TimeZone) =>
+  queryOptions({
+    queryKey: calendarKeys.search(text, zone),
+    queryFn: () => call(() => searchEvents({ data: { text, timeZone: zone } })),
+    placeholderData: keepPreviousData,
   });
 
 // The first HTML holds the events, so the page draws them as soon as it can. Without a
