@@ -1,6 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import {
+  calendarAccess,
+  type CalendarId,
+  type CalendarKind,
+  type CalendarRole,
+  calendars,
   driveAccess,
   drives,
   type DriveId,
@@ -13,12 +18,24 @@ import {
   type UserId,
 } from "../../../src/db/schema";
 
-export type { DriveId, DriveKind, DriveRole, MailboxId, MailboxRole, UserId };
+export type {
+  CalendarId,
+  CalendarKind,
+  CalendarRole,
+  DriveId,
+  DriveKind,
+  DriveRole,
+  MailboxId,
+  MailboxRole,
+  UserId,
+};
 
 export type AccessLevel = "view" | "edit";
 
 // Anything else, such as a role from a later version, can do nothing here.
-export function levelOfRole(role: DriveRole): AccessLevel | null {
+export function levelOfRole(
+  role: DriveRole | CalendarRole,
+): AccessLevel | null {
   switch (role) {
     case "manager":
     case "editor":
@@ -81,6 +98,28 @@ export type DriveGrant = DriveGrantRecord;
 export type DriveAccess =
   { allowed: true; grant: DriveGrant } | { allowed: false };
 
+// The same rules as Grant above. A calendar has no shares, so only someone on its list
+// gets one.
+class CalendarGrantRecord {
+  readonly #issuedByCheck = true;
+
+  constructor(
+    token: symbol,
+    readonly userId: UserId,
+    readonly calendarId: CalendarId,
+    readonly role: CalendarRole,
+  ) {
+    if (token !== ISSUE)
+      throw new Error("Only the access check issues grants.");
+    Object.freeze(this);
+  }
+}
+
+export type CalendarGrant = CalendarGrantRecord;
+
+export type CalendarAccess =
+  { allowed: true; grant: CalendarGrant } | { allowed: false };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseMailboxId(raw: string): MailboxId | null {
@@ -89,6 +128,10 @@ export function parseMailboxId(raw: string): MailboxId | null {
 
 export function parseDriveId(raw: string): DriveId | null {
   return UUID.test(raw) ? (raw as DriveId) : null;
+}
+
+export function parseCalendarId(raw: string): CalendarId | null {
+  return UUID.test(raw) ? (raw as CalendarId) : null;
 }
 
 // Matches Better Auth's admin plugin: a ban with no end date never expires, and
@@ -152,6 +195,33 @@ export async function checkDriveAccess(
   };
 }
 
+export async function checkCalendarAccess(
+  database: D1Database,
+  userId: UserId,
+  calendarId: CalendarId,
+): Promise<CalendarAccess> {
+  const [row] = await drizzle(database)
+    .select({
+      role: calendarAccess.role,
+      banned: user.banned,
+      banExpires: user.banExpires,
+    })
+    .from(calendarAccess)
+    .innerJoin(calendars, eq(calendars.id, calendarAccess.calendarId))
+    .innerJoin(user, eq(user.id, calendarAccess.userId))
+    .where(
+      and(
+        eq(calendarAccess.userId, userId),
+        eq(calendarAccess.calendarId, calendarId),
+      ),
+    );
+  if (!row || isBanned(row)) return { allowed: false };
+  return {
+    allowed: true,
+    grant: new CalendarGrantRecord(ISSUE, userId, calendarId, row.role),
+  };
+}
+
 // Safe to repeat under the unique index, so two tabs can't make two. Put these first in
 // a batch, so whatever follows sees the drive.
 export const ensurePersonalDrive = (db: DrizzleD1Database, userId: UserId) =>
@@ -172,3 +242,40 @@ export const ensurePersonalDrive = (db: DrizzleD1Database, userId: UserId) =>
           ON CONFLICT DO NOTHING`,
     ),
   ] as const;
+
+// Not avatar-1, because a blue personal calendar was hard to tell from a blue team one.
+export const PERSONAL_CALENDAR_COLOUR = 4;
+
+// Safe to repeat for the same reason as ensurePersonalDrive, and one batch, so the
+// calendar is never left without its person on it.
+export async function ensurePersonalCalendar(
+  database: D1Database,
+  userId: UserId,
+): Promise<CalendarId> {
+  const db = drizzle(database);
+  const [, , found] = await db.batch([
+    db
+      .insert(calendars)
+      .values({
+        kind: "personal",
+        colour: PERSONAL_CALENDAR_COLOUR,
+        ownerId: userId,
+      })
+      .onConflictDoNothing(),
+    db.run(
+      sql`INSERT INTO calendar_access (calendar_id, user_id, role)
+          SELECT id, ${userId}, 'manager' FROM calendars
+          WHERE owner_id = ${userId} AND kind = 'personal'
+          ON CONFLICT DO NOTHING`,
+    ),
+    db
+      .select({ id: calendars.id })
+      .from(calendars)
+      .where(
+        and(eq(calendars.ownerId, userId), eq(calendars.kind, "personal")),
+      ),
+  ]);
+  const id = found[0]?.id;
+  if (!id) throw new Error("A personal calendar should exist by now.");
+  return id;
+}

@@ -1,5 +1,10 @@
 import { AppShell, type ShellApp } from "@cloudysuite/ui";
-import { IconFolder, IconMail, IconUserCircle } from "@tabler/icons-react";
+import {
+  IconCalendar,
+  IconFolder,
+  IconMail,
+  IconUserCircle,
+} from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { AppId } from "../../../src/routing";
@@ -8,6 +13,7 @@ import type { SignedIn } from "./session";
 const APP_DISPLAY: Record<AppId, { name: string; icon: Icon }> = {
   mail: { name: "Mail", icon: IconMail },
   storage: { name: "Storage", icon: IconFolder },
+  calendar: { name: "Calendar", icon: IconCalendar },
   auth: { name: "Account", icon: IconUserCircle },
 };
 

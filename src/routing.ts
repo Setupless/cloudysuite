@@ -2,6 +2,7 @@ export const APPS = {
   auth: { toggleable: false },
   mail: { toggleable: true },
   storage: { toggleable: true },
+  calendar: { toggleable: true },
 } as const;
 
 export type AppId = keyof typeof APPS;

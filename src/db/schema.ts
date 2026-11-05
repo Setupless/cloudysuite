@@ -15,6 +15,7 @@ type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 export type UserId = Brand<string, "UserId">;
 export type MailboxId = Brand<string, "MailboxId">;
 export type DriveId = Brand<string, "DriveId">;
+export type CalendarId = Brand<string, "CalendarId">;
 
 export const ORG_ROLES = ["admin", "user"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -35,6 +36,13 @@ export type DriveKind = (typeof DRIVE_KINDS)[number];
 // is "Can view".
 export const DRIVE_ROLES = ["manager", "editor", "viewer"] as const;
 export type DriveRole = (typeof DRIVE_ROLES)[number];
+
+export const CALENDAR_KINDS = ["personal", "team"] as const;
+export type CalendarKind = (typeof CALENDAR_KINDS)[number];
+
+// A team calendar offers the same choices as a team folder.
+export const CALENDAR_ROLES = DRIVE_ROLES;
+export type CalendarRole = DriveRole;
 
 const now = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
 const timestamp = (name: string) => integer(name, { mode: "timestamp_ms" });
@@ -453,5 +461,62 @@ export const driveMoveNotices = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.userId, table.driveId, table.moveId] }),
     index("drive_move_notices_drive_id_idx").on(table.driveId),
+  ],
+);
+
+// The Calendar object holds every event. D1 holds only which calendars exist and who is
+// on each, so an event's title, time, and people live in one place.
+export const calendars = sqliteTable(
+  "calendars",
+  {
+    id: text()
+      .$type<CalendarId>()
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID() as CalendarId),
+    kind: text({ enum: CALENDAR_KINDS }).notNull(),
+    // Null for a personal calendar, which shows its person's own name.
+    name: text(),
+    colour: integer().notNull(),
+    // Removing a person sets this to null, so their events stay.
+    ownerId: text("owner_id")
+      .$type<UserId>()
+      .references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    check("calendars_colour", sql`${table.colour} BETWEEN 1 AND 6`),
+    check(
+      "calendars_team_has_name",
+      sql`${table.kind} = 'personal' OR ${table.name} IS NOT NULL`,
+    ),
+    check(
+      "calendars_owner_only_when_personal",
+      sql`${table.ownerId} IS NULL OR ${table.kind} = 'personal'`,
+    ),
+    uniqueIndex("calendars_one_personal_per_owner")
+      .on(table.ownerId)
+      .where(sql`${table.kind} = 'personal'`),
+  ],
+);
+
+export const calendarAccess = sqliteTable(
+  "calendar_access",
+  {
+    calendarId: text("calendar_id")
+      .$type<CalendarId>()
+      .notNull()
+      .references(() => calendars.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text({ enum: CALENDAR_ROLES }).notNull(),
+    // Hides the calendar from this person's own view only.
+    hidden: flag("hidden").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey({ columns: [table.calendarId, table.userId] }),
+    index("calendar_access_user_id_idx").on(table.userId),
   ],
 );

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import packageJson from "../package.json";
 
 const ROOT = join(import.meta.dir, "../../..");
@@ -25,12 +25,18 @@ test("only stub.ts touches the mailbox binding", () => {
   expect(users).toEqual(["apps/mail/src/stub.ts"]);
 });
 
+// Other apps have stubs of their own, each with its own test, so an import counts only
+// when it resolves to Mail's.
 test("only the access-checked client and ingest import the stub", () => {
+  const mailStub = join(ROOT, "apps/mail/src/stub");
   const users = productionFiles()
-    .filter((file) => /from "[^"]*\/stub"/.test(readFileSync(file, "utf8")))
+    .filter((file) =>
+      [...readFileSync(file, "utf8").matchAll(/from "([^"]*\/stub)"/g)].some(
+        ([, path]) =>
+          path?.startsWith(".") && join(dirname(file), path) === mailStub,
+      ),
+    )
     .map((file) => relative(ROOT, file))
-    // Storage has its own stub, with its own test in that app.
-    .filter((file) => !file.startsWith("apps/storage/"))
     .sort();
   expect(users).toEqual(["apps/mail/src/client.ts", "apps/mail/src/ingest.ts"]);
 });

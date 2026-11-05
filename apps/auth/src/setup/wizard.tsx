@@ -42,7 +42,14 @@ import {
   type TokenPermission,
   tokenFormUrl,
 } from "./token-link";
+import { APPS } from "../../../../src/routing";
 import { isAppLabel } from "./validate";
+
+const APP_LABELS = Object.keys(APPS);
+const and = new Intl.ListFormat("en");
+const or = new Intl.ListFormat("en", { type: "disjunction" });
+const appHostsOn = (domain: string) =>
+  and.format(APP_LABELS.map((app) => `${app}.${domain}`));
 
 const STEP_TEXT: Record<StepId, { title: string; description: string }> = {
   "email-routing": {
@@ -61,8 +68,9 @@ const STEP_TEXT: Record<StepId, { title: string; description: string }> = {
   },
   "app-hostnames": {
     title: "Give your apps their addresses",
-    description:
-      "Attaches the Auth, Mail, and Storage web addresses to CloudySuite.",
+    description: `Attaches the ${and.format(
+      APP_LABELS.map((app) => app.charAt(0).toUpperCase() + app.slice(1)),
+    )} web addresses to CloudySuite.`,
   },
   "auth-secret": {
     title: "Protect sign-in",
@@ -538,8 +546,7 @@ function DomainStage({
               {scan.hostedHosts.length > 0 ? " (recommended)" : ""}
             </span>
             <span className="text-sm text-secondary">
-              auth.{label}.{zone.name}, mail.{label}.{zone.name}, and storage.
-              {label}.{zone.name}
+              {appHostsOn(`${label}.${zone.name}`)}
             </span>
           </Radio>
           {useParent && (
@@ -553,8 +560,7 @@ function DomainStage({
           )}
           {!labelOk && (
             <p role="alert" className="text-sm text-danger">
-              Use lowercase letters, numbers, and hyphens. It can't be "auth",
-              "mail", or "storage".
+              {`Use lowercase letters, numbers, and hyphens. It can't be ${or.format(APP_LABELS.map((app) => `"${app}"`))}.`}
             </p>
           )}
           <Radio
@@ -569,7 +575,7 @@ function DomainStage({
               {scan.hostedHosts.length === 0 ? " (recommended)" : ""}
             </span>
             <span className="text-sm text-secondary">
-              auth.{zone.name}, mail.{zone.name}, and storage.{zone.name}
+              {appHostsOn(zone.name)}
               {scan.hostedHosts.length > 0
                 ? ". The other sites could use sign-in passes."
                 : ""}
@@ -780,7 +786,7 @@ function StepsStage({
     <Card>
       <Heading title="Connect your domain">
         {plan
-          ? `Email at ${plan.emailDomain}, apps at auth.${plan.appDomain}, mail.${plan.appDomain}, and storage.${plan.appDomain}.`
+          ? `Email at ${plan.emailDomain}, apps at ${appHostsOn(plan.appDomain)}.`
           : "Checking what's already in place."}
       </Heading>
       <ul className="flex flex-col gap-3">
