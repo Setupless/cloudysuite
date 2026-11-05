@@ -18,6 +18,7 @@ import {
   SYDNEY,
 } from "./test-support";
 import type { EmailAddress, EventUid, Occurrence, TimeZone } from "./types";
+import { meetingLink } from "./ui/meeting-link";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
 
@@ -130,6 +131,22 @@ test("an Outlook event in a Windows zone and one in a zone with no name both lan
   expect(
     await shown("2026-06-15", "2026-06-16", "Australia/Darwin" as TimeZone),
   ).toEqual([["Darwin site visit", "2026-06-15 09:30"]]);
+});
+
+test("an imported event keeps the meeting link from its conference field", async () => {
+  await importFile(OUTLOOK_EXPORT);
+  const listing = await (
+    await kit.as(ALICE)
+  ).listRange({
+    from: date("2026-11-12"),
+    to: date("2026-11-13"),
+    timeZone: SYDNEY,
+  });
+  expect(meetingLink(listing.occurrences[0]!)).toEqual({
+    service: "Microsoft Teams",
+    url: "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0",
+    from: "conference",
+  });
 });
 
 test("importing the same file again changes nothing", async () => {
