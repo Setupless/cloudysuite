@@ -1,5 +1,11 @@
 import { dehydrate, QueryClient, queryOptions } from "@tanstack/react-query";
-import { getCalendars } from "./functions";
+import type { CalendarId } from "@cloudysuite/access";
+import {
+  countCalendarEvents,
+  getCalendars,
+  getMembers,
+  getPeopleChoices,
+} from "./functions";
 
 const CANNOT_REACH =
   "We couldn't reach CloudySuite. Check your connection and try again.";
@@ -50,12 +56,38 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 export const calendarKeys = {
   all: ["calendar"] as const,
   calendars: ["calendar", "calendars"] as const,
+  members: (calendarId: CalendarId) =>
+    ["calendar", "members", calendarId] as const,
+  eventCount: (calendarId: CalendarId) =>
+    ["calendar", "eventCount", calendarId] as const,
+  people: ["calendar", "people"] as const,
 };
 
 export const calendarsQuery = () =>
   queryOptions({
     queryKey: calendarKeys.calendars,
     queryFn: () => call(() => getCalendars()),
+  });
+
+export const membersQuery = (calendarId: CalendarId) =>
+  queryOptions({
+    queryKey: calendarKeys.members(calendarId),
+    queryFn: () => call(() => getMembers({ data: { calendarId } })),
+  });
+
+// Asked again each time, so the delete confirmation never shows an old count.
+export const eventCountQuery = (calendarId: CalendarId) =>
+  queryOptions({
+    queryKey: calendarKeys.eventCount(calendarId),
+    queryFn: () => call(() => countCalendarEvents({ data: { calendarId } })),
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+export const peopleChoicesQuery = () =>
+  queryOptions({
+    queryKey: calendarKeys.people,
+    queryFn: () => call(() => getPeopleChoices()),
   });
 
 // The first HTML holds the sidebar's calendars, so a reload shows them at once.
