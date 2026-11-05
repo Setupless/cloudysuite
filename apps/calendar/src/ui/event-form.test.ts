@@ -6,9 +6,8 @@ import {
   LONDON,
   SYDNEY,
 } from "../test-support";
-import type { CalendarEntry, Occurrence, OccurrenceId } from "../types";
+import type { Occurrence, OccurrenceId } from "../types";
 import {
-  controlsFor,
   draftOf,
   type EventForm,
   formOf,
@@ -301,12 +300,4 @@ test("the scope question asks only for a repeat, and not about one date when the
     "all",
   ]);
   expect(scopesFor(series, null)).toEqual(["this", "thisAndLater", "all"]);
-});
-
-test("Edit and Delete show only for events the person can change", () => {
-  const editor = { role: "editor" } satisfies Pick<CalendarEntry, "role">;
-  const viewer = { role: "viewer" } satisfies Pick<CalendarEntry, "role">;
-  expect(controlsFor({ changeable: true }, editor)).toBe("editAndDelete");
-  expect(controlsFor({ changeable: false }, editor)).toBe("removeOnly");
-  expect(controlsFor({ changeable: false }, viewer)).toBe("none");
 });

@@ -11,7 +11,7 @@ import {
   signIn,
 } from "../../auth/src/admin/test-kit";
 import { calendarFile } from "./outside/test-support";
-import { createCalendarTest, SYDNEY, TEAM } from "./test-support";
+import { actionsSeen, createCalendarTest, SYDNEY, TEAM } from "./test-support";
 import {
   type Answer,
   type CalendarOccurrence,
@@ -26,7 +26,7 @@ import {
   PEOPLE_FOR_ONE_DATE_MESSAGE,
   VIEW_ONLY_MESSAGE,
 } from "./types";
-import { scopesFor } from "./ui/event-form";
+import { draftOf, formOf, scopesFor } from "./ui/event-form";
 
 // Outside Vite a server function never reaches its handler, so this runs the validator
 // and handler as the compiled server function would.
@@ -363,6 +363,117 @@ test("someone on the team calendar who is also invited sees the event once, as t
     "colleague",
   ]);
 });
+
+// What the card and panel offer for one date this person sees in Schedule.
+async function actionsOn(userId: UserId, occurrence: CalendarOccurrence) {
+  return actionsSeen(occurrence, await as(userId).getCalendars());
+}
+
+const kindsOf = (actions: { kind: string }[]) =>
+  actions.map(({ kind }) => kind);
+
+test("an invited editor of the team calendar edits and deletes the event from their copy", async () => {
+  const uid = await invite([people.editor, people.outsider], {
+    repeat: WEEKLY,
+  });
+  await answer(people.editor, uid, "yes");
+  const [copy] = await seen(people.editor);
+  const actions = await actionsOn(people.editor, copy!);
+  expect(kindsOf(actions)).toEqual(["edit", "delete", "remove"]);
+  const [edit, , remove] = actions;
+  expect(edit!.place).toMatchObject({
+    calendarId: TEAM,
+    target: { uid, occurrenceId: copy!.occurrenceId },
+  });
+  expect(remove!.place.calendarId).toBe(await personalOf(people.editor));
+  const [managers] = await seen(people.manager);
+  expect(kindsOf(await actionsOn(people.manager, managers!))).toEqual([
+    "edit",
+    "delete",
+  ]);
+
+  const checked = draftOf(
+    { ...formOf(copy!, SYDNEY), title: "Planning, renamed" },
+    SYDNEY,
+  );
+  if (!checked.ok) throw new Error(checked.message);
+  await as(people.editor).updateEvent({
+    data: { ...edit!.place, scope: "all", draft: checked.draft },
+  });
+  await objects.settle();
+  for (const userId of [people.manager, people.editor, people.outsider]) {
+    expect((await seen(userId)).map((entry) => entry.title)).toEqual(
+      Array(4).fill("Planning, renamed"),
+    );
+  }
+  const [renamed, second] = await seen(people.editor);
+  expect(renamed).toMatchObject({
+    answer: "yes",
+    organiser: { kind: "colleague", calendarId: TEAM, uid },
+  });
+
+  expect(second!.occurrenceId).toBe(SECOND);
+  const del = (await actionsOn(people.editor, second!))[1]!;
+  expect(del.kind).toBe("delete");
+  await as(people.editor).deleteEvent({
+    data: { ...del.place, scope: "this" },
+  });
+  await objects.settle();
+  expect(
+    (await seen(people.manager)).map((entry) => entry.occurrenceId),
+  ).not.toContain(SECOND);
+  for (const userId of [people.editor, people.outsider]) {
+    const removed = (await seen(userId)).find(
+      (entry) => entry.occurrenceId === SECOND,
+    );
+    expect(removed?.cancelled).toBe(true);
+  }
+  const calledOff = (await seen(people.editor)).find(
+    (entry) => entry.occurrenceId === SECOND,
+  );
+  expect(kindsOf(await actionsOn(people.editor, calledOff!))).toEqual([
+    "remove",
+  ]);
+});
+
+test.each([
+  ["Can view on the team calendar", "viewer", VIEW_ONLY_MESSAGE],
+  ["a colleague outside it", "outsider", NO_ACCESS_MESSAGE],
+] as const)(
+  "%s, invited, gets no Edit and is refused a change to the event",
+  async (_, role, message) => {
+    const invited = people[role];
+    const uid = await invite([invited]);
+    const [copy] = await seen(invited);
+    expect(kindsOf(await actionsOn(invited, copy!))).toEqual(["remove"]);
+
+    const target = { uid, occurrenceId: null };
+    for (const attempt of [
+      () =>
+        as(invited).updateEvent({
+          data: {
+            calendarId: TEAM,
+            target,
+            scope: "all",
+            draft: planning({ title: "Mine now", people: [invited] }),
+          },
+        }),
+      () =>
+        as(invited).deleteEvent({
+          data: { calendarId: TEAM, target, scope: "all" },
+        }),
+    ]) {
+      expect(await refused(attempt())).toEqual({ status: 403, message });
+    }
+    await objects.settle();
+    expect(await seen(people.manager)).toMatchObject([
+      { title: "Weekly planning", cancelled: false },
+    ]);
+    expect(await seen(invited)).toMatchObject([
+      { title: "Weekly planning", cancelled: false },
+    ]);
+  },
+);
 
 test("nobody can put an event in someone else's calendar through a server function", async () => {
   const theirs = await as(people.manager).ensureMyCalendar();

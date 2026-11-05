@@ -37,8 +37,8 @@ import {
 } from "../types";
 import { calendarFill } from "./colours";
 import {
-  controlsFor,
   draftOf,
+  type EventAction,
   type EventForm,
   type FormField,
   type FormStart,
@@ -69,7 +69,8 @@ const LINK =
 const lastUsedKey = (me: UserId) => `cloudysuite.calendar.lastUsed.${me}`;
 
 export type Opening =
-  { kind: "new"; start: FormStart } | { kind: "edit"; event: ShownEvent };
+  | { kind: "new"; start: FormStart }
+  | (Extract<EventAction, { kind: "edit" }> & { event: ShownEvent });
 
 // A personal calendar has no id until it's first used.
 type Choice = CalendarId | "personal";
@@ -238,6 +239,7 @@ export function EventDialog({
   const client = useQueryClient();
   const me = useMe();
   const editing = opening.kind === "edit" ? opening.event : null;
+  const place = opening.kind === "edit" ? opening.place : null;
   const [form, setForm] = useState(() =>
     opening.kind === "edit"
       ? formOf(opening.event, zone)
@@ -247,10 +249,10 @@ export function EventDialog({
   const [choice, setChoice] = useState(() => firstChoice(writable, me));
   // The organiser is never one of their own guests.
   const organiser =
-    editing?.organiser.kind === "madeHere" ? editing.organiser.userId : me;
-  const chosen = editing
-    ? editing.calendar
-    : writable.find((entry) => choiceOf(entry) === choice);
+    editing && editing.organiser.kind !== "invitation"
+      ? editing.organiser.userId
+      : me;
+  const chosen = writable.find((entry) => choiceOf(entry) === choice);
   const [endDayAsked, setEndDayAsked] = useState(false);
   const [asking, setAsking] = useState<{
     draft: EventDraft;
@@ -290,18 +292,18 @@ export function EventDialog({
     setFailure(null);
     try {
       let uid: EventUid;
-      if (editing) {
+      if (place) {
         await call(() =>
           updateEvent({
             data: {
-              calendarId: editing.calendarId,
-              target: { uid: editing.uid, occurrenceId: editing.occurrenceId },
+              calendarId: place.calendarId,
+              target: place.target,
               scope: changeScope,
               draft,
             },
           }),
         );
-        uid = editing.uid;
+        uid = place.target.uid;
       } else {
         const calendarId =
           !choice || choice === "personal"
@@ -570,16 +572,16 @@ export function EventDialog({
             )}
           </div>
         )}
-        {editing ? (
+        {place ? (
           <div className={LABEL}>
             Calendar
             <span className="flex items-center gap-2 py-0.5 text-sm font-normal text-text">
-              <CalendarSwatch colour={editing.calendar.colour} />
+              <CalendarSwatch colour={place.calendar.colour} />
               <span dir="auto" className="min-w-0 truncate">
-                {editing.calendar.name}
+                {place.calendar.name}
               </span>
             </span>
-            <SeenBy entry={editing.calendar} />
+            <SeenBy entry={place.calendar} />
           </div>
         ) : (
           <label className={LABEL}>
@@ -666,20 +668,23 @@ export function EventDialog({
 
 export function DeleteEventDialog({
   event,
+  action: { kind, place },
   onDone,
   onClose,
 }: {
   event: ShownEvent;
+  action: Extract<EventAction, { kind: "delete" | "remove" }>;
   onDone: () => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
-  const removing = controlsFor(event, event.calendar) === "removeOnly";
+  const removing = kind === "remove";
   const scopes = scopesFor(event, null);
   const [scope, setScope] = useState<ChangeScope>("this");
   const [failure, setFailure] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const team = event.calendar.kind === "team";
+  const { calendar } = place;
+  const team = calendar.kind === "team";
 
   async function confirm() {
     setPending(true);
@@ -688,8 +693,8 @@ export function DeleteEventDialog({
       await call(() =>
         deleteEvent({
           data: {
-            calendarId: event.calendarId,
-            target: { uid: event.uid, occurrenceId: event.occurrenceId },
+            calendarId: place.calendarId,
+            target: place.target,
             scope: scopes ? scope : "all",
           },
         }),
@@ -706,7 +711,7 @@ export function DeleteEventDialog({
     <Modal
       title={
         removing
-          ? `Remove ${event.title} from ${team ? event.calendar.name : "your calendar"}?`
+          ? `Remove ${event.title} from ${team ? calendar.name : "your calendar"}?`
           : `Delete ${event.title}?`
       }
       onClose={onClose}
@@ -722,7 +727,7 @@ export function DeleteEventDialog({
       ) : (
         !removing && (
           <p className="text-sm text-secondary">
-            {team && `It goes for everyone on ${event.calendar.name}. `}
+            {team && `It goes for everyone on ${calendar.name}. `}
             This can't be undone.
           </p>
         )

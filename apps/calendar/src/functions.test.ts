@@ -11,7 +11,14 @@ import {
   signIn,
 } from "../../auth/src/admin/test-kit";
 import { calendarFile, GOOGLE_EXPORT } from "./outside/test-support";
-import { createCalendarTest, date, draft, SYDNEY, TEAM } from "./test-support";
+import {
+  actionsSeen,
+  createCalendarTest,
+  date,
+  draft,
+  SYDNEY,
+  TEAM,
+} from "./test-support";
 import {
   type ChangeScope,
   type EventTime,
@@ -27,7 +34,7 @@ import {
   READ_ONLY_MESSAGE,
   VIEW_ONLY_MESSAGE,
 } from "./types";
-import { controlsFor, draftOf, formOf } from "./ui/event-form";
+import { draftOf, formOf } from "./ui/event-form";
 
 // Outside Vite a server function never reaches its handler, so this runs the validator
 // and handler as the compiled server function would.
@@ -638,7 +645,7 @@ test("Can view is refused making, changing, or deleting an event, and sees no bu
       },
     })
   ).occurrences;
-  expect(controlsFor(seen!, (await teamFor(people.viewer))!)).toBe("none");
+  expect(actionsSeen(seen!, await viewer.getCalendars())).toEqual([]);
 });
 
 test("an invitation copy has no Edit, is refused a change, and can be removed", async () => {
@@ -658,9 +665,9 @@ test("an invitation copy has no Edit, is refused a change, and can be removed", 
     timeZone: SYDNEY,
   };
   const [copy] = (await editor.listEvents({ data: day })).occurrences;
-  expect(controlsFor(copy!, (await teamFor(people.editor))!)).toBe(
-    "removeOnly",
-  );
+  expect(
+    actionsSeen(copy!, await editor.getCalendars()).map(({ kind }) => kind),
+  ).toEqual(["remove"]);
 
   const target = { uid: copy!.uid, occurrenceId: null };
   const checked = draftOf(

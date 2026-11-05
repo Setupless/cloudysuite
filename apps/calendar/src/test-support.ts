@@ -13,12 +13,15 @@ import {
 } from "../../../src/db/test-database";
 import type { Delivery } from "./invitations";
 import type {
+  CalendarEntry,
+  CalendarOccurrence,
   CivilDate,
   EventDraft,
   EventTime,
   Organiser,
   TimeZone,
 } from "./types";
+import { actionsFor } from "./ui/event-form";
 
 mock.module("cloudflare:workers", () => ({
   env: testWorkerEnv,
@@ -54,6 +57,18 @@ export const draft = (time: EventTime, more: Partial<EventDraft> = {}) =>
     people: [],
     ...more,
   }) satisfies EventDraft;
+
+// What the card and panel offer, from what the server functions sent this person.
+export function actionsSeen(
+  occurrence: CalendarOccurrence,
+  calendars: CalendarEntry[],
+) {
+  const calendar = calendars.find(
+    (entry) => entry.id === occurrence.calendarId,
+  );
+  if (!calendar) throw new Error("expected the event's calendar");
+  return actionsFor({ ...occurrence, calendar }, calendars);
+}
 
 // The real Calendar class on bun:sqlite, against a D1 built from the real migrations.
 // This proves the logic and the SQL, not the Workers runtime.

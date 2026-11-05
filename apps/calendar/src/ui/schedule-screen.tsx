@@ -30,7 +30,12 @@ import type { CivilDate, EventUid, TimeZone } from "../types";
 import { TitlePicker } from "./date-picker";
 import { EventCard, EventPanel } from "./event-details";
 import { DeleteEventDialog, EventDialog, type Opening } from "./event-dialog";
-import { type FormStart, nextHalfHour, slotStart } from "./event-form";
+import {
+  type EventAction,
+  type FormStart,
+  nextHalfHour,
+  slotStart,
+} from "./event-form";
 import { dayTitle, monthTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
 import { daySpanOf } from "./schedule-layout";
@@ -52,7 +57,7 @@ const VIEW_NAMES: Record<ScheduleView, string> = {
 type OpenCard = { key: OccurrenceKey; anchor: HTMLElement; at: string };
 
 // `back` is where focus goes if the person closes it without saving.
-type OpenDialog = (Opening | { kind: "delete"; event: ShownEvent }) & {
+type OpenDialog = (Opening | (EventAction & { event: ShownEvent })) & {
   back: HTMLElement | null;
 };
 
@@ -359,11 +364,9 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             zone={zone}
             today={today}
             onClose={closePanel}
-            onEdit={(button) =>
-              openDialog({ kind: "edit", event: panelEvent, back: button })
-            }
-            onDelete={(button) =>
-              openDialog({ kind: "delete", event: panelEvent, back: button })
+            calendars={calendars.data ?? []}
+            onAction={(action, button) =>
+              openDialog({ ...action, event: panelEvent, back: button })
             }
           />
         )}
@@ -378,22 +381,17 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             onOpenDetails={() =>
               go("day", daySpanOf(cardEvent.time, zone).first, cardEvent.key)
             }
-            onEdit={() =>
-              openDialog({ kind: "edit", event: cardEvent, back: card.anchor })
-            }
-            onDelete={() =>
-              openDialog({
-                kind: "delete",
-                event: cardEvent,
-                back: card.anchor,
-              })
+            calendars={calendars.data ?? []}
+            onAction={(action) =>
+              openDialog({ ...action, event: cardEvent, back: card.anchor })
             }
           />
         )}
       </div>
-      {dialog?.kind === "delete" ? (
+      {dialog?.kind === "delete" || dialog?.kind === "remove" ? (
         <DeleteEventDialog
           event={dialog.event}
+          action={dialog}
           onDone={() => afterChange(null)}
           onClose={closeDialog}
         />

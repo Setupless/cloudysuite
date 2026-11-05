@@ -19,9 +19,9 @@ import {
   useRef,
   useState,
 } from "react";
-import type { CivilDate, TimeZone } from "../types";
+import type { CalendarEntry, CivilDate, TimeZone } from "../types";
 import { calendarFill } from "./colours";
-import { controlsFor } from "./event-form";
+import { actionsFor, type EventAction } from "./event-form";
 import { repeatText, whoCanSee, withLinks } from "./event-text";
 import { AnswerButtons, PeopleList, PeopleSummary } from "./invitation-parts";
 import { JoinButton, meetingOf } from "./join-button";
@@ -152,52 +152,41 @@ function EventHeading({
   );
 }
 
-// Called with the button pressed, so focus can go back to it.
 export type EventActionHandlers = {
-  onEdit: (button: HTMLElement) => void;
-  onDelete: (button: HTMLElement) => void;
+  calendars: CalendarEntry[];
+  // Called with the button pressed, so focus can go back to it.
+  onAction: (action: EventAction, button: HTMLElement) => void;
+};
+
+const ACTION_ICONS: Record<EventAction["kind"], Icon> = {
+  edit: IconPencil,
+  delete: IconTrash,
+  remove: IconCalendarX,
 };
 
 function EventActions({
   event,
-  onEdit,
-  onDelete,
+  calendars,
+  onAction,
 }: EventActionHandlers & { event: ShownEvent }) {
-  switch (controlsFor(event, event.calendar)) {
-    case "none":
-      return null;
-    case "removeOnly":
-      return (
-        <Button
-          variant="toolbar"
-          icon={IconCalendarX}
-          onClick={(click) => onDelete(click.currentTarget)}
-        >
-          {event.calendar.kind === "personal"
-            ? "Remove from my calendar"
-            : "Remove from calendar"}
-        </Button>
-      );
-    case "editAndDelete":
-      return (
-        <>
-          <Button
-            variant="toolbar"
-            icon={IconPencil}
-            onClick={(click) => onEdit(click.currentTarget)}
-          >
-            Edit
-          </Button>
-          <Button
-            variant="toolbar"
-            icon={IconTrash}
-            onClick={(click) => onDelete(click.currentTarget)}
-          >
-            Delete
-          </Button>
-        </>
-      );
-  }
+  const labels = {
+    edit: "Edit",
+    delete: "Delete",
+    remove:
+      event.calendar.kind === "personal"
+        ? "Remove from my calendar"
+        : "Remove from calendar",
+  };
+  return actionsFor(event, calendars).map((action) => (
+    <Button
+      key={action.kind}
+      variant="toolbar"
+      icon={ACTION_ICONS[action.kind]}
+      onClick={(click) => onAction(action, click.currentTarget)}
+    >
+      {labels[action.kind]}
+    </Button>
+  ));
 }
 
 const clamp = (value: number, low: number, high: number) =>
