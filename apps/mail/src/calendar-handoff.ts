@@ -6,14 +6,13 @@ import {
 } from "@cloudysuite/calendar/inbound";
 import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import { provedSenderDomain } from "./spam/signals";
-import type { MessageId, NewMessage } from "./types";
+import { CALENDAR_TYPES, type MessageId, type NewMessage } from "./types";
 
 // Calendar reads invitations, updates, cancellations, and replies from inbound mail. Each
 // message with a calendar part waits here, written once the message is stored, and the
 // alarm hands it over. Only Calendar's one entry for this is called, after the message
 // is safe, so nothing Calendar does can lose or hold up mail.
 
-const CALENDAR_TYPES = ["text/calendar", "application/ics"];
 // Each hand-off waits on the directory and on calendars, so a run hands over a few and
 // starts none after its budget. The alarm comes straight back for the rest, and the
 // mailbox takes other mail in between.
@@ -49,6 +48,12 @@ export type DueHandoff = {
   tries: number;
   // Someone can move it to Spam before the alarm runs, which counts as the filter would.
   inSpam: boolean;
+};
+
+export type CardRefs = {
+  from: string | null;
+  proved: boolean;
+  partKeys: string[];
 };
 
 export class CalendarHandoffStore {
@@ -111,6 +116,24 @@ export class CalendarHandoffStore {
       )
       .slice(0, MAX_INVITATION_PARTS)
       .map((row) => row.r2_key);
+  }
+
+  // What the invitation card in Mail reads, from any folder and any source, since the
+  // person chose to open it.
+  forCard(messageId: MessageId): CardRefs | null {
+    const [row] = this.#db
+      .exec<{ from_address: string | null; sender_proved: number }>(
+        "SELECT from_address, sender_proved FROM messages WHERE id = ?",
+        messageId,
+      )
+      .toArray();
+    return row
+      ? {
+          from: row.from_address,
+          proved: row.sender_proved === 1,
+          partKeys: this.partKeys(messageId),
+        }
+      : null;
   }
 
   finish(messageId: MessageId): void {

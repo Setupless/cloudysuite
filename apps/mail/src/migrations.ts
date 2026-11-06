@@ -353,4 +353,8 @@ export const MIGRATIONS: Migrations = [
     )`,
     `CREATE INDEX calendar_handoffs_due ON calendar_handoffs(try_at)`,
   ],
+  // Mail's sender check on arrival, which the invitation card in Mail shows and Calendar
+  // trusts. It needs facts about the From lines that aren't stored, so it can't be worked
+  // out again later. Older mail counts as unproved.
+  [`ALTER TABLE messages ADD COLUMN sender_proved INTEGER NOT NULL DEFAULT 0`],
 ];

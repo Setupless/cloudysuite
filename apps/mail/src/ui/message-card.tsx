@@ -28,6 +28,7 @@ import type {
 import { EmailFrame } from "./email-frame";
 import { displayName, formatFullDate, formatSize } from "./format";
 import { useMailView } from "./mail-view-context";
+import { carriesInvitation, MessageInvitation } from "./invitation";
 import { FullAddress, isolatedList } from "./people";
 import { FailureNotice, ThreadDate } from "./states";
 
@@ -423,6 +424,9 @@ export function MessageCard({
       )}
       {message.folder === "spam" && (
         <WhyInSpam message={message} mailboxId={mailboxId} />
+      )}
+      {carriesInvitation(message) && (
+        <MessageInvitation message={message} mailboxId={mailboxId} />
       )}
       <MessageBody message={message} mailboxId={mailboxId} />
     </article>

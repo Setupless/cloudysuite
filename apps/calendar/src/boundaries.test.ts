@@ -114,6 +114,38 @@ test("only Mail's alarm hands a calendar what an email from outside said", () =>
   ]);
 });
 
+test("only Mail's invitation card reaches Calendar's entry for it", () => {
+  expect(usersOf(/from "[^"]*calendar\/mail-card"/)).toEqual([
+    "apps/mail/src/invitation-functions.ts",
+  ]);
+  expect(usersOf(/from "[^"]*calendar\/mail-card-ui"/)).toEqual([
+    "apps/mail/src/ui/invitation.tsx",
+  ]);
+  // The entry checks that Calendar is on before it reads or adds anything.
+  for (const method of ["copyStanding", "addFromCard", "outsideAnswer"]) {
+    expect([method, usersOf(new RegExp(`\\.${method}\\(`))]).toEqual([
+      method,
+      [
+        "apps/calendar/src/calendar.ts",
+        "apps/calendar/src/client.ts",
+        "apps/calendar/src/mail-card.ts",
+      ],
+    ]);
+  }
+});
+
+test("Mail's card UI takes only types from the card's server entry", () => {
+  const source = readFileSync(
+    join(import.meta.dir, "ui/mail-card.tsx"),
+    "utf8",
+  );
+  const imports = [
+    ...source.matchAll(/^import\b[^;]*?from "\.\.\/mail-card";/gm),
+  ].map(([statement]) => statement.startsWith("import type "));
+  expect(imports.length).toBeGreaterThan(0);
+  expect(imports.every(Boolean)).toBe(true);
+});
+
 test("only the Calendar object makes an event store", () => {
   expect(usersOf(/\bnew EventStore\b/)).toEqual([
     "apps/calendar/src/calendar.ts",
@@ -133,6 +165,8 @@ test("the package does not export the stub or the store", () => {
     ".",
     "./calendar",
     "./inbound",
+    "./mail-card",
+    "./mail-card-ui",
     "./routes",
   ]);
 });

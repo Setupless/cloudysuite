@@ -66,9 +66,10 @@ test("Mail's code reaches the sign-in rule only through the Mail-on check", () =
   ]);
 });
 
-// Mail hands inbound mail with a calendar part to Calendar's one entry for it, and
-// reaches nothing else of Calendar's.
-test("Mail reaches Calendar only through its entry for inbound mail", () => {
+// Mail hands inbound mail with a calendar part to Calendar's one entry for it, and shows
+// the invitation card through Calendar's entry for that. It reaches nothing else of
+// Calendar's.
+test("Mail reaches Calendar only through its entries for inbound mail and the card", () => {
   const imports = productionFiles()
     .filter((file) => relative(ROOT, file).startsWith("apps/mail/"))
     .flatMap((file) =>
@@ -81,7 +82,12 @@ test("Mail reaches Calendar only through its entry for inbound mail", () => {
     .sort();
   expect(imports).toEqual([
     ["apps/mail/src/calendar-handoff.ts", "@cloudysuite/calendar/inbound"],
+    [
+      "apps/mail/src/invitation-functions.ts",
+      "@cloudysuite/calendar/mail-card",
+    ],
     ["apps/mail/src/mailbox.ts", "@cloudysuite/calendar/inbound"],
+    ["apps/mail/src/ui/invitation.tsx", "@cloudysuite/calendar/mail-card-ui"],
   ]);
 });
 

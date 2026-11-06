@@ -1,4 +1,5 @@
 import type { MailboxGrant } from "@cloudysuite/access";
+import type { CardRefs } from "./calendar-handoff";
 import {
   createMailboxOutgoing,
   type MailboxOutgoing,
@@ -67,6 +68,12 @@ export type InlineFile = {
 
 export type MessageContent = { body: MessageBody; inline: InlineFile[] };
 
+export type CalendarParts = {
+  from: string | null;
+  proved: boolean;
+  parts: string[];
+};
+
 export type MailboxClient = {
   summary(): Promise<MailboxSummary>;
   listThreads(query: ThreadQuery): Promise<ThreadPage>;
@@ -114,6 +121,8 @@ export type MailboxClient = {
     range: { offset: number; length: number },
   ): Promise<ReadableStream | null>;
   getRaw(messageId: MessageId): Promise<ReadableStream | null>;
+  // Null for a message that isn't here.
+  calendarParts(messageId: MessageId): Promise<CalendarParts | null>;
   outgoing: MailboxOutgoing;
   pushMuted(): Promise<boolean>;
   setPushMuted(muted: boolean): Promise<void>;
@@ -210,6 +219,22 @@ export function openMailbox(env: Env, grant: MailboxGrant): MailboxClient {
       const prefix = await stub.storagePrefix(messageId);
       if (prefix === null) return null;
       return (await env.BUCKET.get(rawKey(prefix)))?.body ?? null;
+    },
+
+    async calendarParts(messageId) {
+      const refs = (await stub.calendarCard(messageId)) as CardRefs | null;
+      if (!refs) return null;
+      const parts = await Promise.all(
+        refs.partKeys.map(async (key) => {
+          const object = await env.BUCKET.get(key);
+          return object ? await object.text() : null;
+        }),
+      );
+      return {
+        from: refs.from,
+        proved: refs.proved,
+        parts: parts.filter((part) => part !== null),
+      };
     },
 
     outgoing: createMailboxOutgoing(env.BUCKET, stub, grant.mailboxId),

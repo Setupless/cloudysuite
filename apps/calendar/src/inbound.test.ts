@@ -540,6 +540,41 @@ test("a removed invitation stays removed when its organiser changes it", async (
   expect(await schedule()).toEqual([]);
 });
 
+test("removing a forged copy doesn't keep out the organiser's real invitation", async () => {
+  // It names the real organiser, without the proof only the organiser's own mail has.
+  await arrive(
+    google({ title: "Moved to my place", sequence: 9 }, { from: MALLORY }),
+  );
+  const [forged] = await schedule();
+  expect(forged?.organiser).toMatchObject({
+    email: DANA,
+    fromOrganiser: false,
+  });
+  const removeAll = async () =>
+    as().deleteEvent({
+      data: {
+        calendarId: await personalOf(),
+        target: { uid: await copyUid(), occurrenceId: null },
+        scope: "all",
+      },
+    });
+  await removeAll();
+  // Another without proof stays out, because the person removed it.
+  await arrive(
+    google({ title: "Moved again", sequence: 10 }, { from: MALLORY }),
+  );
+  expect(await schedule()).toEqual([]);
+
+  await arrive(google());
+  expect((await schedule()).map((one) => [one.title, one.answer])).toEqual([
+    ["Supplier review", "needsAnswer"],
+  ]);
+  // The real one, once removed, stays removed.
+  await removeAll();
+  await arrive(google({ sequence: 1, title: "Supplier review, moved" }));
+  expect(await schedule()).toEqual([]);
+});
+
 const TUESDAY: EventTime = {
   kind: "timed",
   start: sydney("2026-11-10T10:00:00"),

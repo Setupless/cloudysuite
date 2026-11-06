@@ -9,8 +9,13 @@ import {
 import type { SearchTerm } from "@cloudysuite/search";
 import type {
   AnswerNotice,
+  CopyLookup,
+  CopyStanding,
   Delivery,
   DeliveryResult,
+  HeldAnswer,
+  MailAdd,
+  MailAddResult,
   OutsideInvitation,
   OutsideReply,
   OutsideResult,
@@ -24,6 +29,7 @@ import type {
   ChangeScope,
   CreateResult,
   DayRange,
+  EmailAddress,
   EraseResult,
   EventDraft,
   EventSearchResult,
@@ -69,6 +75,9 @@ export type CalendarClient = {
   organiserOf(uid: EventUid): Promise<UserId | null>;
   // Only once D1 no longer has the calendar.
   erase(): Promise<EraseResult>;
+  copyStanding(lookup: CopyLookup): Promise<CopyStanding>;
+  addFromCard(add: MailAdd): Promise<MailAddResult>;
+  outsideAnswer(uid: EventUid, email: EmailAddress): Promise<HeldAnswer | null>;
 };
 
 // The only way for user-facing code to reach a calendar. A grant cannot cross RPC, so D1's
@@ -119,6 +128,11 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
     organiserOf: async (uid) =>
       (await stub.organiserOf(actor, uid)) as UserId | null,
     erase: async () => (await stub.erase(actor)) as EraseResult,
+    copyStanding: async (lookup) =>
+      (await stub.copyStanding(actor, lookup)) as CopyStanding,
+    addFromCard: (add) => stub.addFromCard(actor, add),
+    outsideAnswer: async (uid, email) =>
+      (await stub.outsideAnswer(actor, uid, email)) as HeldAnswer | null,
   };
 }
 

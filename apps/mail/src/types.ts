@@ -149,6 +149,12 @@ export type ThreadPage = {
   nextCursor: string | null;
 };
 
+// The parts Calendar reads invitations from.
+export const CALENDAR_TYPES: readonly string[] = [
+  "text/calendar",
+  "application/ics",
+];
+
 export type AttachmentInfo = {
   id: AttachmentId;
   filename: string | null;

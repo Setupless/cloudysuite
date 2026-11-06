@@ -164,4 +164,11 @@ export const MIGRATIONS: Migrations = [
     // invited to an event since deleted, can still be named where Try again is.
     `ALTER TABLE invitation_emails ADD COLUMN name TEXT`,
   ],
+  [
+    // Who the removed event came from, as the events row named its organiser. A copy that
+    // came without its organiser's proof gives way to their own invitation even once
+    // removed, and the card in Mail finds a removed colleague's copy by it. Null on rows
+    // removed before this, which stay removed.
+    `ALTER TABLE removed_events ADD COLUMN organiser TEXT`,
+  ],
 ];
