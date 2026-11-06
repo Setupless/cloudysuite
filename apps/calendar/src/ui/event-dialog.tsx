@@ -34,6 +34,7 @@ import {
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
+  NEVER_HAPPENS_MESSAGE,
   type OutsideInviting,
   REPEAT_FREQUENCIES,
   type TimeZone,
@@ -396,7 +397,11 @@ export function EventDialog({
       await client.invalidateQueries({ queryKey: calendarKeys.all });
       onSaved(uid, firstDay);
     } catch (thrown) {
-      setFailure({ field: null, message: (thrown as Error).message });
+      const { message } = thrown as Error;
+      // The end day to change is on the form, not on the choice of which ones.
+      const endTooSoon = message === NEVER_HAPPENS_MESSAGE;
+      if (endTooSoon) setAsking(null);
+      setFailure({ field: endTooSoon ? "repeatUntil" : null, message });
       setPending(false);
     }
   }

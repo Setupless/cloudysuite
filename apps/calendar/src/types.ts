@@ -233,6 +233,7 @@ export type ChangeResult =
   | { status: "notInvitable" }
   // Who's invited changes from a date onwards, or for every date, never for one.
   | { status: "peopleForOneDate" }
+  | { status: "neverHappens" }
   | OutsideRefused;
 
 // Try again on an email that didn't go. Done also covers one already on its way again.

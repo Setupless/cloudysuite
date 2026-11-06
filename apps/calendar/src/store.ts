@@ -1351,6 +1351,9 @@ export class EventStore {
       sequence: 0,
       cancelled: false,
     };
+    if (edited.rule !== null && !firstDateOf(edited.rule, time)) {
+      return { status: "neverHappens" };
+    }
     const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
@@ -1401,6 +1404,9 @@ export class EventStore {
     const unchanged =
       sameTime(time, series.time) && sameRepeat(repeat, shownRepeat(series));
     const rule = unchanged ? series.rule : repeat && ruleOf(repeat, time);
+    if (rule !== null && !firstDateOf(rule, time)) {
+      return { status: "neverHappens" };
+    }
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {

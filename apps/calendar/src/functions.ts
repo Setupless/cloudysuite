@@ -146,6 +146,8 @@ function answerChange(result: ChangeResult): void {
       throw refusal(404, NOT_A_PERSON_MESSAGE);
     case "peopleForOneDate":
       throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
+    case "neverHappens":
+      throw refusal(400, NEVER_HAPPENS_MESSAGE);
     case "outsideNotAllowed":
       throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
   }
