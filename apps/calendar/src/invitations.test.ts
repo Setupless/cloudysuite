@@ -690,7 +690,7 @@ test("an organiser's name is kept to 100 characters", async () => {
   expect(copy?.organiser).toMatchObject({ name: "A".repeat(100) });
 });
 
-test("Today lists unanswered invitations, even from a hidden calendar", async () => {
+test("Overview lists unanswered invitations, even from a hidden calendar", async () => {
   const uid = await invite([people.outsider], { repeat: WEEKLY });
   await invite([people.outsider], { title: "Board review" });
   const mine = await personalOf(people.outsider);

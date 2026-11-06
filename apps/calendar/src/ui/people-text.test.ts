@@ -40,7 +40,7 @@ test("the card says who invited whom, and how they answered", () => {
   expect(peopleSummary({ organiser: maya, people: [] }, ME)).toBeNull();
 });
 
-test("Today's next event names who else is going and who hasn't replied", () => {
+test("Overview's next event names who else is going and who hasn't replied", () => {
   expect(
     comingLine([...people, person("e", "Eve Ng", "needsAnswer")], ME),
   ).toBe("Bob Lee and Carol Diaz are going. Eve Ng hasn't replied.");

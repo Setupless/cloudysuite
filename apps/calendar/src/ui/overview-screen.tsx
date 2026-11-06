@@ -510,13 +510,13 @@ function AllDayChip({
 function Heading({ children }: { children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 px-4 pt-3.5 pb-2.5">
-      <h1 className="text-[21px] font-semibold">Today</h1>
+      <h1 className="text-[21px] font-semibold">Overview</h1>
       {children}
     </div>
   );
 }
 
-function LiveToday() {
+function LiveOverview() {
   const [zone] = useState(deviceZone);
   const now = useMinute();
   const today = todayIn(zone, now);
@@ -579,21 +579,21 @@ function LiveToday() {
   );
 }
 
-function Today() {
+function Overview() {
   // The server knows neither the reader's time zone nor their language, so the day
   // waits for the browser. The events are already here by then.
   const hydrated = useHydrated();
-  return hydrated ? <LiveToday /> : <Heading />;
+  return hydrated ? <LiveOverview /> : <Heading />;
 }
 
-export function TodayScreen({
+export function OverviewScreen({
   prefetched,
 }: {
   prefetched: DehydratedState | undefined;
 }) {
   return (
     <HydrationBoundary state={prefetched}>
-      <Today />
+      <Overview />
     </HydrationBoundary>
   );
 }

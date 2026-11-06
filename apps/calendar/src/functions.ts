@@ -289,7 +289,7 @@ export const listEvents = createServerFn({ method: "GET" })
     };
   });
 
-// Today shows these even when the personal calendar is hidden, so none is missed.
+// Overview shows these even when the personal calendar is hidden, so none is missed.
 export const listInvitations = createServerFn({ method: "GET" })
   .validator(parseInvitationsInput)
   .handler(async ({ data }): Promise<CalendarOccurrence[]> => {

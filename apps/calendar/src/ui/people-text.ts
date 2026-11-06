@@ -108,7 +108,7 @@ export function peopleSummary(
   return `${invited} ${answers.join(", ")}.`;
 }
 
-// Today's next event says who else is coming and who hasn't replied.
+// Overview's next event says who else is coming and who hasn't replied.
 export function comingLine(
   people: readonly Attendee[],
   me: UserId,

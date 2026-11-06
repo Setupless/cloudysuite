@@ -111,16 +111,16 @@ function Navigation({
   onNewTeamCalendar: () => void;
 }) {
   const { pathname } = useLocation();
-  const isToday = ["", "/calendar"].includes(pathname.replace(/\/$/, ""));
+  const isOverview = ["", "/calendar"].includes(pathname.replace(/\/$/, ""));
   return (
     <>
       <Link
         to="/calendar"
         activeOptions={{ exact: true }}
-        className={itemClass(isToday)}
+        className={itemClass(isOverview)}
       >
         <IconHome size={18} stroke={1.75} aria-hidden />
-        Today
+        Overview
       </Link>
       <Link
         to="/calendar/schedule"
