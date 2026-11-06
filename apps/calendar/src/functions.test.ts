@@ -28,7 +28,6 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
   MAX_IMPORT_BYTES,
-  neverHappensMessage,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   type OccurrenceId,
@@ -319,47 +318,46 @@ test.each([
   expect(created.first).toEqual(first);
 });
 
-test("a repeat that would never happen is refused, naming the first day it would, and nothing is kept", async () => {
+// The dialog writes the answer in the reader's language, so it comes back as the day.
+const NO_DATES_LEFT = {
+  status: "noDatesLeft",
+  needs: { kind: "onDate", date: date("2026-11-09") },
+};
+
+test("a new repeat with no dates isn't kept, and the answer is the earliest last date that gives it one", async () => {
   const before = calendarNow().events;
   expect(
-    await refused(
-      as(people.editor).createEvent({
-        data: {
-          calendarId: TEAM,
-          draft: draft(saturday, {
-            repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
-          }),
-        },
-      }),
-    ),
-  ).toEqual({
-    status: 400,
-    message: neverHappensMessage("Monday, 9 November 2026"),
-  });
+    await as(people.editor).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: draft(saturday, {
+          repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
+        }),
+      },
+    }),
+  ).toEqual(NO_DATES_LEFT);
   expect(calendarNow().events).toEqual(before);
 });
 
-test("an edit to a repeat that would never happen is refused, naming the first day it would", async () => {
+test("an edit into a repeat with no dates isn't saved, and the answer is the earliest last date that gives it one", async () => {
   const { uid } = await as(people.editor).createEvent({
     data: { calendarId: TEAM, draft: draft(saturday) },
   });
+  const edit = (repeat: Repeat) =>
+    as(people.editor).updateEvent({
+      data: {
+        calendarId: TEAM,
+        target: { uid, occurrenceId: null },
+        scope: "all",
+        draft: draft(saturday, { repeat }),
+      },
+    });
   expect(
-    await refused(
-      as(people.editor).updateEvent({
-        data: {
-          calendarId: TEAM,
-          target: { uid, occurrenceId: null },
-          scope: "all",
-          draft: draft(saturday, {
-            repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
-          }),
-        },
-      }),
-    ),
-  ).toEqual({
-    status: 400,
-    message: neverHappensMessage("Monday, 9 November 2026"),
-  });
+    await edit(weekdays({ kind: "onDate", date: date("2026-11-08") })),
+  ).toEqual(NO_DATES_LEFT);
+  expect(
+    await edit(weekdays({ kind: "onDate", date: date("2026-11-09") })),
+  ).toEqual({ status: "done" });
 });
 
 test("a personal calendar takes a new colour, but can't be deleted, left, renamed, or shared", async () => {

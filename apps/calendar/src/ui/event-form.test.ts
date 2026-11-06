@@ -6,16 +6,11 @@ import {
   LONDON,
   SYDNEY,
 } from "../test-support";
+import type { Occurrence, OccurrenceId } from "../types";
 import {
-  neverHappensMessage,
-  type Occurrence,
-  type OccurrenceId,
-  PEOPLE_FOR_ONE_DATE_MESSAGE,
-} from "../types";
-import {
+  askForEnd,
   draftOf,
   type EventForm,
-  failureOf,
   formOf,
   newForm,
   nextHalfHour,
@@ -23,6 +18,7 @@ import {
   slotStart,
   withStart,
 } from "./event-form";
+import { dayTitle } from "./event-text";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
 
@@ -239,24 +235,30 @@ test.each([
   expect(draftOf(form(more), SYDNEY)).toEqual({ ok: false, field, message });
 });
 
+const TODAY = date("2026-11-07");
+
 test.each([
-  ["on a day", "onDate", "repeatUntil"],
-  ["after a number of times", "afterTimes", "repeatTimes"],
+  [
+    "the last date",
+    { kind: "onDate", date: date("2026-11-23") },
+    "repeatUntil",
+    `Set the last date to ${dayTitle(date("2026-11-23"), TODAY)} or later.`,
+  ],
+  [
+    "the number of times",
+    { kind: "afterTimes", times: 2 },
+    "repeatTimes",
+    "Set the number of times to 2 or more.",
+  ],
 ] as const)(
-  "a repeat that would never happen, ending %s, points at where it ends",
-  (_, repeatEnd, field) => {
-    const message = neverHappensMessage("Monday, 23 November 2026");
-    expect(failureOf(message, form({ repeat: "weekdays", repeatEnd }))).toEqual(
-      { field, message },
-    );
+  "a repeat with no dates points at %s and asks for one that gives it a date",
+  (_, needs, field, advice) => {
+    expect(askForEnd(needs, TODAY)).toEqual({
+      field,
+      message: `The repeat would end up with no dates, so it wasn't saved. ${advice}`,
+    });
   },
 );
-
-test("another refusal points at nothing on the form", () => {
-  expect(
-    failureOf(PEOPLE_FOR_ONE_DATE_MESSAGE, form({ repeat: "weekly" })),
-  ).toEqual({ field: null, message: PEOPLE_FOR_ONE_DATE_MESSAGE });
-});
 
 test("moving the start keeps the event's length", () => {
   const long = form({ endDate: "2026-11-06", endTime: "10:00" });

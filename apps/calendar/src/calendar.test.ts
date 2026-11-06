@@ -1372,6 +1372,10 @@ const onDate = (day: string): Repeat["end"] => ({
   kind: "onDate",
   date: date(day),
 });
+const afterTimes = (times: number): Repeat["end"] => ({
+  kind: "afterTimes",
+  times,
+});
 const weekdays = (end: Repeat["end"]): Repeat => ({
   frequency: "weekdays",
   end,
@@ -1385,7 +1389,7 @@ test.each([
   ["a one-off event", null, null, [7]],
   ["all of a weekly repeat", weekly(), NOVEMBER_7, [7, 14, 21, 28]],
 ])(
-  "changing %s to every weekday from a Saturday to the Sunday is refused, its dates stay, and going on until the Monday it names saves",
+  "changing %s to every weekday from a Saturday to the Sunday is refused with the Monday as the earliest last date, its dates stay, and ending then saves",
   async (_, repeat, occurrenceId, days) => {
     const uid = await created(saturday, { repeat });
     const alice = await kit.as(ALICE);
@@ -1397,8 +1401,8 @@ test.each([
         [],
       );
     expect(await change(onDate("2026-11-08"))).toEqual({
-      status: "neverHappens",
-      firstDay: date("2026-11-09"),
+      status: "noDatesLeft",
+      needs: onDate("2026-11-09"),
     });
     expect(
       shown((await listed("2026-11-01", "2026-12-01")).occurrences),
@@ -1416,7 +1420,7 @@ test.each([
   // from, and ends no earlier, and no weekday comes before the 23rd.
   ["moved to the Friday before", "2026-11-13", "2026-11-18"],
 ])(
-  "changing this and later ones %s to a repeat that never happens is refused, the later dates stay, and going on until the Monday it names saves",
+  "changing this and later ones %s to a repeat with no dates is refused with the Monday as the earliest last date, the later dates stay, and ending then saves",
   async (_, day, lastDay) => {
     const uid = await created(saturday, { repeat: weekly() });
     const alice = await kit.as(ALICE);
@@ -1428,8 +1432,8 @@ test.each([
         [],
       );
     expect(await change(onDate(lastDay))).toEqual({
-      status: "neverHappens",
-      firstDay: date("2026-11-23"),
+      status: "noDatesLeft",
+      needs: onDate("2026-11-23"),
     });
     expect(
       shown((await listed("2026-11-01", "2026-12-01")).occurrences),
@@ -1446,46 +1450,55 @@ test.each([
 
 test.each([
   [
-    "to end after one time",
-    weekly({ kind: "afterTimes", times: 1 }),
+    "from the 14th to end after one time",
+    NOVEMBER_14,
+    "2026-11-14",
+    weekly(afterTimes(1)),
+    afterTimes(2),
+    "2026-11-14",
+  ],
+  // The dialog shows the 21st, so the 14th can't be its last date, but two times can.
+  [
+    "from the 21st to end after one time",
+    NOVEMBER_21,
+    "2026-11-21",
+    weekly(afterTimes(1)),
+    afterTimes(2),
     "2026-11-14",
   ],
   [
-    "to every month until the end of November",
+    "from the 14th to every month until the end of November",
+    NOVEMBER_14,
+    "2026-11-14",
     monthly(onDate("2026-11-30")),
+    onDate("2026-12-07"),
     "2026-12-07",
   ],
-])(
-  "changing all of them %s, when its only date was removed on its own, is refused, its dates stay, and going on until the day it names saves",
-  async (_, repeat, firstDay) => {
+] as const)(
+  "changing all of them %s, when its only date was removed on its own, is refused with the nearest end of that kind that gives it a date, its dates stay, and that end saves",
+  async (_, occurrenceId, day, repeat, needs, firstDay) => {
     const uid = await created(saturday, { repeat: weekly() });
     const alice = await kit.as(ALICE);
     await alice.remove({ uid, occurrenceId: NOVEMBER_7 }, "this");
     const change = (end: Repeat["end"]) =>
       alice.update(
-        { uid, occurrenceId: NOVEMBER_14 },
+        { uid, occurrenceId },
         "all",
-        draft(at9("2026-11-14"), {
-          title: "Planning",
-          repeat: { ...repeat, end },
-        }),
+        draft(at9(day), { title: "Planning", repeat: { ...repeat, end } }),
         [],
       );
-    expect(await change(repeat.end)).toEqual({
-      status: "neverHappens",
-      firstDay: date(firstDay),
-    });
+    expect(await change(repeat.end)).toEqual({ status: "noDatesLeft", needs });
     expect(
       shown((await listed("2026-11-01", "2026-12-01")).occurrences),
     ).toEqual(novemberAt("09:00", [14, 21, 28]));
-    expect(await change(onDate(firstDay))).toEqual({ status: "done" });
+    expect(await change(needs)).toEqual({ status: "done" });
     expect(
       shown((await listed("2026-11-01", "2027-01-01")).occurrences),
     ).toEqual([["Planning", `${firstDay} 09:00`]]);
   },
 );
 
-test("changing this and later ones so the new half's only date is one removed on its own is refused, its dates stay, and going on until the day it names saves", async () => {
+test("changing this and later ones so the new half's only date is one removed on its own is refused with the fewest times that give it one, its dates stay, and that many saves", async () => {
   const uid = await created(at9("2026-11-02"), {
     repeat: weekdays({ kind: "never" }),
   });
@@ -1503,9 +1516,9 @@ test("changing this and later ones so the new half's only date is one removed on
       draft(at9("2026-11-14"), { title: "Planning", repeat: weekdays(end) }),
       [],
     );
-  expect(await change({ kind: "afterTimes", times: 1 })).toEqual({
-    status: "neverHappens",
-    firstDay: date("2026-11-17"),
+  expect(await change(afterTimes(1))).toEqual({
+    status: "noDatesLeft",
+    needs: afterTimes(2),
   });
   expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
     novemberAt(
@@ -1516,7 +1529,7 @@ test("changing this and later ones so the new half's only date is one removed on
       ],
     ),
   );
-  expect(await change(onDate("2026-11-17"))).toEqual({ status: "done" });
+  expect(await change(afterTimes(2))).toEqual({ status: "done" });
   expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
     [
       ...novemberAt("09:00", [2, 3, 4, 5, 6, 9, 10]),
@@ -1536,7 +1549,7 @@ test("every weekday counts the days where the event is, not on the device", asyn
   ).toMatchObject({ status: "created" });
   expect(
     await alice.create("Alice Stone", draft(at(SYDNEY), { repeat }), []),
-  ).toEqual({ status: "neverHappens", firstDay: date("2026-11-09") });
+  ).toEqual({ status: "noDatesLeft", needs: onDate("2026-11-09") });
 });
 
 test("removing this and later ones from the first date removes the event, and keeps its record", async () => {
