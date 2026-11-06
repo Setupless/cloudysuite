@@ -18,7 +18,13 @@ import {
   LONDON,
   SYDNEY,
 } from "./test-support";
-import type { EmailAddress, EventUid, Occurrence, TimeZone } from "./types";
+import type {
+  EmailAddress,
+  EventUid,
+  Occurrence,
+  Repeat,
+  TimeZone,
+} from "./types";
 import { meetingLink } from "./ui/meeting-link";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
@@ -280,11 +286,10 @@ test("renaming an imported fortnightly repeat keeps its dates as the file wrote 
       "END:VEVENT",
     ),
   );
-  const dates = [
-    ["Pay run", "2026-11-03 08:00"],
-    ["Pay run", "2026-12-01 08:00"],
-  ];
-  expect(await shown("2026-11-01", "2027-01-01")).toEqual(dates);
+  const dates = ["2026-11-03 08:00", "2026-12-01 08:00"];
+  expect(await shown("2026-11-01", "2027-01-01")).toEqual(
+    dates.map((when) => ["Pay run", when]),
+  );
   const listing = await (
     await kit.as(ALICE)
   ).listRange({
@@ -301,12 +306,12 @@ test("renaming an imported fortnightly repeat keeps its dates as the file wrote 
     ).update(
       { uid: first!.uid, occurrenceId: null },
       "all",
-      draft(first!.time, { title: "Pay day", repeat: first!.repeat as never }),
+      draft(first!.time, { title: "Pay day", repeat: first!.repeat as Repeat }),
       [],
     ),
   ).toEqual({ status: "done" });
   expect(await shown("2026-11-01", "2027-01-01")).toEqual(
-    dates.map(([, when]) => ["Pay day", when]),
+    dates.map((when) => ["Pay day", when]),
   );
 });
 
