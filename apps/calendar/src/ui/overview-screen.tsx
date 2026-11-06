@@ -32,7 +32,6 @@ import {
   deviceZone,
   focusedElement,
   focusFirst,
-  NARROW_SECOND_LINE,
   unlessDialog,
 } from "./schedule-screen";
 import {
@@ -536,15 +535,15 @@ function Heading({
   return (
     <div className="@container">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 pt-3 pb-2.5">
-        <h1 className="px-1 text-[21px] leading-[34px] font-semibold">
+        <h1 className="pl-1 text-[21px] leading-[34px] font-semibold">
           Overview
         </h1>
-        <div
-          className={`flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @3xl:basis-0 ${NARROW_SECOND_LINE}`}
-        >
+        <div className="order-1 flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @3xl:order-none @3xl:min-h-0 @3xl:basis-0">
           {children}
         </div>
-        <div className="ml-auto self-start">{action}</div>
+        <div className="ml-auto flex h-[34px] items-center self-start">
+          {action}
+        </div>
       </div>
     </div>
   );
@@ -625,11 +624,13 @@ function LiveOverview() {
             disabled={!calendars.data}
             onClick={(click) => openNew(click.currentTarget)}
           >
-            New event
+            {/* Only the + where the label won't fit beside the title. In px, since a larger
+                root font widens that line only a little. */}
+            <span className="@max-[280px]:sr-only">New event</span>
           </Button>
         }
       >
-        <p className="basis-full px-1 text-secondary @3xl:basis-auto">
+        <p className="basis-full pl-1 text-secondary @3xl:basis-auto @3xl:pl-0">
           {dayTitle(today, today)}
         </p>
         {plan.allDay.map((event) => (

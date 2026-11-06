@@ -49,7 +49,7 @@ const SCREEN = "@container flex h-[calc(100dvh-52px)] flex-col";
 // split is the same in every view, so switching views never moves the grid.
 const TOOLBAR =
   "flex flex-none flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3 pb-2.5";
-export const NARROW_SECOND_LINE = "order-1 @3xl:order-none";
+const NARROW_SECOND_LINE = "order-1 @3xl:order-none";
 const LINE_BREAK = `h-1 basis-full @3xl:hidden ${NARROW_SECOND_LINE}`;
 const FOCUS =
   "outline-accent focus-visible:outline-2 focus-visible:outline-offset-1";
