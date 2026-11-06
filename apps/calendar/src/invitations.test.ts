@@ -1086,6 +1086,50 @@ test("a copy keeps the removed and moved dates when the organiser makes every da
   ]);
 });
 
+test("a copy keeps the removed and moved dates when the organiser moves every date later", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await change(
+    uid,
+    {
+      title: "Moved",
+      time: timed("2026-11-24T14:00:00+11:00", "2026-11-24T15:00:00+11:00"),
+      repeat: WEEKLY,
+      people: [people.outsider],
+    },
+    { occurrenceId: THIRD, scope: "this" },
+  );
+  await as(people.manager).deleteEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid, occurrenceId: SECOND },
+      scope: "this",
+    },
+  });
+  await objects.settle();
+  await change(uid, { time: LATER, repeat: WEEKLY, people: [people.outsider] });
+
+  const dates = (entries: CalendarOccurrence[]) =>
+    entries.map((entry) => [
+      entry.title,
+      entry.time.kind === "timed" ? entry.time.start : null,
+      entry.cancelled,
+    ]);
+  const organisers = (await seen(people.manager)).filter(
+    (entry) => entry.uid === uid,
+  );
+  expect(dates(organisers)).toEqual([
+    ["Weekly planning", Date.parse("2026-11-10T11:00:00+11:00"), false],
+    ["Moved", Date.parse("2026-11-24T14:00:00+11:00"), false],
+    ["Weekly planning", Date.parse("2026-12-01T11:00:00+11:00"), false],
+  ]);
+  expect(dates(await seen(people.outsider))).toEqual([
+    ["Weekly planning", Date.parse("2026-11-10T11:00:00+11:00"), false],
+    ["Weekly planning", Date.parse("2026-11-17T11:00:00+11:00"), true],
+    ["Moved", Date.parse("2026-11-24T14:00:00+11:00"), false],
+    ["Weekly planning", Date.parse("2026-12-01T11:00:00+11:00"), false],
+  ]);
+});
+
 test("while Calendar is off, invitations and answers wait, and go once it's back on", async () => {
   const calendarOn = (on: boolean) =>
     kit.sqlite.run(

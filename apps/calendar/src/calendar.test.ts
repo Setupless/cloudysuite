@@ -447,7 +447,10 @@ test("renaming this and later ones keeps the later dates that were removed or mo
 });
 
 // A weekly 9:00 to 10:00 standup with these dates removed and 30 November moved to 14:00.
-async function standupWithDatesChangedAlone(removed: OccurrenceId[]) {
+async function standupWithDatesChangedAlone(
+  removed: OccurrenceId[],
+  movedTitle = "Moved standup",
+) {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
     { repeat: weekly() },
@@ -463,7 +466,7 @@ async function standupWithDatesChangedAlone(removed: OccurrenceId[]) {
       { uid, occurrenceId: "20261129T220000Z" as OccurrenceId },
       "this",
       draft(timed("2026-11-30T14:00:00+11:00", "2026-11-30T15:00:00+11:00"), {
-        title: "Moved standup",
+        title: movedTitle,
       }),
       [],
     ),
@@ -472,6 +475,158 @@ async function standupWithDatesChangedAlone(removed: OccurrenceId[]) {
 }
 
 const NOVEMBER_23 = "20261122T220000Z" as OccurrenceId;
+const NOVEMBER_30 = "20261129T220000Z" as OccurrenceId;
+
+const shownWithEnds = (occurrences: Occurrence[]) =>
+  occurrences.map((occurrence) => {
+    const { time } = occurrence;
+    if (time.kind !== "timed") throw new Error("expected a timed date");
+    return [
+      occurrence.title,
+      `${localTime(time.start, time.timeZone)} to ${localTime(time.end, time.timeZone).slice(11)}`,
+    ];
+  });
+
+test("renaming this and later ones renames a date moved on its own, and keeps a title changed on its own", async () => {
+  const uid = await standupWithDatesChangedAlone([NOVEMBER_23], "Team standup");
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261206T220000Z" as OccurrenceId },
+      "this",
+      draft(timed("2026-12-07T09:00:00+11:00", "2026-12-07T10:00:00+11:00"), {
+        title: "Planning",
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261115T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-16T09:00:00+11:00", "2026-11-16T10:00:00+11:00"), {
+        title: "Daily sync",
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-21")).occurrences)).toEqual(
+    [
+      ["Team standup", "2026-11-02 09:00"],
+      ["Team standup", "2026-11-09 09:00"],
+      ["Daily sync", "2026-11-16 09:00"],
+      ["Daily sync", "2026-11-30 14:00"],
+      ["Planning", "2026-12-07 09:00"],
+      ["Daily sync", "2026-12-14 09:00"],
+    ],
+  );
+});
+
+test("changing all of them from a date moved on its own shows the change on that date", async () => {
+  const uid = await standupWithDatesChangedAlone([NOVEMBER_23], "Team standup");
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: NOVEMBER_30 },
+      "all",
+      draft(timed("2026-11-30T14:00:00+11:00", "2026-11-30T15:30:00+11:00"), {
+        title: "Daily sync",
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    shownWithEnds((await listed("2026-11-01", "2026-12-14")).occurrences),
+  ).toEqual([
+    ["Daily sync", "2026-11-02 09:00 to 10:30"],
+    ["Daily sync", "2026-11-09 09:00 to 10:30"],
+    ["Daily sync", "2026-11-16 09:00 to 10:30"],
+    ["Daily sync", "2026-11-30 14:00 to 15:30"],
+    ["Daily sync", "2026-12-07 09:00 to 10:30"],
+  ]);
+});
+
+test("moving the start of all of them keeps the removed date removed and the moved date where it went", async () => {
+  const uid = await standupWithDatesChangedAlone([NOVEMBER_23]);
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: null },
+      "all",
+      draft(timed("2026-11-02T10:00:00+11:00", "2026-11-02T11:00:00+11:00"), {
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-14")).occurrences)).toEqual(
+    [
+      ["Team standup", "2026-11-02 10:00"],
+      ["Team standup", "2026-11-09 10:00"],
+      ["Team standup", "2026-11-16 10:00"],
+      ["Moved standup", "2026-11-30 14:00"],
+      ["Team standup", "2026-12-07 10:00"],
+    ],
+  );
+});
+
+test("moving the start of this and later ones keeps the removed date removed and the moved date where it went", async () => {
+  const uid = await standupWithDatesChangedAlone([NOVEMBER_23]);
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: "20261115T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-16T10:00:00+11:00", "2026-11-16T11:00:00+11:00"), {
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-14")).occurrences)).toEqual(
+    [
+      ["Team standup", "2026-11-02 09:00"],
+      ["Team standup", "2026-11-09 09:00"],
+      ["Team standup", "2026-11-16 10:00"],
+      ["Moved standup", "2026-11-30 14:00"],
+      ["Team standup", "2026-12-07 10:00"],
+    ],
+  );
+});
+
+test("renaming this and later ones from a date moved on its own keeps the later dates at the series' time", async () => {
+  const uid = await standupWithDatesChangedAlone([], "Team standup");
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: NOVEMBER_30 },
+      "thisAndLater",
+      draft(timed("2026-11-30T14:00:00+11:00", "2026-11-30T15:00:00+11:00"), {
+        title: "Daily sync",
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    shownWithEnds((await listed("2026-11-01", "2026-12-21")).occurrences),
+  ).toEqual([
+    ["Team standup", "2026-11-02 09:00 to 10:00"],
+    ["Team standup", "2026-11-09 09:00 to 10:00"],
+    ["Team standup", "2026-11-16 09:00 to 10:00"],
+    ["Team standup", "2026-11-23 09:00 to 10:00"],
+    ["Daily sync", "2026-11-30 14:00 to 15:00"],
+    ["Daily sync", "2026-12-07 09:00 to 10:00"],
+    ["Daily sync", "2026-12-14 09:00 to 10:00"],
+  ]);
+});
 
 test("making this and later ones longer keeps the later dates that were removed or moved", async () => {
   const uid = await standupWithDatesChangedAlone([NOVEMBER_23]);

@@ -31,6 +31,7 @@ import {
 } from "./invitations";
 import {
   type Budget,
+  type DateOfSeries,
   datesOf,
   indexOf,
   repeatOf,
@@ -209,22 +210,6 @@ export function addSummary(total: ImportSummary, part: ImportSummary): void {
 
 // About 200 ms of ical.js on the slowest rules, shared by every series in one call.
 export const STEPS_PER_CALL = 100_000;
-
-function stillDates(
-  rule: string | null,
-  time: EventTime,
-  ids: readonly OccurrenceId[],
-): Set<OccurrenceId> {
-  const asked = new Set(ids);
-  const found = new Set<OccurrenceId>();
-  if (rule === null || asked.size === 0) return found;
-  const last = ids.reduce((top, id) => (id > top ? id : top));
-  for (const date of datesOf(rule, time, { steps: STEPS_PER_CALL })) {
-    if (date.id > last) break;
-    if (asked.has(date.id)) found.add(date.id);
-  }
-  return found;
-}
 
 export type EventRow = SqlRow & {
   uid: string;
@@ -638,6 +623,104 @@ function timeOfDate(series: StoredEvent, id: OccurrenceId): EventTime {
   }
   const start = instantOfOccurrence(id);
   return { ...time, start, end: start + (time.end - time.start) };
+}
+
+// The dates of a series removed or changed on their own.
+type OwnDates = { exdates: OccurrenceId[]; changes: StoredEvent[] };
+
+// The date a series was changed from, with its time before and the time the dialog gave it.
+type Opened = { id: OccurrenceId; from: EventTime; to: EventTime };
+
+const DETAIL_FIELDS = ["title", "location", "notes"] as const;
+
+const idOfChange = (change: StoredEvent) => change.recurrenceId as OccurrenceId;
+
+function datesOnDays(
+  rule: string,
+  time: EventTime,
+  days: ReadonlySet<CivilDate>,
+): Map<CivilDate, DateOfSeries> {
+  const found = new Map<CivilDate, DateOfSeries>();
+  if (days.size === 0) return found;
+  const last = [...days].reduce((top, day) => (day > top ? day : top));
+  for (const date of datesOf(rule, time, { steps: STEPS_PER_CALL })) {
+    const day = startDateOf(date.time);
+    if (day > last) break;
+    if (days.has(day) && !found.has(day)) found.set(day, date);
+  }
+  return found;
+}
+
+// Each date removed or changed on its own goes to the edited series' date on the same day.
+// What it didn't change on its own follows the edited series, and the opened date shows
+// what the dialog gave it.
+function carryOwnDates(
+  old: StoredEvent,
+  own: OwnDates,
+  edited: StoredEvent,
+  opened: Opened | null,
+): OwnDates {
+  const { rule } = edited;
+  if (rule === null) return { exdates: [], changes: [] };
+  const changed = own.changes.filter(
+    (change) => change.recurrenceId !== opened?.id,
+  );
+  const days = new Map<OccurrenceId, CivilDate>(
+    [...own.exdates, ...changed.map(idOfChange)].map((id) => [
+      id,
+      startDateOf(timeOfDate(old, id)),
+    ]),
+  );
+  if (opened) {
+    const time = shifted(timeOfDate(old, opened.id), opened.from, opened.to);
+    days.set(opened.id, startDateOf(time));
+  }
+  // With the same rule and start every date keeps its id, even where Calendar can't work
+  // out a rule from outside.
+  const sameDates = rule === old.rule && sameTime(edited.time, old.time);
+  const byDay = sameDates
+    ? new Map<CivilDate, DateOfSeries>()
+    : datesOnDays(rule, edited.time, new Set(days.values()));
+  const landing = (id: OccurrenceId): DateOfSeries | undefined =>
+    sameDates
+      ? { id, time: timeOfDate(edited, id) }
+      : byDay.get(days.get(id) as CivilDate);
+  const plain = (date: DateOfSeries): StoredEvent => ({
+    ...edited,
+    recurrenceId: date.id,
+    time: date.time,
+    rule: null,
+    exdates: [],
+  });
+  const isPlain = (row: StoredEvent, date: DateOfSeries) =>
+    sameTime(row.time, date.time) &&
+    DETAIL_FIELDS.every((field) => row[field] === edited[field]);
+
+  const exdates = new Set<OccurrenceId>();
+  const changes = new Map<OccurrenceId, StoredEvent>();
+  for (const id of own.exdates) {
+    const date = landing(id);
+    if (date) exdates.add(date.id);
+  }
+  for (const change of changed) {
+    const id = idOfChange(change);
+    const date = landing(id);
+    if (!date) continue;
+    const row = plain(date);
+    for (const field of DETAIL_FIELDS) {
+      if (change[field] !== old[field]) row[field] = change[field];
+    }
+    if (!sameTime(change.time, timeOfDate(old, id))) row.time = change.time;
+    if (!isPlain(row, date)) changes.set(date.id, row);
+  }
+  const date = opened && landing(opened.id);
+  if (opened && date) {
+    const row = { ...plain(date), time: opened.to };
+    exdates.delete(date.id);
+    changes.delete(date.id);
+    if (!isPlain(row, date)) changes.set(date.id, row);
+  }
+  return { exdates: [...exdates].sort(), changes: [...changes.values()] };
 }
 
 const wallStart = (time: EventTime) =>
@@ -1082,6 +1165,7 @@ export class EventStore {
         draft.time,
         draft.repeat,
         after,
+        null,
         now,
       );
     }
@@ -1109,15 +1193,23 @@ export class EventStore {
       return { status: "done" };
     }
 
-    if (scope === "all" || place === 0) {
-      const time =
-        draft.repeat === null
-          ? draft.time
-          : shifted(
-              series.time,
-              change?.time ?? timeOfDate(series, id),
-              draft.time,
-            );
+    // Both scopes move the dates as far as the opened date moved, so a date moved on its
+    // own doesn't take the rest with it.
+    const splits = scope === "thisAndLater" && place > 0;
+    const opened = {
+      id,
+      from: change?.time ?? timeOfDate(series, id),
+      to: draft.time,
+    };
+    const time =
+      draft.repeat === null
+        ? draft.time
+        : shifted(
+            splits ? timeOfDate(series, id) : series.time,
+            opened.from,
+            opened.to,
+          );
+    if (!splits) {
       return this.#replaceSeries(
         actor,
         series,
@@ -1125,49 +1217,46 @@ export class EventStore {
         time,
         draft.repeat,
         after,
+        opened,
         now,
       );
     }
 
     const repeat = continuing(draft.repeat, shownRepeat(series), place);
-    const rule = repeat && ruleOf(repeat, draft.time);
-    const uid = crypto.randomUUID() as EventUid;
+    const edited: StoredEvent = {
+      ...details,
+      uid: crypto.randomUUID() as EventUid,
+      recurrenceId: null,
+      time,
+      rule: repeat && ruleOf(repeat, time),
+      exdates: [],
+      organiser: series.organiser,
+      sequence: 0,
+      cancelled: false,
+      conference: series.conference,
+    };
+    const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
     const carried = after.map((attendee) => ({ ...attendee, revision: 0 }));
     this.db.transaction(() => {
-      const laterChanges = this.#rows<EventRow>(
-        "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
-        series.uid,
-        id,
-      ).map(parseRow);
-      const laterExdates = series.exdates.filter((exdate) => exdate > id);
-      const kept = stillDates(rule, draft.time, [
-        ...laterExdates,
-        ...laterChanges.map((change) => change.recurrenceId as OccurrenceId),
-      ]);
+      const own = carryOwnDates(
+        series,
+        {
+          exdates: series.exdates.filter((exdate) => exdate > id),
+          changes: this.#rows<EventRow>(
+            "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
+            series.uid,
+            id,
+          ).map(parseRow),
+        },
+        edited,
+        opened,
+      );
       this.#endBefore(series, id, now);
       this.#queueFor(series.uid, before, before, actor, now);
-      for (const change of laterChanges) {
-        if (kept.has(change.recurrenceId as OccurrenceId)) {
-          this.#write({ ...change, uid }, now);
-        }
-      }
-      this.#write(
-        {
-          ...details,
-          uid,
-          recurrenceId: null,
-          time: draft.time,
-          rule,
-          exdates: laterExdates.filter((exdate) => kept.has(exdate)),
-          organiser: series.organiser,
-          sequence: 0,
-          cancelled: false,
-          conference: series.conference,
-        },
-        now,
-      );
+      this.#write({ ...edited, exdates: own.exdates }, now);
+      for (const row of own.changes) this.#write(row, now);
       if (carried.length > 0) {
         this.#writePeople(uid, {
           attendees: carried,
@@ -1187,6 +1276,7 @@ export class EventStore {
     time: EventTime,
     repeat: Repeat | null,
     after: StoredAttendee[],
+    opened: Opened | null,
     now: number,
   ): ChangeResult {
     // A rule from outside may be spelled differently from the one Calendar writes, so
@@ -1197,34 +1287,28 @@ export class EventStore {
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
-      const sequence = this.#nextSequence(series.uid);
-      const changed = this.#rows<{ recurrence_id: OccurrenceId }>(
-        "SELECT recurrence_id FROM events WHERE uid = ? AND recurrence_id IS NOT NULL",
-        series.uid,
-      ).map((row) => row.recurrence_id);
-      const kept = unchanged
-        ? new Set([...series.exdates, ...changed])
-        : stillDates(rule, time, [...series.exdates, ...changed]);
-      for (const id of changed) {
-        if (!kept.has(id)) {
-          this.db.exec(
-            "DELETE FROM events WHERE uid = ? AND recurrence_id = ?",
-            series.uid,
-            id,
-          );
-        }
-      }
-      this.#write(
+      const edited: StoredEvent = {
+        ...series,
+        ...details,
+        time,
+        rule,
+        sequence: this.#nextSequence(series.uid),
+      };
+      const own = carryOwnDates(
+        series,
         {
-          ...series,
-          ...details,
-          time,
-          rule,
-          exdates: series.exdates.filter((exdate) => kept.has(exdate)),
-          sequence,
+          exdates: series.exdates,
+          changes: this.#rows<EventRow>(
+            "SELECT * FROM events WHERE uid = ? AND recurrence_id IS NOT NULL",
+            series.uid,
+          ).map(parseRow),
         },
-        now,
+        edited,
+        opened,
       );
+      this.#dropChanges(series.uid, null);
+      this.#write({ ...edited, exdates: own.exdates }, now);
+      for (const row of own.changes) this.#write(row, now);
       if (!samePeople(before, after)) {
         this.#writePeople(series.uid, {
           attendees: after,
