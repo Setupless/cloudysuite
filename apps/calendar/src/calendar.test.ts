@@ -1361,6 +1361,72 @@ test("this and later ones from the first date changes the whole series, and leav
   expect(await alice.countEvents()).toBe(1);
 });
 
+const saturday = timed(
+  "2026-11-07T09:00:00+11:00",
+  "2026-11-07T09:30:00+11:00",
+);
+const NOVEMBER_7 = "20261106T220000Z" as OccurrenceId;
+const NOVEMBER_21 = "20261120T220000Z" as OccurrenceId;
+
+const weekdaysTo = (day: string): Repeat => ({
+  frequency: "weekdays",
+  end: { kind: "onDate", date: date(day) },
+});
+
+test.each([
+  ["a one-off event", null, null, [7]],
+  ["all of a weekly repeat", weekly(), NOVEMBER_7, [7, 14, 21, 28]],
+])(
+  "changing %s to every weekday from a Saturday to the Sunday is refused, and its dates stay",
+  async (_, repeat, occurrenceId, days) => {
+    const uid = await created(saturday, { repeat });
+    expect(
+      await (
+        await kit.as(ALICE)
+      ).update(
+        { uid, occurrenceId },
+        "all",
+        draft(saturday, {
+          title: "Planning",
+          repeat: weekdaysTo("2026-11-08"),
+        }),
+        [],
+      ),
+    ).toEqual({ status: "neverHappens" });
+    expect(
+      shown((await listed("2026-11-01", "2026-12-01")).occurrences),
+    ).toEqual(novemberAt("09:00", days));
+  },
+);
+
+test.each([
+  ["from its own Saturday", "2026-11-21"],
+  // The new half can't start on the old half's days, so it starts on the Saturday it
+  // splits from, and every weekday from there to the Sunday has no dates.
+  ["moved to the Friday before", "2026-11-13"],
+])(
+  "changing this and later ones %s to a repeat that never happens is refused, and the later dates stay",
+  async (_, day) => {
+    const uid = await created(saturday, { repeat: weekly() });
+    expect(
+      await (
+        await kit.as(ALICE)
+      ).update(
+        { uid, occurrenceId: NOVEMBER_21 },
+        "thisAndLater",
+        draft(timed(`${day}T09:00:00+11:00`, `${day}T09:30:00+11:00`), {
+          title: "Planning",
+          repeat: weekdaysTo("2026-11-22"),
+        }),
+        [],
+      ),
+    ).toEqual({ status: "neverHappens" });
+    expect(
+      shown((await listed("2026-11-01", "2026-12-01")).occurrences),
+    ).toEqual(novemberAt("09:00", [7, 14, 21, 28]));
+  },
+);
+
 test("removing this and later ones from the first date removes the event, and keeps its record", async () => {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),

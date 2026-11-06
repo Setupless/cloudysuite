@@ -336,6 +336,26 @@ test("a repeat that ends before its first date is refused, and nothing is kept",
   expect(calendarNow().events).toEqual(before);
 });
 
+test("an edit to a repeat that ends before its first date is refused", async () => {
+  const { uid } = await as(people.editor).createEvent({
+    data: { calendarId: TEAM, draft: draft(saturday) },
+  });
+  expect(
+    await refused(
+      as(people.editor).updateEvent({
+        data: {
+          calendarId: TEAM,
+          target: { uid, occurrenceId: null },
+          scope: "all",
+          draft: draft(saturday, {
+            repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
+          }),
+        },
+      }),
+    ),
+  ).toEqual({ status: 400, message: NEVER_HAPPENS_MESSAGE });
+});
+
 test("a personal calendar takes a new colour, but can't be deleted, left, renamed, or shared", async () => {
   const mine = await as(people.viewer).ensureMyCalendar();
   const attempts = [
