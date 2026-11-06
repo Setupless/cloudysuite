@@ -7,6 +7,8 @@
     ".": "./src/index.tsx",
     "./calendar": "./src/calendar.ts",
     "./inbound": "./src/inbound.ts",
+    "./mail-card": "./src/mail-card.ts",
+    "./mail-card-ui": "./src/ui/mail-card.tsx",
     "./routes": "./src/routes.ts"
   },
   "dependencies": {

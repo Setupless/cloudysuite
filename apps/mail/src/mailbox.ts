@@ -3,6 +3,7 @@ import type { MailboxId, UserId } from "@cloudysuite/access";
 import { receiveCalendarMail } from "@cloudysuite/calendar/inbound";
 import {
   CalendarHandoffStore,
+  type CardRefs,
   carriesCalendar,
   runDueHandoffs,
 } from "./calendar-handoff";
@@ -261,6 +262,10 @@ export class Mailbox extends DurableObject<Env> {
 
   storagePrefix(messageId: MessageId): string | null {
     return this.#store.storagePrefix(messageId);
+  }
+
+  calendarCard(messageId: MessageId): CardRefs | null {
+    return this.#calendar.forCard(messageId);
   }
 
   async deleteForever(selection: MessageSelection): Promise<number> {

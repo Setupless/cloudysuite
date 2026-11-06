@@ -81,6 +81,8 @@ export const mailKeys = {
     ["mail", mailboxId, "thread", threadId] as const,
   body: (mailboxId: MailboxId, messageId: MessageId) =>
     ["mail", mailboxId, "body", messageId] as const,
+  invitation: (mailboxId: MailboxId, messageId: MessageId) =>
+    ["mail", mailboxId, "invitation", messageId] as const,
 };
 
 // A message's content never changes, so a refresh after an action skips the bodies

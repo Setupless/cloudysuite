@@ -6,6 +6,7 @@ import {
   placementFor,
 } from "./placement";
 import { SpamStore } from "./spam/store";
+import { provedSenderDomain } from "./spam/signals";
 import { parseStoredVerdict, type SpamTraining } from "./spam/types";
 import type { SqlDriver, SqlRow } from "@cloudysuite/object-sql";
 import {
@@ -496,8 +497,8 @@ export class MailboxStore {
            reply_to, to_addresses, cc_addresses, bcc_addresses, participants, subject,
            normalized_subject, is_orphan_reply, snippet, sent_at, received_at,
            thread_date, is_read, is_starred, folder, has_attachments, auth_results,
-           spam_verdict
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           spam_verdict, sender_proved
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
         message.rawHash,
         message.rawSize,
@@ -529,6 +530,7 @@ export class MailboxStore {
         message.attachments.some((attachment) => !attachment.inline) ? 1 : 0,
         message.authResults ? JSON.stringify(message.authResults) : null,
         placement.spam ? JSON.stringify(placement.spam) : null,
+        provedSenderDomain(message) === null ? 0 : 1,
       )
       .toArray();
     const id = row!.id;

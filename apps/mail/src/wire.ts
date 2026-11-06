@@ -236,6 +236,15 @@ export const parseMessageInput = (raw: unknown) => {
   };
 };
 
+const GIVEN_ANSWERS = ["yes", "maybe", "no"] as const;
+
+export const parseInvitationAnswerInput = (raw: unknown) => {
+  const input = record(raw);
+  const answer = GIVEN_ANSWERS.find((one) => one === input.answer);
+  if (!answer) throw badRequest();
+  return { ...parseMessageInput(input), answer };
+};
+
 export const parseSelectionInput = (raw: unknown) => {
   const input = record(raw);
   return {
