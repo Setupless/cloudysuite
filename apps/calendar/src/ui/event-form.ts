@@ -19,7 +19,7 @@ import {
   type EventTime,
   keyOfPerson,
   MAX_REPEAT_TIMES,
-  NEVER_HAPPENS_MESSAGE,
+  type NoDatesLeft,
   type Occurrence,
   type PersonToInvite,
   type Repeat,
@@ -27,6 +27,7 @@ import {
   type RepeatFrequency,
   type TimeZone,
 } from "../types";
+import { dayTitle } from "./event-text";
 
 const MINUTE_MS = 60_000;
 const SLOT_MINUTES = 30;
@@ -304,20 +305,23 @@ function repeatOf(
   }
 }
 
-const END_FIELDS: Record<RepeatEnd["kind"], FormField> = {
-  never: "repeatEnd",
-  onDate: "repeatUntil",
-  afterTimes: "repeatTimes",
-};
-
-// What a refused save points at. A repeat that would never happen is fixed where it
-// ends, which is on the form, not on the choice of which ones.
-export const failureOf = (message: string, form: EventForm) => ({
-  field: message.startsWith(NEVER_HAPPENS_MESSAGE)
-    ? END_FIELDS[form.repeatEnd]
-    : null,
-  message,
-});
+// The answer to a repeat with no dates, at the field it's fixed in. It says what saving
+// would do rather than what the form shows, since the two can differ.
+export function askForEnd(
+  needs: NoDatesLeft["needs"],
+  today: CivilDate,
+): { field: FormField; message: string } {
+  const told = "The repeat would end up with no dates, so it wasn't saved.";
+  return needs.kind === "onDate"
+    ? {
+        field: "repeatUntil",
+        message: `${told} Set the last date to ${dayTitle(needs.date, today)} or later.`,
+      }
+    : {
+        field: "repeatTimes",
+        message: `${told} Set the number of times to ${needs.times} or more.`,
+      };
+}
 
 // `zone` is the device's, which the fields are on.
 export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {

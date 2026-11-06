@@ -24,6 +24,7 @@ import {
   updateEvent,
 } from "../functions";
 import { call, calendarKeys, outsideInvitingQuery } from "../queries";
+import { todayIn } from "../schedule";
 import {
   type CalendarEntry,
   type ChangeScope,
@@ -34,18 +35,19 @@ import {
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
+  type NoDatesLeft,
   type OutsideInviting,
   REPEAT_FREQUENCIES,
   type TimeZone,
 } from "../types";
 import { calendarFill } from "./colours";
 import {
+  askForEnd,
   draftOf,
   type EventAction,
   type EventForm,
   type FormField,
   type FormStart,
-  failureOf,
   formOf,
   type Guest,
   guestKey,
@@ -362,6 +364,13 @@ export function EventDialog({
       ? { "aria-invalid": true, "aria-describedby": failureId }
       : {};
 
+  // The end is on the form, not on the choice of which ones.
+  function showEndNeeded({ needs }: NoDatesLeft) {
+    setAsking(null);
+    setFailure(askForEnd(needs, todayIn(zone, Date.now())));
+    setPending(false);
+  }
+
   async function save(draft: EventDraft, changeScope: ChangeScope) {
     setPending(true);
     setFailure(null);
@@ -369,7 +378,7 @@ export function EventDialog({
       let uid: EventUid;
       let firstDay: CivilDate | null = null;
       if (place) {
-        await call(() =>
+        const changed = await call(() =>
           updateEvent({
             data: {
               calendarId: place.calendarId,
@@ -379,6 +388,7 @@ export function EventDialog({
             },
           }),
         );
+        if (changed.status === "noDatesLeft") return showEndNeeded(changed);
         uid = place.target.uid;
       } else {
         const calendarId =
@@ -388,6 +398,7 @@ export function EventDialog({
         const created = await call(() =>
           createEvent({ data: { calendarId, draft } }),
         );
+        if (created.status === "noDatesLeft") return showEndNeeded(created);
         uid = created.uid;
         firstDay = daySpanOf(created.first, zone).first;
         rememberUsed(me, calendarId);
@@ -395,9 +406,7 @@ export function EventDialog({
       await client.invalidateQueries({ queryKey: calendarKeys.all });
       onSaved(uid, firstDay);
     } catch (thrown) {
-      const failed = failureOf((thrown as Error).message, form);
-      if (failed.field) setAsking(null);
-      setFailure(failed);
+      setFailure({ field: null, message: (thrown as Error).message });
       setPending(false);
     }
   }
@@ -412,7 +421,9 @@ export function EventDialog({
     const scopes = editing && scopesFor(editing, checked.draft);
     if (scopes) {
       setFailure(null);
-      setScope(scopes[0] as ChangeScope);
+      setScope((picked) =>
+        scopes.includes(picked) ? picked : (scopes[0] as ChangeScope),
+      );
       setAsking({ draft: checked.draft, scopes });
       return;
     }

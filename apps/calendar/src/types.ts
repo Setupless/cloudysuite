@@ -212,19 +212,26 @@ export type OutsideRefused = {
 
 // `first` is the event's first date, which a repeat can put after the start, as every
 // weekday does from a Saturday.
-export type CreatedEvent = { uid: EventUid; first: EventTime };
+export type CreatedEvent = {
+  status: "created";
+  uid: EventUid;
+  first: EventTime;
+};
 
-// A repeat with no date left, because none falls between its start and its end or the
-// ones that do were removed on their own. Going on with no end, it would first happen on
-// `firstDay`, where the event is.
-export type NeverHappens = { status: "neverHappens"; firstDay: CivilDate };
+// A repeat with no date, because none falls between its start and its end or the ones
+// that do were removed on their own. `needs` is the nearest end of the same kind that
+// gives it one: the earliest last date, where the event is, or the fewest times.
+export type NoDatesLeft = {
+  status: "noDatesLeft";
+  needs: Exclude<RepeatEnd, { kind: "never" }>;
+};
 
 export type CreateResult =
-  | ({ status: "created" } & CreatedEvent)
+  | CreatedEvent
   | { status: "noAccess" }
   // Someone asked for can't be invited, because they were removed or suspended.
   | { status: "notInvitable" }
-  | NeverHappens
+  | NoDatesLeft
   | OutsideRefused;
 
 export type ChangeResult =
@@ -237,8 +244,9 @@ export type ChangeResult =
   | { status: "notInvitable" }
   // Who's invited changes from a date onwards, or for every date, never for one.
   | { status: "peopleForOneDate" }
-  | NeverHappens
   | OutsideRefused;
+
+export type UpdateResult = ChangeResult | NoDatesLeft;
 
 // Try again on an email that didn't go. Done also covers one already on its way again.
 export type RetryResult =
@@ -385,11 +393,6 @@ export const VIEW_ONLY_MESSAGE =
   "You can only view this calendar. Ask one of its managers if you need to change it.";
 export const READ_ONLY_MESSAGE =
   "This event was set up somewhere else, so it can't be changed here. You can still remove it from your calendar.";
-export const NEVER_HAPPENS_MESSAGE =
-  "This repeat would never happen, so it wasn't saved.";
-// The day is the first it would happen on, so going on until then always works.
-export const neverHappensMessage = (day: string) =>
-  `${NEVER_HAPPENS_MESSAGE} Make it go on until at least ${day}.`;
 export const EVENT_GONE_MESSAGE =
   "This event isn't on the calendar any more. Someone may have changed or removed it.";
 export const ONLY_MANAGERS_MESSAGE =

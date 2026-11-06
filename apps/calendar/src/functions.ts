@@ -53,8 +53,7 @@ import {
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
   type Member,
-  type NeverHappens,
-  neverHappensMessage,
+  type NoDatesLeft,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
@@ -92,22 +91,6 @@ const me = () => requireCalendarUser(getRequest());
 
 // Small enough that no one call to the Calendar object holds a large file.
 const IMPORT_BATCH = 200;
-
-// Written on the server, which has no reader's language, so in the organisation's own
-// English. The day is where the event is, which is where the end of a repeat is read.
-const neverHappens = ({ firstDay }: NeverHappens) =>
-  refusal(
-    400,
-    neverHappensMessage(
-      new Intl.DateTimeFormat("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(new Date(`${firstDay}T00:00:00Z`)),
-    ),
-  );
 
 const FILE_REFUSALS = {
   tooLarge: () => refusal(413, IMPORT_TOO_LARGE_MESSAGE),
@@ -163,8 +146,6 @@ function answerChange(result: ChangeResult): void {
       throw refusal(404, NOT_A_PERSON_MESSAGE);
     case "peopleForOneDate":
       throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
-    case "neverHappens":
-      throw neverHappens(result);
     case "outsideNotAllowed":
       throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
   }
@@ -358,7 +339,7 @@ const organiserName = (person: { name: string }) =>
 
 export const createEvent = createServerFn({ method: "POST" })
   .validator(parseNewEventInput)
-  .handler(async ({ data }): Promise<CreatedEvent> => {
+  .handler(async ({ data }): Promise<CreatedEvent | NoDatesLeft> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
     const draft = await withColleagues(data.draft);
@@ -369,9 +350,8 @@ export const createEvent = createServerFn({ method: "POST" })
     );
     switch (result.status) {
       case "created":
-        return { uid: result.uid, first: result.first };
-      case "neverHappens":
-        throw neverHappens(result);
+      case "noDatesLeft":
+        return result;
       case "noAccess":
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":
@@ -383,17 +363,18 @@ export const createEvent = createServerFn({ method: "POST" })
 
 export const updateEvent = createServerFn({ method: "POST" })
   .validator(parseEventChangeInput)
-  .handler(async ({ data }): Promise<void> => {
+  .handler(async ({ data }): Promise<{ status: "done" } | NoDatesLeft> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
     const draft = await withColleagues(data.draft);
-    answerChange(
-      await calendar.update(
-        data.target,
-        data.scope,
-        draft,
-        await invitableIn(draft),
-      ),
+    const result = await calendar.update(
+      data.target,
+      data.scope,
+      draft,
+      await invitableIn(draft),
     );
+    if (result.status === "noDatesLeft") return result;
+    answerChange(result);
+    return { status: "done" };
   });
 
 export const deleteEvent = createServerFn({ method: "POST" })

@@ -1368,14 +1368,8 @@ const NOVEMBER_7 = "20261106T220000Z" as OccurrenceId;
 const NOVEMBER_14 = "20261113T220000Z" as OccurrenceId;
 const NOVEMBER_21 = "20261120T220000Z" as OccurrenceId;
 
-const onDate = (day: string): Repeat["end"] => ({
-  kind: "onDate",
-  date: date(day),
-});
-const afterTimes = (times: number): Repeat["end"] => ({
-  kind: "afterTimes",
-  times,
-});
+const onDate = (day: string) => ({ kind: "onDate", date: date(day) }) as const;
+const afterTimes = (times: number) => ({ kind: "afterTimes", times }) as const;
 const weekdays = (end: Repeat["end"]): Repeat => ({
   frequency: "weekdays",
   end,

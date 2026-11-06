@@ -33,7 +33,6 @@ import {
   type Budget,
   type DateOfSeries,
   datesOf,
-  firstDateOf,
   indexOf,
   repeatOf,
   ruleOf,
@@ -74,7 +73,7 @@ import {
   keyOfPerson,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
-  type NeverHappens,
+  type NoDatesLeft,
   type NotSentReason,
   type Occurrence,
   type OccurrenceId,
@@ -85,6 +84,7 @@ import {
   type PersonToInvite,
   type RangeListing,
   type Repeat,
+  type RepeatEnd,
   type RetryResult,
   type ShownRepeat,
   type Shortfall,
@@ -93,6 +93,7 @@ import {
   type TimeZone,
   type UnsentCancellation,
   type UnsentTo,
+  type UpdateResult,
 } from "./types";
 
 export type Actor = {
@@ -765,44 +766,41 @@ function carryOwnDates(
   return { exdates: [...exdates].sort(), changes: [...changes.values()] };
 }
 
-// The first date that the dates removed on their own leave. Each removes at most one, so
-// the walk ends within one more than there are.
-function firstDateLeft(
-  rule: string,
-  time: EventTime,
-  removed: readonly OccurrenceId[],
-): EventTime | null {
-  const gone = new Set(removed);
-  for (const date of datesOf(rule, time, { steps: gone.size + 1 })) {
-    if (!gone.has(date.id)) return date.time;
+type RecurrenceSet = Pick<StoredEvent, "rule" | "time" | "exdates">;
+type DateKept = { before: number; time: EventTime };
+
+// A series' first date that wasn't removed on its own, and how many of its dates come
+// before it. Each removed date takes at most one, so the walk ends within one more than
+// there are.
+function firstDateKept({
+  rule,
+  time,
+  exdates,
+}: RecurrenceSet): DateKept | null {
+  if (rule === null) return { before: 0, time };
+  const removed = new Set(exdates);
+  let before = 0;
+  for (const date of datesOf(rule, time, { steps: removed.size + 1 })) {
+    if (!removed.has(date.id)) return { before, time: date.time };
+    before++;
   }
   return null;
 }
 
-// Where a repeat with no date left would first happen if it went on with no end, past
-// the dates `removed` takes from that endless repeat.
-function neverHappens(
-  repeat: Repeat | null,
-  time: EventTime,
-  removed: (rule: string) => readonly OccurrenceId[],
-): NeverHappens {
-  const rule = repeat && ruleOf({ ...repeat, end: { kind: "never" } }, time);
-  const first = rule === null ? time : firstDateLeft(rule, time, removed(rule));
-  return { status: "neverHappens", firstDay: startDateOf(first ?? time) };
-}
+const withNoEnd = (repeat: Repeat, time: EventTime) =>
+  ruleOf({ ...repeat, end: { kind: "never" } }, time);
 
-// What an edit carries onto the edited series, unless the dates removed on their own
-// would leave it no date. `carry` carries them onto it with the rule given.
-function carriedOrNever(
-  edited: StoredEvent,
-  repeat: Repeat | null,
-  carry: (rule: string | null) => OwnDates,
-): OwnDates | NeverHappens {
-  const carried = carry(edited.rule);
-  return edited.rule === null ||
-    firstDateLeft(edited.rule, edited.time, carried.exdates)
-    ? carried
-    : neverHappens(repeat, edited.time, (rule) => carry(rule).exdates);
+// The nearest end of the kind asked for that gives a repeat a date. Going on with no end,
+// as `endless` does, it always keeps one, and that end is the one that reaches it.
+function noDatesLeft(end: RepeatEnd, endless: RecurrenceSet): NoDatesLeft {
+  const kept = firstDateKept(endless) as DateKept;
+  return {
+    status: "noDatesLeft",
+    needs:
+      end.kind === "afterTimes"
+        ? { kind: "afterTimes", times: kept.before + 1 }
+        : { kind: "onDate", date: startDateOf(kept.time) },
+  };
 }
 
 const wallStart = (time: EventTime) =>
@@ -1236,9 +1234,17 @@ export class EventStore {
     );
     if (planned.status !== "planned") return planned;
     const { attendees } = planned;
-    const rule = draft.repeat && ruleOf(draft.repeat, draft.time);
-    const first = rule === null ? draft.time : firstDateOf(rule, draft.time);
-    if (!first) return neverHappens(draft.repeat, draft.time, () => []);
+    const { repeat, time } = draft;
+    const rule = repeat && ruleOf(repeat, time);
+    const first = firstDateKept({ rule, time, exdates: [] });
+    if (!first) {
+      const repeating = repeat as Repeat;
+      return noDatesLeft(repeating.end, {
+        rule: withNoEnd(repeating, time),
+        time,
+        exdates: [],
+      });
+    }
     const uid = crypto.randomUUID() as EventUid;
     this.db.transaction(() => {
       this.#write(
@@ -1248,7 +1254,7 @@ export class EventStore {
           title: draft.title,
           location: draft.location,
           notes: draft.notes,
-          time: draft.time,
+          time,
           rule,
           exdates: [],
           organiser: {
@@ -1267,7 +1273,7 @@ export class EventStore {
       }
       this.#queueFor(uid, [], attendees, actor, now);
     });
-    return { status: "created", uid, first };
+    return { status: "created", uid, first: first.time };
   }
 
   update(
@@ -1278,7 +1284,7 @@ export class EventStore {
     invitable: readonly Invitee[],
     outside: OutsideInviting,
     now: number,
-  ): ChangeResult {
+  ): UpdateResult {
     if (!canEdit(actor)) return { status: "noAccess" };
     const series = this.#series(target.uid);
     if (!series) return { status: "gone" };
@@ -1400,10 +1406,12 @@ export class EventStore {
         id,
       ).map(parseRow),
     };
-    const own = carriedOrNever(edited, repeat, (rule) =>
-      carryOwnDates(series, later, { ...edited, rule }, slot, opened),
-    );
-    if ("status" in own) return own;
+    const own = carryOwnDates(series, later, edited, slot, opened);
+    if (repeat && !firstDateKept({ ...edited, exdates: own.exdates })) {
+      const endless = { ...edited, rule: withNoEnd(repeat, time) };
+      const { exdates } = carryOwnDates(series, later, endless, slot, opened);
+      return noDatesLeft(repeat.end, { ...endless, exdates });
+    }
     const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
@@ -1433,7 +1441,7 @@ export class EventStore {
     after: StoredAttendee[],
     opened: Opened | null,
     now: number,
-  ): ChangeResult {
+  ): UpdateResult {
     const { time } = values;
     // A rule from outside may be spelled differently from the one Calendar writes, so
     // a change that keeps the same repeat keeps its text.
@@ -1452,10 +1460,18 @@ export class EventStore {
         series.uid,
       ).map(parseRow),
     };
-    const own = carriedOrNever(edited, repeat, (rule) =>
-      carryOwnDates(series, all, { ...edited, rule }, series.time, opened),
-    );
-    if ("status" in own) return own;
+    const own = carryOwnDates(series, all, edited, series.time, opened);
+    if (repeat && !firstDateKept({ ...edited, exdates: own.exdates })) {
+      const endless = { ...edited, rule: withNoEnd(repeat, time) };
+      const { exdates } = carryOwnDates(
+        series,
+        all,
+        endless,
+        series.time,
+        opened,
+      );
+      return noDatesLeft(repeat.end, { ...endless, exdates });
+    }
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
