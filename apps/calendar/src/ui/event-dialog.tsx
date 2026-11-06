@@ -27,6 +27,7 @@ import { call, calendarKeys, outsideInvitingQuery } from "../queries";
 import {
   type CalendarEntry,
   type ChangeScope,
+  type CivilDate,
   type EventDraft,
   type EventUid,
   MAX_LOCATION_LENGTH,
@@ -40,6 +41,8 @@ import {
 import { calendarFill } from "./colours";
 import {
   draftOf,
+  WEEKEND_ONLY_MESSAGE,
+  weekendOnly,
   type EventAction,
   type EventForm,
   type FormField,
@@ -57,6 +60,7 @@ import {
 import { REPEAT_NAMES, whoCanSee } from "./event-text";
 import { useMe } from "./me";
 import { PeoplePicker } from "./people-picker";
+import { daySpanOf } from "./schedule-layout";
 import type { ShownEvent } from "./shown-event";
 
 const LABEL =
@@ -296,7 +300,8 @@ export function EventDialog({
   opening: Opening;
   calendars: CalendarEntry[];
   zone: TimeZone;
-  onSaved: (uid: EventUid) => void;
+  // `firstDay` is the day a new event first happens, and null after a change.
+  onSaved: (uid: EventUid, firstDay: CivilDate | null) => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
@@ -363,6 +368,7 @@ export function EventDialog({
     setFailure(null);
     try {
       let uid: EventUid;
+      let firstDay: CivilDate | null = null;
       if (place) {
         await call(() =>
           updateEvent({
@@ -380,11 +386,15 @@ export function EventDialog({
           !choice || choice === "personal"
             ? await call(() => ensureMyCalendar())
             : choice;
-        uid = await call(() => createEvent({ data: { calendarId, draft } }));
+        const created = await call(() =>
+          createEvent({ data: { calendarId, draft } }),
+        );
+        uid = created.uid;
+        firstDay = daySpanOf(created.first, zone).first;
         rememberUsed(me, calendarId);
       }
       await client.invalidateQueries({ queryKey: calendarKeys.all });
-      onSaved(uid);
+      onSaved(uid, firstDay);
     } catch (thrown) {
       setFailure({ field: null, message: (thrown as Error).message });
       setPending(false);
@@ -396,6 +406,10 @@ export function EventDialog({
     const checked = draftOf(form, zone);
     if (!checked.ok) {
       setFailure({ field: checked.field, message: checked.message });
+      return;
+    }
+    if (!editing && weekendOnly(checked.draft)) {
+      setFailure({ field: "repeatUntil", message: WEEKEND_ONLY_MESSAGE });
       return;
     }
     const scopes = editing && scopesFor(editing, checked.draft);

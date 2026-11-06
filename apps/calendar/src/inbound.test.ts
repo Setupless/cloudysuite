@@ -263,7 +263,7 @@ test("an invitation from Google lands unanswered in the person's own calendar, w
     url: MEET,
     from: "conference",
   });
-  // Today's Invitations lists it, and the email stays in the Inbox as it came.
+  // Overview's Invitations lists it, and the email stays in the Inbox as it came.
   const invitations = await as().listInvitations({
     data: { timeZone: SYDNEY },
   });
@@ -583,7 +583,7 @@ const TUESDAY: EventTime = {
 } as EventTime;
 
 async function inviteFrom(calendarId: CalendarId, people: PersonToInvite[]) {
-  const uid = await as().createEvent({
+  const { uid } = await as().createEvent({
     data: {
       calendarId,
       draft: {

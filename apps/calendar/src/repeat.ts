@@ -235,6 +235,11 @@ export function* datesOf(
   }
 }
 
+export function firstDateOf(rule: string, time: EventTime): EventTime | null {
+  for (const date of datesOf(rule, time, { steps: 1 })) return date.time;
+  return null;
+}
+
 // How many dates of the series come before this one, or null if the series has no such
 // date. Ids sort in time order, so the walk stops once it passes.
 export function indexOf(

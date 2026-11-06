@@ -78,7 +78,9 @@ const eventWithUid = (uid: EventUid) =>
   );
 
 // After the page has drawn what changed, to the first of these still on it.
-function focusFirst(...candidates: (() => HTMLElement | null | undefined)[]) {
+export function focusFirst(
+  ...candidates: (() => HTMLElement | null | undefined)[]
+) {
   requestAnimationFrame(() => {
     for (const candidate of candidates) {
       const element = candidate();
@@ -101,11 +103,17 @@ function useNow(): number {
 }
 
 // A dialog over the page, such as New team calendar, keeps the keys to itself.
-const unlessDialog = (run: () => void) => () => {
+export const unlessDialog = (run: () => void) => () => {
   if (!document.querySelector(":modal")) run();
 };
 // So Esc can still close that dialog, and the arrows can still move between its choices.
 const KEEP_DEFAULT = { preventDefault: false };
+// Null when nothing has focus, so closing a dialog that a key opened falls back to New event.
+export const focusedElement = () =>
+  document.activeElement instanceof HTMLElement &&
+  document.activeElement !== document.body
+    ? document.activeElement
+    : null;
 
 function LiveSchedule({ search }: { search: ScheduleSearch }) {
   const [zone] = useState(deviceZone);
@@ -166,8 +174,10 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     setPicking(false);
     setDialog(opened);
   };
-  const openNew = (start: FormStart, back: HTMLElement | null) =>
-    openDialog({ kind: "new", start, back });
+  // Nothing opens before the calendars load, or the dialog would appear later with no warning.
+  const openNew = (start: FormStart, back: HTMLElement | null) => {
+    if (calendars.data) openDialog({ kind: "new", start, back });
+  };
   const closeDialog = () => {
     const back = dialog?.back;
     setDialog(null);
@@ -229,13 +239,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   useHotkey(
     "N",
     unlessDialog(() =>
-      openNew(
-        nextHalfHour(Date.now(), zone),
-        document.activeElement instanceof HTMLElement &&
-          document.activeElement !== document.body
-          ? document.activeElement
-          : null,
-      ),
+      openNew(nextHalfHour(Date.now(), zone), focusedElement()),
     ),
   );
 

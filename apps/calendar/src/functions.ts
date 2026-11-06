@@ -40,10 +40,10 @@ import {
   type CalendarEntry,
   type CalendarOccurrence,
   type ChangeResult,
+  type CreatedEvent,
   EVENT_GONE_MESSAGE,
   type EventDraft,
   type EventListing,
-  type EventUid,
   IMPORT_NOT_CALENDAR_MESSAGE,
   IMPORT_TOO_LARGE_MESSAGE,
   IMPORT_TOO_MANY_MESSAGE,
@@ -53,6 +53,7 @@ import {
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
   type Member,
+  NEVER_HAPPENS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
@@ -289,7 +290,7 @@ export const listEvents = createServerFn({ method: "GET" })
     };
   });
 
-// Today shows these even when the personal calendar is hidden, so none is missed.
+// Overview shows these even when the personal calendar is hidden, so none is missed.
 export const listInvitations = createServerFn({ method: "GET" })
   .validator(parseInvitationsInput)
   .handler(async ({ data }): Promise<CalendarOccurrence[]> => {
@@ -338,7 +339,7 @@ const organiserName = (person: { name: string }) =>
 
 export const createEvent = createServerFn({ method: "POST" })
   .validator(parseNewEventInput)
-  .handler(async ({ data }): Promise<EventUid> => {
+  .handler(async ({ data }): Promise<CreatedEvent> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
     const draft = await withColleagues(data.draft);
@@ -349,7 +350,9 @@ export const createEvent = createServerFn({ method: "POST" })
     );
     switch (result.status) {
       case "created":
-        return result.uid;
+        return { uid: result.uid, first: result.first };
+      case "neverHappens":
+        throw refusal(400, NEVER_HAPPENS_MESSAGE);
       case "noAccess":
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":

@@ -210,11 +210,17 @@ export type OutsideRefused = {
   why: Exclude<OutsideInviting, "ready">;
 };
 
+// `first` is the event's first date, which a repeat can put after the start, as every
+// weekday does from a Saturday.
+export type CreatedEvent = { uid: EventUid; first: EventTime };
+
 export type CreateResult =
-  | { status: "created"; uid: EventUid }
+  | ({ status: "created" } & CreatedEvent)
   | { status: "noAccess" }
   // Someone asked for can't be invited, because they were removed or suspended.
   | { status: "notInvitable" }
+  // A repeat that ends before its first date.
+  | { status: "neverHappens" }
   | OutsideRefused;
 
 export type ChangeResult =
@@ -374,6 +380,8 @@ export const VIEW_ONLY_MESSAGE =
   "You can only view this calendar. Ask one of its managers if you need to change it.";
 export const READ_ONLY_MESSAGE =
   "This event was set up somewhere else, so it can't be changed here. You can still remove it from your calendar.";
+export const NEVER_HAPPENS_MESSAGE =
+  "This repeat would never happen, because it ends before its first date. Choose a later day for it to end.";
 export const EVENT_GONE_MESSAGE =
   "This event isn't on the calendar any more. Someone may have changed or removed it.";
 export const ONLY_MANAGERS_MESSAGE =
