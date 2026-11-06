@@ -51,7 +51,7 @@ function rangeText(
 export const dayTitle = (date: CivilDate, today: CivilDate) =>
   longDay(today, date).format(onDay(date));
 
-// "Sat 7 Nov", for a toolbar on a phone.
+// "Sat, 7 Nov", for a toolbar too narrow for the full day.
 export const shortDayTitle = (date: CivilDate, today: CivilDate) =>
   dayFormat({
     weekday: "short",
