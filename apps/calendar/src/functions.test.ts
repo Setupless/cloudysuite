@@ -28,7 +28,7 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
   MAX_IMPORT_BYTES,
-  NEVER_HAPPENS_MESSAGE,
+  neverHappensMessage,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   type OccurrenceId,
@@ -319,7 +319,7 @@ test.each([
   expect(created.first).toEqual(first);
 });
 
-test("a repeat that ends before its first date is refused, and nothing is kept", async () => {
+test("a repeat that would never happen is refused, naming the first day it would, and nothing is kept", async () => {
   const before = calendarNow().events;
   expect(
     await refused(
@@ -332,11 +332,14 @@ test("a repeat that ends before its first date is refused, and nothing is kept",
         },
       }),
     ),
-  ).toEqual({ status: 400, message: NEVER_HAPPENS_MESSAGE });
+  ).toEqual({
+    status: 400,
+    message: neverHappensMessage("Monday, 9 November 2026"),
+  });
   expect(calendarNow().events).toEqual(before);
 });
 
-test("an edit to a repeat that ends before its first date is refused", async () => {
+test("an edit to a repeat that would never happen is refused, naming the first day it would", async () => {
   const { uid } = await as(people.editor).createEvent({
     data: { calendarId: TEAM, draft: draft(saturday) },
   });
@@ -353,7 +356,10 @@ test("an edit to a repeat that ends before its first date is refused", async () 
         },
       }),
     ),
-  ).toEqual({ status: 400, message: NEVER_HAPPENS_MESSAGE });
+  ).toEqual({
+    status: 400,
+    message: neverHappensMessage("Monday, 9 November 2026"),
+  });
 });
 
 test("a personal calendar takes a new colour, but can't be deleted, left, renamed, or shared", async () => {

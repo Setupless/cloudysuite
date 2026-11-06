@@ -6,10 +6,16 @@ import {
   LONDON,
   SYDNEY,
 } from "../test-support";
-import type { Occurrence, OccurrenceId } from "../types";
+import {
+  neverHappensMessage,
+  type Occurrence,
+  type OccurrenceId,
+  PEOPLE_FOR_ONE_DATE_MESSAGE,
+} from "../types";
 import {
   draftOf,
   type EventForm,
+  failureOf,
   formOf,
   newForm,
   nextHalfHour,
@@ -269,6 +275,25 @@ test("every weekday counts the days where the event is, not on the device", () =
   });
   expect(weekendOnly(drafted(london))).toBe(false);
   expect(weekendOnly(drafted({ ...london, timeZone: SYDNEY }))).toBe(true);
+});
+
+test.each([
+  ["on a day", "onDate", "repeatUntil"],
+  ["after a number of times", "afterTimes", "repeatTimes"],
+] as const)(
+  "a repeat that would never happen, ending %s, points at where it ends",
+  (_, repeatEnd, field) => {
+    const message = neverHappensMessage("Monday, 23 November 2026");
+    expect(failureOf(message, form({ repeat: "weekdays", repeatEnd }))).toEqual(
+      { field, message },
+    );
+  },
+);
+
+test("another refusal points at nothing on the form", () => {
+  expect(
+    failureOf(PEOPLE_FOR_ONE_DATE_MESSAGE, form({ repeat: "weekly" })),
+  ).toEqual({ field: null, message: PEOPLE_FOR_ONE_DATE_MESSAGE });
 });
 
 test("moving the start keeps the event's length", () => {
