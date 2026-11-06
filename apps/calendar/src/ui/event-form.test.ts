@@ -15,6 +15,7 @@ import {
   nextHalfHour,
   scopesFor,
   slotStart,
+  weekendOnly,
   withStart,
 } from "./event-form";
 
@@ -218,18 +219,6 @@ test.each([
     "The repeat ends before the event starts.",
   ],
   [
-    "every weekday from a Saturday to the Sunday",
-    {
-      startDate: "2026-11-07",
-      endDate: "2026-11-07",
-      repeat: "weekdays",
-      repeatEnd: "onDate",
-      repeatUntil: "2026-11-08",
-    },
-    "repeatUntil",
-    "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.",
-  ],
-  [
     "a repeat of no times",
     { repeat: "daily", repeatEnd: "afterTimes", repeatTimes: "0" },
     "repeatTimes",
@@ -243,6 +232,43 @@ test.each([
   ],
 ] as const)("%s says what to fix", (_, more, field, message) => {
   expect(draftOf(form(more), SYDNEY)).toEqual({ ok: false, field, message });
+});
+
+test.each([
+  ["Saturday", "2026-11-07", "Sunday", "2026-11-08", true],
+  ["Sunday", "2026-11-08", "Sunday", "2026-11-08", true],
+  ["Saturday", "2026-11-07", "Monday", "2026-11-09", false],
+  ["Friday", "2026-11-06", "Sunday", "2026-11-08", false],
+  ["Sunday", "2026-11-08", "the Saturday after", "2026-11-14", false],
+] as const)(
+  "every weekday from a %s to %s has no dates: %p",
+  (_, startDate, __, repeatUntil, expected) => {
+    const weekdays = form({
+      startDate,
+      endDate: startDate,
+      repeat: "weekdays",
+      repeatEnd: "onDate",
+      repeatUntil,
+    });
+    expect(weekendOnly(drafted(weekdays))).toBe(expected);
+    expect(weekendOnly(drafted({ ...weekdays, allDay: true }))).toBe(expected);
+  },
+);
+
+test("every weekday counts the days where the event is, not on the device", () => {
+  // 09:00 on Saturday in Sydney is 22:00 on Friday in London, which is a weekday.
+  const london = form({
+    startDate: "2026-11-07",
+    endDate: "2026-11-07",
+    startTime: "09:00",
+    endTime: "10:00",
+    timeZone: LONDON,
+    repeat: "weekdays",
+    repeatEnd: "onDate",
+    repeatUntil: "2026-11-07",
+  });
+  expect(weekendOnly(drafted(london))).toBe(false);
+  expect(weekendOnly(drafted({ ...london, timeZone: SYDNEY }))).toBe(true);
 });
 
 test("moving the start keeps the event's length", () => {

@@ -41,6 +41,8 @@ import {
 import { calendarFill } from "./colours";
 import {
   draftOf,
+  WEEKEND_ONLY_MESSAGE,
+  weekendOnly,
   type EventAction,
   type EventForm,
   type FormField,
@@ -404,6 +406,10 @@ export function EventDialog({
     const checked = draftOf(form, zone);
     if (!checked.ok) {
       setFailure({ field: checked.field, message: checked.message });
+      return;
+    }
+    if (!editing && weekendOnly(checked.draft)) {
+      setFailure({ field: "repeatUntil", message: WEEKEND_ONLY_MESSAGE });
       return;
     }
     const scopes = editing && scopesFor(editing, checked.draft);

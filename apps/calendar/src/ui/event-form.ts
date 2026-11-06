@@ -6,6 +6,7 @@ import {
   daysBetween,
   instantOf,
   parseCivilDate,
+  startDateOf,
   type WallTime,
   wallOf,
   wallOfDate,
@@ -288,19 +289,6 @@ function repeatOf(
           "The repeat ends before the event starts.",
         );
       }
-      const start = parseCivilDate(startDate);
-      if (
-        frequency === "weekdays" &&
-        start &&
-        isWeekend(start) &&
-        isWeekend(date) &&
-        daysBetween(start, date) <= 1
-      ) {
-        return problem(
-          "repeatUntil",
-          "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.",
-        );
-      }
       return { repeat: { frequency, end: { kind: "onDate", date } } };
     }
     case "afterTimes": {
@@ -316,6 +304,23 @@ function repeatOf(
       return { repeat: { frequency, end: { kind: "afterTimes", times } } };
     }
   }
+}
+
+export const WEEKEND_ONLY_MESSAGE =
+  "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.";
+
+// The only repeat the dialog offers that can have no dates. The days are the event's own,
+// as the repeat follows its zone, not the device's.
+export function weekendOnly({ time, repeat }: EventDraft): boolean {
+  if (repeat?.frequency !== "weekdays" || repeat.end.kind !== "onDate") {
+    return false;
+  }
+  const start = startDateOf(time);
+  return (
+    isWeekend(start) &&
+    isWeekend(repeat.end.date) &&
+    daysBetween(start, repeat.end.date) <= 1
+  );
 }
 
 // `zone` is the device's, which the fields are on.
