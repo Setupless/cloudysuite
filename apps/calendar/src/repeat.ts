@@ -26,6 +26,7 @@ const RULES: Record<RepeatFrequency, string> = {
   daily: "FREQ=DAILY",
   weekdays: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
   weekly: "FREQ=WEEKLY",
+  fortnightly: "FREQ=WEEKLY;INTERVAL=2",
   monthly: "FREQ=MONTHLY",
   yearly: "FREQ=YEARLY",
 };
@@ -98,10 +99,13 @@ function untilDate(until: ICAL.Time, time: EventTime): CivilDate {
 }
 
 function frequencyOf(recur: ICAL.Recur): RepeatFrequency | null {
-  if (recur.interval !== 1) return null;
   const parts = Object.entries(recur.parts).filter(
     ([, values]) => values && values.length > 0,
   );
+  if (recur.interval === 2) {
+    return recur.freq === "WEEKLY" && parts.length === 0 ? "fortnightly" : null;
+  }
+  if (recur.interval !== 1) return null;
   if (parts.length === 0) {
     const plain: Record<string, RepeatFrequency> = {
       DAILY: "daily",

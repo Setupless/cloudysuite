@@ -440,7 +440,7 @@ Calendar replaces Google Calendar. A person lands on Today, the way Storage open
 
 #### Events
 
-- **An event has a title, a day, a start and an end or all day, a repeat, a place, notes, and people.** The repeat is one of doesn't repeat, every day, every weekday, every week, every month, and every year. A repeat ends never, on a day, or after a number of times.
+- **An event has a title, a day, a start and an end or all day, a repeat, a place, notes, and people.** The repeat is one of doesn't repeat, every day, every weekday, every week, every fortnight, every month, and every year. A repeat ends never, on a day, or after a number of times.
 - **Changing or deleting a repeating event asks how far it goes.** The choices are "Only this one", "This and later ones", and "All of them", the same for both, so a person learns them once. "This and later ones" ends the old series the day before the chosen date and starts a new one, so the dates before it stay as they were. When the series ends after a number of times, the new series takes the dates that are left, so the split adds no dates. The new series gets a new UID, so people invited get an update that ends the old series and a new invitation for the new one.
 - **A repeat rule from outside that the dialog can't show is kept exactly as written,** whether it came in an invitation or an import, and the event shows it read-only. The person can still answer or remove it. If Calendar can't work out the rule's dates safely, only the event's first date shows, and the import summary or the invitation says so.
 - **A repeat's dates are worked out only for the range on screen,** and at most 1,000 in one range, so an unbounded or huge series from outside can't stall a page.
