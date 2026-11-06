@@ -38,7 +38,7 @@ function Entry({
         event={event}
         handlers={handlers}
         style={placement}
-        className={`mx-1 truncate px-1.5 text-xs leading-6 font-semibold ${entry.before ? "rounded-l-none" : "rounded-l"} ${entry.after ? "rounded-r-none" : "rounded-r"}`}
+        className={`mx-1 truncate px-1.5 text-xs leading-6 font-semibold @max-3xl:mx-0.5 @max-3xl:px-1 ${entry.before ? "rounded-l-none" : "rounded-l"} ${entry.after ? "rounded-r-none" : "rounded-r"}`}
       >
         {event.title}
       </EventButton>
@@ -51,14 +51,17 @@ function Entry({
       handlers={handlers}
       tinted={false}
       style={placement}
-      className="mx-1 flex min-w-0 items-center gap-1 rounded px-1 text-xs"
+      className="mx-1 flex min-w-0 items-center gap-1 rounded px-1 text-xs @max-3xl:mx-0.5 @max-3xl:px-0.5"
     >
       <span
         aria-hidden
         className={`size-[7px] flex-none rounded-full ${calendarFill(event.calendar.colour)} ${open ? "outline outline-on-avatar" : ""}`}
       />
+      {/* On a phone a day is too narrow for the time and the title both. */}
       {event.time.kind === "timed" && (
-        <span className={`flex-none ${open ? "" : "text-secondary"}`}>
+        <span
+          className={`flex-none @max-3xl:hidden ${open ? "" : "text-secondary"}`}
+        >
           {timeText(event.time.start)}
         </span>
       )}
@@ -103,9 +106,15 @@ function Week({
               className={`mt-1 ml-1 flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-full px-1.5 text-xs font-semibold whitespace-nowrap ${FOCUS} ${isToday ? "bg-accent text-on-accent" : `hover:bg-field ${inMonth ? "text-text" : "text-secondary"}`}`}
               onClick={() => onOpenDay(day)}
             >
-              {day.endsWith("-01") && !inMonth
-                ? dayAndMonth(day)
-                : dayNumber(day)}
+              {day.endsWith("-01") && !inMonth ? (
+                <>
+                  {/* On a phone a day is too narrow for its month as well. */}
+                  <span className="@max-3xl:hidden">{dayAndMonth(day)}</span>
+                  <span className="@3xl:hidden">{dayNumber(day)}</span>
+                </>
+              ) : (
+                dayNumber(day)
+              )}
             </button>
           </div>
         );
@@ -119,11 +128,12 @@ function Week({
             key={days[index]}
             type="button"
             aria-label={`${count} more on ${dayTitle(days[index] as CivilDate, today)}`}
-            className={`mx-1 cursor-pointer rounded px-1 text-left text-xs text-accent hover:bg-field ${FOCUS}`}
+            className={`mx-1 cursor-pointer truncate rounded px-1 text-left text-xs text-accent hover:bg-field @max-3xl:mx-0.5 @max-3xl:px-0.5 ${FOCUS}`}
             style={{ gridColumn: index + 1, gridRow: 5 }}
             onClick={() => onOpenDay(days[index] as CivilDate)}
           >
-            {count} more
+            <span className="@max-3xl:hidden">{count} more</span>
+            <span className="@3xl:hidden">+{count}</span>
           </button>
         ),
       )}
@@ -151,7 +161,7 @@ export function MonthGrid({
   const month = monthStartOf(date).slice(0, 7);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3.5">
-      <div className="grid flex-none grid-cols-7 pb-1.5 text-xs font-semibold text-secondary">
+      <div className="sticky top-0 z-10 grid flex-none grid-cols-7 bg-page pb-1.5 text-xs font-semibold text-secondary">
         {weeks[0]?.map((day) => (
           <span key={day} className="pl-[7px]">
             {weekdayShort(day)}
