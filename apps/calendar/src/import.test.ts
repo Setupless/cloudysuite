@@ -22,6 +22,7 @@ import type {
   EmailAddress,
   EventUid,
   Occurrence,
+  OccurrenceId,
   Repeat,
   TimeZone,
 } from "./types";
@@ -154,6 +155,65 @@ test("an imported event keeps the meeting link from its conference field", async
     url: "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0",
     from: "conference",
   });
+});
+
+test("renaming all of them keeps a meeting link one date has of its own", async () => {
+  const call = (start: string, link: string, more: string[] = []) => [
+    "BEGIN:VEVENT",
+    "UID:weekly-call@example.org",
+    ...more,
+    `DTSTART;TZID=Australia/Sydney:${start}T090000`,
+    `DTEND;TZID=Australia/Sydney:${start}T100000`,
+    "SUMMARY:Weekly call",
+    `X-GOOGLE-CONFERENCE:https://meet.google.com/${link}`,
+    "END:VEVENT",
+  ];
+  await importFile(
+    calendarFile(
+      ...call("20261109", "aaa-aaaa-aaa", ["RRULE:FREQ=WEEKLY"]),
+      ...call("20261116", "bbb-bbbb-bbb", [
+        "RECURRENCE-ID;TZID=Australia/Sydney:20261116T090000",
+      ]),
+    ),
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.update(
+      {
+        uid: "weekly-call@example.org" as EventUid,
+        occurrenceId: "20261108T220000Z" as OccurrenceId,
+      },
+      "all",
+      draft(
+        {
+          kind: "timed",
+          start: Date.parse("2026-11-09T09:00:00+11:00"),
+          end: Date.parse("2026-11-09T10:00:00+11:00"),
+          timeZone: SYDNEY,
+        },
+        {
+          title: "Renamed call",
+          repeat: { frequency: "weekly", end: { kind: "never" } },
+        },
+      ),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  const listing = await alice.listRange({
+    from: date("2026-11-09"),
+    to: date("2026-11-24"),
+    timeZone: SYDNEY,
+  });
+  expect(
+    listing.occurrences.map((occurrence) => [
+      occurrence.title,
+      occurrence.conference,
+    ]),
+  ).toEqual([
+    ["Renamed call", "https://meet.google.com/aaa-aaaa-aaa"],
+    ["Renamed call", "https://meet.google.com/bbb-bbbb-bbb"],
+    ["Renamed call", "https://meet.google.com/aaa-aaaa-aaa"],
+  ]);
 });
 
 test("importing the same file again changes nothing", async () => {

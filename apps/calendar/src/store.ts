@@ -594,7 +594,13 @@ function continuing(
   repeat: Repeat | null,
   before: ShownRepeat | null,
   datesBefore: number,
+  firstDay: CivilDate,
 ): Repeat | null {
+  // The dialog checks an end day against the date it shows, which may have moved on its
+  // own to before the new half's first day, so that end means the new half's first date.
+  if (repeat?.end.kind === "onDate" && repeat.end.date < firstDay) {
+    return { ...repeat, end: { kind: "onDate", date: firstDay } };
+  }
   if (
     repeat?.end.kind !== "afterTimes" ||
     !before ||
@@ -628,10 +634,43 @@ function timeOfDate(series: StoredEvent, id: OccurrenceId): EventTime {
 // The dates of a series removed or changed on their own.
 type OwnDates = { exdates: OccurrenceId[]; changes: StoredEvent[] };
 
-// The date a series was changed from, with its time before and the time the dialog gave it.
-type Opened = { id: OccurrenceId; from: EventTime; to: EventTime };
+const DETAIL_FIELDS = ["title", "location", "notes", "conference"] as const;
 
-const DETAIL_FIELDS = ["title", "location", "notes"] as const;
+type DateValues = Pick<StoredEvent, (typeof DETAIL_FIELDS)[number] | "time">;
+
+const valuesOf = ({
+  title,
+  location,
+  notes,
+  conference,
+  time,
+}: StoredEvent): DateValues => ({ title, location, notes, conference, time });
+
+// The target takes each detail the change gave a value other than the base's.
+function takeChanged(target: DateValues, change: DateValues, base: DateValues) {
+  const take = <Field extends (typeof DETAIL_FIELDS)[number]>(field: Field) => {
+    if (change[field] !== base[field]) target[field] = change[field];
+  };
+  DETAIL_FIELDS.forEach(take);
+}
+
+// The date a series was changed from, as it was and as the dialog gave it.
+type Opened = { id: OccurrenceId; from: DateValues; to: DateValues };
+
+// Where the dialog left the opened date as it was, the series keeps its own value, so
+// what that date changed on its own doesn't spread to the rest.
+function seriesValues(
+  series: StoredEvent,
+  first: EventTime,
+  { from, to }: Opened,
+): DateValues {
+  const values = {
+    ...valuesOf(series),
+    time: shifted(first, from.time, to.time),
+  };
+  takeChanged(values, to, from);
+  return values;
+}
 
 const idOfChange = (change: StoredEvent) => change.recurrenceId as OccurrenceId;
 
@@ -672,7 +711,11 @@ function carryOwnDates(
     ]),
   );
   if (opened) {
-    const time = shifted(timeOfDate(old, opened.id), opened.from, opened.to);
+    const time = shifted(
+      timeOfDate(old, opened.id),
+      opened.from.time,
+      opened.to.time,
+    );
     days.set(opened.id, startDateOf(time));
   }
   // With the same rule and start every date keeps its id, even where Calendar can't work
@@ -707,15 +750,13 @@ function carryOwnDates(
     const date = landing(id);
     if (!date) continue;
     const row = plain(date);
-    for (const field of DETAIL_FIELDS) {
-      if (change[field] !== old[field]) row[field] = change[field];
-    }
+    takeChanged(row, change, old);
     if (!sameTime(change.time, timeOfDate(old, id))) row.time = change.time;
     if (!isPlain(row, date)) changes.set(date.id, row);
   }
   const date = opened && landing(opened.id);
   if (opened && date) {
-    const row = { ...plain(date), time: opened.to };
+    const row = { ...plain(date), ...opened.to };
     exdates.delete(date.id);
     changes.delete(date.id);
     if (!isPlain(row, date)) changes.set(date.id, row);
@@ -728,21 +769,52 @@ const wallStart = (time: EventTime) =>
     ? wallOfDate(time.startDate)
     : wallOf(time.start, time.timeZone);
 
-// "All of them", changed from one date: the series' first date moves as far as that date
-// did, in local time, so it keeps its place across a daylight-saving change.
+const timeOfDay = (time: EventTime) =>
+  wallStart(time) - wallOfDate(startDateOf(time));
+
+const lengthOf = (time: EventTime) =>
+  time.kind === "allDay"
+    ? daysBetween(time.startDate, time.endDate)
+    : time.end - time.start;
+
+const zoneOf = (time: EventTime) =>
+  time.kind === "timed" ? time.timeZone : null;
+
+// A series changed from one date: its first date moves as far as that date did, in local
+// time, so it keeps its place across a daylight-saving change. It takes the length, all
+// day or timed, and time zone the dialog gave only where they differ from that date's.
 function shifted(first: EventTime, from: EventTime, to: EventTime): EventTime {
-  const startWall = (wallStart(first) +
-    (wallStart(to) - wallStart(from))) as WallTime;
-  if (to.kind === "allDay") {
+  // Between all day and timed it moves by whole days, at the time of day the dialog gave,
+  // or the series' own when the dialog gave none.
+  const startWall = (
+    first.kind === "timed" && from.kind === "timed" && to.kind === "timed"
+      ? wallStart(first) + (wallStart(to) - wallStart(from))
+      : wallOfDate(
+          addDays(
+            startDateOf(first),
+            daysBetween(startDateOf(from), startDateOf(to)),
+          ),
+        ) + timeOfDay(to.kind === "timed" ? to : first)
+  ) as WallTime;
+  const like =
+    to.kind === from.kind && lengthOf(to) === lengthOf(from) ? first : to;
+  if (like.kind === "allDay") {
     const startDate = dateOfWall(startWall);
     return {
       kind: "allDay",
       startDate,
-      endDate: addDays(startDate, daysBetween(to.startDate, to.endDate)),
+      endDate: addDays(startDate, daysBetween(like.startDate, like.endDate)),
     };
   }
-  const start = instantOf(startWall, to.timeZone);
-  return { ...to, start, end: start + (to.end - to.start) };
+  const timeZone =
+    (zoneOf(to) === zoneOf(from) ? zoneOf(first) : zoneOf(to)) ?? like.timeZone;
+  const start = instantOf(startWall, timeZone);
+  return {
+    kind: "timed",
+    start,
+    end: start + (like.end - like.start),
+    timeZone,
+  };
 }
 
 const deliveredPartOf = (event: StoredEvent): DeliveredPart => ({
@@ -1156,13 +1228,17 @@ export class EventStore {
       location: draft.location,
       notes: draft.notes,
     };
+    const given: DateValues = {
+      ...details,
+      conference: series.conference,
+      time: draft.time,
+    };
     const id = target.occurrenceId;
     if (series.rule === null || id === null) {
       return this.#replaceSeries(
         actor,
         series,
-        details,
-        draft.time,
+        given,
         draft.repeat,
         after,
         null,
@@ -1193,28 +1269,28 @@ export class EventStore {
       return { status: "done" };
     }
 
-    // Both scopes move the dates as far as the opened date moved, so a date moved on its
-    // own doesn't take the rest with it.
     const splits = scope === "thisAndLater" && place > 0;
-    const opened = {
+    const from = valuesOf(
+      change ?? { ...series, time: timeOfDate(series, id) },
+    );
+    const opened: Opened = {
       id,
-      from: change?.time ?? timeOfDate(series, id),
-      to: draft.time,
+      from,
+      to: { ...from, ...details, time: draft.time },
     };
-    const time =
+    const values =
       draft.repeat === null
-        ? draft.time
-        : shifted(
+        ? given
+        : seriesValues(
+            series,
             splits ? timeOfDate(series, id) : series.time,
-            opened.from,
-            opened.to,
+            opened,
           );
     if (!splits) {
       return this.#replaceSeries(
         actor,
         series,
-        details,
-        time,
+        values,
         draft.repeat,
         after,
         opened,
@@ -1222,18 +1298,21 @@ export class EventStore {
       );
     }
 
-    const repeat = continuing(draft.repeat, shownRepeat(series), place);
+    const repeat = continuing(
+      draft.repeat,
+      shownRepeat(series),
+      place,
+      startDateOf(values.time),
+    );
     const edited: StoredEvent = {
-      ...details,
+      ...values,
       uid: crypto.randomUUID() as EventUid,
       recurrenceId: null,
-      time,
-      rule: repeat && ruleOf(repeat, time),
+      rule: repeat && ruleOf(repeat, values.time),
       exdates: [],
       organiser: series.organiser,
       sequence: 0,
       cancelled: false,
-      conference: series.conference,
     };
     const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
@@ -1272,13 +1351,13 @@ export class EventStore {
   #replaceSeries(
     actor: Actor,
     series: StoredEvent,
-    details: EventDetails,
-    time: EventTime,
+    values: DateValues,
     repeat: Repeat | null,
     after: StoredAttendee[],
     opened: Opened | null,
     now: number,
   ): ChangeResult {
+    const { time } = values;
     // A rule from outside may be spelled differently from the one Calendar writes, so
     // a change that keeps the same repeat keeps its text.
     const unchanged =
@@ -1289,8 +1368,7 @@ export class EventStore {
     this.db.transaction(() => {
       const edited: StoredEvent = {
         ...series,
-        ...details,
-        time,
+        ...values,
         rule,
         sequence: this.#nextSequence(series.uid),
       };
