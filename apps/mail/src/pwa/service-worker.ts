@@ -39,6 +39,7 @@ self.addEventListener("activate", (event) => {
         if (name !== CACHE) await caches.delete(name);
       }
       await self.clients.claim();
+      await self.registration.navigationPreload.enable();
     })(),
   );
 });
@@ -55,9 +56,16 @@ async function checkDeviceOwner(): Promise<void> {
   if (gone) await clearDevice();
 }
 
+// A page load's request leaves while this worker is still starting, and its answer
+// waits in `preloadResponse`.
+async function fromNetwork(event: FetchEvent): Promise<Response> {
+  const preloaded: Response | undefined = await event.preloadResponse;
+  return preloaded ?? fetch(event.request);
+}
+
 async function page(event: FetchEvent): Promise<Response> {
   try {
-    const response = await fetch(event.request);
+    const response = await fromNetwork(event);
     event.waitUntil(checkDeviceOwner().catch(() => {}));
     return response;
   } catch (networkFailure) {
@@ -67,20 +75,20 @@ async function page(event: FetchEvent): Promise<Response> {
   }
 }
 
-async function publicFile(request: Request): Promise<Response> {
+async function publicFile(event: FetchEvent): Promise<Response> {
   try {
-    return await fetch(request);
+    return await fromNetwork(event);
   } catch (networkFailure) {
-    const saved = await caches.match(request, { cacheName: CACHE });
+    const saved = await caches.match(event.request, { cacheName: CACHE });
     if (saved) return saved;
     throw networkFailure;
   }
 }
 
-async function buildAsset(request: Request): Promise<Response> {
+async function buildAsset(event: FetchEvent): Promise<Response> {
   // Any version's copy will do: a page from the last build asks for the last build's
   // files by their exact hashed names.
-  return (await caches.match(request)) ?? fetch(request);
+  return (await caches.match(event.request)) ?? fromNetwork(event);
 }
 
 self.addEventListener("fetch", (event) => {
@@ -89,13 +97,16 @@ self.addEventListener("fetch", (event) => {
     case "network":
       return;
     case "buildAsset":
-      event.respondWith(buildAsset(event.request));
+      event.respondWith(buildAsset(event));
       return;
     case "publicFile":
-      event.respondWith(publicFile(event.request));
+      event.respondWith(publicFile(event));
       return;
     case "page":
       event.respondWith(page(event));
+      return;
+    case "preloaded":
+      event.respondWith(fromNetwork(event));
       return;
   }
 });

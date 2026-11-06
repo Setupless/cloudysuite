@@ -10,7 +10,6 @@ const kind = (method: string, mode: string, path: string) =>
 test.each([
   ["a server function read", "GET", "cors", "/_serverFn/abc?payload=x"],
   ["a server function write", "POST", "cors", "/_serverFn/abc"],
-  ["an attachment download", "GET", "navigate", "/download/m/1/2"],
   [
     "an original message download",
     "GET",
@@ -19,11 +18,9 @@ test.each([
   ],
   ["the sign-in API", "POST", "cors", "/api/auth/sign-in/email"],
   ["the sign-in API by GET", "GET", "cors", "/api/auth/get-session"],
-  ["a sign-in API page load", "GET", "navigate", "/api/auth/anything"],
   ["an import upload", "PUT", "cors", "/api/import/x/parts/1"],
   ["the session check", "GET", "same-origin", "/pwa/session"],
-  ["the shell itself", "GET", "navigate", "/offline-shell"],
-  ["a form post", "POST", "navigate", "/"],
+  ["a form post, which the browser never preloads", "POST", "navigate", "/"],
   [
     "another site's script",
     "GET",
@@ -39,6 +36,15 @@ test.each([
   ["an image a page asks for", "GET", "no-cors", "/something.png"],
 ])("%s goes straight to the network", (_name, method, mode, path) => {
   expect(kind(method, mode, path)).toBe("network");
+});
+
+test.each([
+  ["an attachment download", "/download/m/1/2"],
+  ["a sign-in API page load", "/api/auth/anything"],
+  ["the session check opened as a page", "/pwa/session"],
+  ["the shell itself", "/offline-shell"],
+])("%s is answered with the browser's preload", (_name, path) => {
+  expect(kind("GET", "navigate", path)).toBe("preloaded");
 });
 
 test.each([
