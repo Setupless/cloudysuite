@@ -101,6 +101,12 @@ export const unlessDialog = (run: () => void) => () => {
 };
 // So Esc can still close that dialog, and the arrows can still move between its choices.
 const KEEP_DEFAULT = { preventDefault: false };
+// Null when nothing has focus, so closing a dialog that a key opened falls back to New event.
+export const focusedElement = () =>
+  document.activeElement instanceof HTMLElement &&
+  document.activeElement !== document.body
+    ? document.activeElement
+    : null;
 
 function LiveSchedule({ search }: { search: ScheduleSearch }) {
   const [zone] = useState(deviceZone);
@@ -224,13 +230,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   useHotkey(
     "N",
     unlessDialog(() =>
-      openNew(
-        nextHalfHour(Date.now(), zone),
-        document.activeElement instanceof HTMLElement &&
-          document.activeElement !== document.body
-          ? document.activeElement
-          : null,
-      ),
+      openNew(nextHalfHour(Date.now(), zone), focusedElement()),
     ),
   );
 

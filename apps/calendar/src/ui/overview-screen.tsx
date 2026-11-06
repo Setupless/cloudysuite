@@ -28,7 +28,12 @@ import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
-import { deviceZone, focusFirst, unlessDialog } from "./schedule-screen";
+import {
+  deviceZone,
+  focusedElement,
+  focusFirst,
+  unlessDialog,
+} from "./schedule-screen";
 import {
   type ShownEvent,
   shownEvents,
@@ -579,14 +584,7 @@ function LiveOverview() {
 
   useHotkey(
     "N",
-    unlessDialog(() =>
-      openNew(
-        document.activeElement instanceof HTMLElement &&
-          document.activeElement !== document.body
-          ? document.activeElement
-          : null,
-      ),
-    ),
+    unlessDialog(() => openNew(focusedElement())),
   );
 
   return (
