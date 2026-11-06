@@ -106,17 +106,19 @@ function DayHeading({
   onOpenDay: (date: CivilDate) => void;
 }) {
   const isToday = day === today;
+  // A week's seven columns are too narrow on a phone for the day and its number side
+  // by side, so there the number goes under the day.
   const content = (
     <>
       <span>{weekdayShort(day)}</span>
       <span
-        className={`flex size-[30px] items-center justify-center rounded-full text-[19px] font-semibold ${isToday ? "bg-accent text-on-accent" : "text-text"}`}
+        className={`flex items-center justify-center rounded-full font-semibold ${linked ? "size-7 text-base @3xl:size-[30px] @3xl:text-[19px]" : "size-[30px] text-[19px]"} ${isToday ? "bg-accent text-on-accent" : "text-text"}`}
       >
         {dayNumber(day)}
       </span>
     </>
   );
-  const look = `flex items-center gap-1.5 px-1.5 pt-1 pb-1.5 text-xs ${isToday ? "font-semibold text-accent" : "text-secondary"}`;
+  const look = `flex items-center px-1.5 pt-1 pb-1.5 text-xs ${linked ? "flex-col justify-center @3xl:flex-row @3xl:justify-start @3xl:gap-1.5" : "gap-1.5"} ${isToday ? "font-semibold text-accent" : "text-secondary"}`;
   return linked ? (
     <button
       type="button"
@@ -188,7 +190,7 @@ function TimedBlock({
     <EventButton
       event={event}
       handlers={handlers}
-      className={`absolute overflow-hidden rounded-md border-l-3 px-1.5 py-0.5 text-xs leading-tight ${calendarBorder(event.calendar.colour)} ${lane > 0 ? "ring-[1.5px] ring-page" : ""}`}
+      className={`absolute overflow-hidden rounded-md border-l-3 px-1.5 py-0.5 text-xs leading-tight @max-3xl:px-1 ${calendarBorder(event.calendar.colour)} ${lane > 0 ? "ring-[1.5px] ring-page" : ""}`}
       style={{
         top: startMinute * PX_PER_MINUTE + 1,
         height: Math.max(height, 24),
@@ -296,7 +298,7 @@ export function TimeGrid({
           {HOURS.map((hour) => (
             <div
               key={hour}
-              className="h-12 -translate-y-[7px] pr-2 text-right text-[11px] text-secondary first:invisible"
+              className="h-12 -translate-y-[7px] pr-2 text-right text-[11px] whitespace-nowrap text-secondary first:invisible"
             >
               {hourText(hour)}
             </div>

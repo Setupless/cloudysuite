@@ -51,12 +51,25 @@ function rangeText(
 export const dayTitle = (date: CivilDate, today: CivilDate) =>
   longDay(today, date).format(onDay(date));
 
-export function weekTitle({ from, to }: DayWindow, today: CivilDate): string {
+// "Sat 7 Nov", for a toolbar on a phone.
+export const shortDayTitle = (date: CivilDate, today: CivilDate) =>
+  dayFormat({
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: yearUnlessThisOne(today, date),
+  }).format(onDay(date));
+
+export function weekTitle(
+  { from, to }: DayWindow,
+  today: CivilDate,
+  month: "long" | "short" = "long",
+): string {
   const last = addDays(to, -1);
   return rangeText(
     dayFormat({
       day: "numeric",
-      month: "long",
+      month,
       year: yearUnlessThisOne(today, from, last),
     }),
     onDay(from),
@@ -86,10 +99,17 @@ const clock = new Intl.DateTimeFormat(undefined, {
 
 export const timeText = (instant: number) => clock.format(instant);
 
-export const hourText = (hour: number) =>
-  dayFormat({ hour: "numeric", minute: "2-digit" }).format(
+// "10 am" where the reader's clock has am and pm, and "10:00" where it doesn't, since a
+// lone "10" reads as a count.
+export function hourText(hour: number): string {
+  const hourOnly = dayFormat({ hour: "numeric" });
+  const format = hourOnly.resolvedOptions().hour12
+    ? hourOnly
+    : dayFormat({ hour: "numeric", minute: "2-digit" });
+  return format.format(
     wallOfDate("2026-01-01" as CivilDate) + hour * 3_600_000,
   );
+}
 
 export function whenText(
   time: EventTime,

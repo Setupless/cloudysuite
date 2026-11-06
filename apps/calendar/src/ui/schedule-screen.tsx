@@ -36,14 +36,21 @@ import {
   nextHalfHour,
   slotStart,
 } from "./event-form";
-import { dayTitle, monthTitle, weekTitle } from "./event-text";
+import { dayTitle, monthTitle, shortDayTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
 import { daySpanOf } from "./schedule-layout";
 import { type ShownEvent, shownEvents } from "./shown-event";
 import { type EventHandlers, TimeGrid } from "./time-grid";
 
-const SCREEN = "flex h-[calc(100dvh-52px)] flex-col";
-const TOOLBAR = "flex flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2.5";
+// The toolbar and grids change at the width of this screen, not the window, because the
+// sidebar takes room from it on a tablet.
+const SCREEN = "@container flex h-[calc(100dvh-52px)] flex-col";
+// Narrow, it's two lines: the buttons that move, then the title and the views. That
+// split is the same in every view, so switching views never moves the grid.
+const TOOLBAR =
+  "flex flex-none flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3 pb-2.5";
+const NARROW_SECOND_LINE = "order-1 @3xl:order-none";
+const LINE_BREAK = `h-1 basis-full @3xl:hidden ${NARROW_SECOND_LINE}`;
 const FOCUS =
   "outline-accent focus-visible:outline-2 focus-visible:outline-offset-1";
 const VIEW_NAMES: Record<ScheduleView, string> = {
@@ -258,12 +265,12 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     ? events.find((event) => event.key === search.event)
     : undefined;
 
-  const title =
+  const [title, shortTitle] =
     place.view === "day"
-      ? dayTitle(place.date, today)
+      ? [dayTitle(place.date, today), shortDayTitle(place.date, today)]
       : place.view === "week"
-        ? weekTitle(window, today)
-        : monthTitle(place.date);
+        ? [weekTitle(window, today), weekTitle(window, today, "short")]
+        : [monthTitle(place.date), monthTitle(place.date)];
 
   return (
     <div className={SCREEN}>
@@ -283,8 +290,11 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
           aria-label={`Next ${place.view}`}
           onClick={() => go(place.view, steppedDate(place, 1))}
         />
+        <div aria-hidden className={LINE_BREAK} />
         <TitlePicker
           title={title}
+          shortTitle={shortTitle}
+          className={`flex-1 basis-0 ${NARROW_SECOND_LINE}`}
           place={place}
           today={today}
           open={picking}
@@ -302,32 +312,35 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
         <div
           role="group"
           aria-label="View"
-          className="ml-auto flex rounded bg-field p-0.5"
+          className={`flex flex-none rounded bg-field p-0.5 ${NARROW_SECOND_LINE}`}
         >
           {SCHEDULE_VIEWS.map((view) => (
             <button
               key={view}
               type="button"
               aria-pressed={view === place.view}
-              className={`min-h-6 cursor-pointer rounded-[7px] px-[11px] py-1 text-[13px] ${FOCUS} ${view === place.view ? "bg-page font-semibold text-text shadow-sm" : "text-secondary hover:text-text"}`}
+              className={`min-h-6 cursor-pointer rounded-[7px] px-2 py-1 @lg:px-[11px] text-[13px] ${FOCUS} ${view === place.view ? "bg-page font-semibold text-text shadow-sm" : "text-secondary hover:text-text"}`}
               onClick={() => go(view, search.date)}
             >
               {VIEW_NAMES[view]}
             </button>
           ))}
         </div>
-        <Button
-          ref={newButton}
-          variant="toolbarAction"
-          icon={IconPlus}
-          aria-keyshortcuts="N"
-          disabled={!calendars.data}
-          onClick={(click) =>
-            openNew(nextHalfHour(Date.now(), zone), click.currentTarget)
-          }
-        >
-          New event
-        </Button>
+        <div className="ml-auto flex flex-none">
+          <Button
+            ref={newButton}
+            variant="toolbarAction"
+            icon={IconPlus}
+            aria-keyshortcuts="N"
+            disabled={!calendars.data}
+            onClick={(click) =>
+              openNew(nextHalfHour(Date.now(), zone), click.currentTarget)
+            }
+          >
+            {/* Only the + on the smallest phones, so the first line still fits. */}
+            <span className="@max-[22rem]:sr-only">New event</span>
+          </Button>
+        </div>
       </div>
       {failure && (
         <div className="px-4 pb-2">
@@ -419,8 +432,11 @@ function Schedule({ search }: { search: ScheduleSearch }) {
     <LiveSchedule search={search} />
   ) : (
     <div className={SCREEN}>
+      {/* The same lines as the toolbar, so the grid doesn't move when it arrives. */}
       <div className={TOOLBAR}>
         <div className="h-[34px]" />
+        <div className={LINE_BREAK} />
+        <div className={`h-[34px] @3xl:hidden ${NARROW_SECOND_LINE}`} />
       </div>
     </div>
   );

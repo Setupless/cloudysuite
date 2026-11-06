@@ -67,16 +67,19 @@ function useMinute(): number {
   return now;
 }
 
+// A time stays on one line, so a narrow column breaks "2:00 pm to 3:00 pm" only at "to".
+const wholeTime = (time: number) => timeText(time).replaceAll(" ", "\u00a0");
+
 function hoursText(hours: HoursOnDay, startOnly = false): string {
   switch (hours.kind) {
     case "between":
       return startOnly
-        ? timeText(hours.start)
-        : `${timeText(hours.start)} to ${timeText(hours.end)}`;
+        ? wholeTime(hours.start)
+        : `${wholeTime(hours.start)} to ${wholeTime(hours.end)}`;
     case "from":
-      return `From ${timeText(hours.start)}`;
+      return `From ${wholeTime(hours.start)}`;
     case "until":
-      return `Until ${timeText(hours.end)}`;
+      return `Until ${wholeTime(hours.end)}`;
     case "allDay":
       return "All day";
   }
