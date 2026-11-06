@@ -663,11 +663,12 @@ type Opened = { id: OccurrenceId; from: DateValues; to: DateValues };
 function seriesValues(
   series: StoredEvent,
   first: EventTime,
-  { from, to }: Opened,
+  opened: Opened,
 ): DateValues {
+  const { from, to } = opened;
   const values = {
     ...valuesOf(series),
-    time: shifted(first, from.time, to.time),
+    time: shifted(first, timeOfDate(series, opened.id), from.time, to.time),
   };
   takeChanged(values, to, from);
   return values;
@@ -767,6 +768,19 @@ const wallStart = (time: EventTime) =>
     : wallOf(time.start, time.timeZone);
 
 // The time moved by whole days onto the day, when it starts before it.
+function lastDateBefore(
+  rule: string,
+  time: EventTime,
+  id: OccurrenceId,
+): EventTime | null {
+  let last: EventTime | null = null;
+  for (const date of datesOf(rule, time, { steps: STEPS_PER_CALL })) {
+    if (date.id >= id) break;
+    last = date.time;
+  }
+  return last;
+}
+
 function notBefore(time: EventTime, day: CivilDate): EventTime {
   const days = daysBetween(startDateOf(time), day);
   if (days <= 0) return time;
@@ -791,49 +805,42 @@ const lengthOf = (time: EventTime) =>
 const zoneOf = (time: EventTime) =>
   time.kind === "timed" ? time.timeZone : null;
 
-// A series changed from one date: its first date moves as far as that date did, in local
-// time, so it keeps its place across a daylight-saving change. It takes all day or timed,
-// the length, and the time zone the dialog gave only where they differ from that date's.
-function shifted(first: EventTime, from: EventTime, to: EventTime): EventTime {
+// A series changed from one date takes each part of the time the person changed in the
+// dialog, measured from that date's own slot, so what the date changed on its own doesn't
+// spread to the rest: the day, the time of day, all day or timed, the length, and the
+// time zone.
+function shifted(
+  first: EventTime,
+  slot: EventTime,
+  from: EventTime,
+  to: EventTime,
+): EventTime {
+  const day = addDays(
+    startDateOf(first),
+    startDateOf(to) === startDateOf(from)
+      ? 0
+      : daysBetween(startDateOf(slot), startDateOf(to)),
+  );
   const kind = to.kind === from.kind ? first.kind : to.kind;
-  const own = kind === first.kind ? first : to;
-  // Otherwise it moves by whole days, at its own time of day, or the dialog's when it
-  // turns timed.
-  const startWall = (
-    first.kind === "timed" && from.kind === "timed" && to.kind === "timed"
-      ? wallStart(first) + (wallStart(to) - wallStart(from))
-      : wallOfDate(
-          addDays(
-            startDateOf(first),
-            daysBetween(startDateOf(from), startDateOf(to)),
-          ),
-        ) + timeOfDay(own)
-  ) as WallTime;
-  const like =
-    from.kind === kind && to.kind === kind && lengthOf(to) !== lengthOf(from)
-      ? to
-      : own;
-  if (like.kind === "allDay") {
-    const startDate = dateOfWall(startWall);
-    return {
-      kind: "allDay",
-      startDate,
-      endDate: addDays(startDate, daysBetween(like.startDate, like.endDate)),
-    };
+  const length =
+    kind !== first.kind ||
+    (from.kind === kind && to.kind === kind && lengthOf(to) !== lengthOf(from))
+      ? lengthOf(to)
+      : lengthOf(first);
+  if (kind === "allDay") {
+    return { kind, startDate: day, endDate: addDays(day, length) };
   }
-  const timeZone =
-    from.kind === "timed" &&
-    to.kind === "timed" &&
-    from.timeZone !== to.timeZone
-      ? to.timeZone
-      : (zoneOf(own) ?? like.timeZone);
-  const start = instantOf(startWall, timeZone);
-  return {
-    kind: "timed",
-    start,
-    end: start + (like.end - like.start),
-    timeZone,
-  };
+  const bothTimed = from.kind === "timed" && to.kind === "timed";
+  const own = first.kind === "timed" ? first : to;
+  const clock =
+    own === to || (bothTimed && timeOfDay(to) !== timeOfDay(from))
+      ? timeOfDay(to)
+      : timeOfDay(own);
+  const timeZone = zoneOf(
+    own === to || (bothTimed && to.timeZone !== from.timeZone) ? to : own,
+  ) as TimeZone;
+  const start = instantOf((wallOfDate(day) + clock) as WallTime, timeZone);
+  return { kind, start, end: start + length, timeZone };
 }
 
 const deliveredPartOf = (event: StoredEvent): DeliveredPart => ({
@@ -1312,12 +1319,15 @@ export class EventStore {
       );
     }
 
-    // The old half still has the days before the split, so the new half's dates never
-    // move to before it.
+    // A new half starting on or before the old half's last date would show those days
+    // twice, so it then stays on the days it splits from.
+    const lastBefore = lastDateBefore(series.rule, series.time, id);
     const time =
-      draft.repeat === null
-        ? values.time
-        : notBefore(values.time, startDateOf(slot));
+      draft.repeat !== null &&
+      lastBefore !== null &&
+      startDateOf(values.time) <= startDateOf(lastBefore)
+        ? notBefore(values.time, startDateOf(slot))
+        : values.time;
     const repeat = continuing(
       draft.repeat,
       shownRepeat(series),

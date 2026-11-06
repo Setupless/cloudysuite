@@ -876,7 +876,7 @@ const daily = (end: Repeat["end"] = { kind: "never" }): Repeat => ({
 const novemberAt = (time: string, days: number[], title = "Team standup") =>
   days.map((day) => [title, `2026-11-${String(day).padStart(2, "0")} ${time}`]);
 
-test("moving this and later ones from a date moved on its own to a day before it leaves the series on its days", async () => {
+test("moving this and later ones from a date moved on its own to an earlier day starts the new half on that day", async () => {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
     { repeat: daily({ kind: "afterTimes", times: 20 }) },
@@ -905,12 +905,12 @@ test("moving this and later ones from a date moved on its own to a day before it
   expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
     novemberAt(
       "09:00",
-      [2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+      [2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
     ),
   );
 });
 
-test("moving this and later ones from a Monday moved to Friday on its own to Wednesday keeps the later ones on Mondays", async () => {
+test("moving this and later ones from a Monday moved to Friday on its own to Wednesday puts the later ones on Wednesdays", async () => {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
     { repeat: weekly() },
@@ -937,8 +937,57 @@ test("moving this and later ones from a Monday moved to Friday on its own to Wed
   ).toEqual({ status: "done" });
   expect(shown((await listed("2026-11-01", "2026-12-08")).occurrences)).toEqual(
     [
-      ...novemberAt("09:00", [2, 9, 18, 23, 30]),
-      ["Team standup", "2026-12-07 09:00"],
+      ...novemberAt("09:00", [2, 9, 18, 25]),
+      ["Team standup", "2026-12-02 09:00"],
+    ],
+  );
+});
+
+test("moving this and later ones from a plain Monday to the Saturday before puts the later ones on Saturdays", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
+    { repeat: weekly() },
+  );
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: NOVEMBER_16 },
+      "thisAndLater",
+      draft(timed("2026-11-14T09:00:00+11:00", "2026-11-14T10:00:00+11:00"), {
+        repeat: weekly(),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
+    novemberAt("09:00", [2, 9, 14, 21, 28]),
+  );
+});
+
+test("moving this and later ones of a daily series to before the day it splits from moves only that date there", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
+    { repeat: daily({ kind: "afterTimes", times: 10 }) },
+  );
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid, occurrenceId: "20261109T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-08T11:00:00+11:00", "2026-11-08T12:00:00+11:00"), {
+        repeat: daily({ kind: "afterTimes", times: 10 }),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
+    [
+      ...novemberAt("09:00", [2, 3, 4, 5, 6, 7, 8]),
+      ...novemberAt("11:00", [8]),
+      ...novemberAt("09:00", [9]),
+      ...novemberAt("11:00", [11]),
     ],
   );
 });
