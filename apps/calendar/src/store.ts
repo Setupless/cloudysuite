@@ -639,6 +639,9 @@ const deliveredPartOf = (event: StoredEvent): DeliveredPart => ({
   conference: event.conference,
 });
 
+const parseOrganiser = (raw: string | null) =>
+  raw === null ? null : (JSON.parse(raw) as Organiser);
+
 // Soonest first on the viewer's own clock, with a day's all-day events before its timed
 // ones.
 export function inViewerOrder(timeZone: TimeZone) {
@@ -1273,18 +1276,20 @@ export class EventStore {
   // Everyone invited hears the event is off.
   #removeAll(actor: Actor, uid: EventUid, now: number): ChangeResult {
     const people = this.#people(uid);
+    const organiser = this.#series(uid)?.organiser ?? null;
     this.db.transaction(() => {
       if (people && !people.reply) {
         this.#queueFor(uid, people.attendees, [], actor, now);
         this.#keepForCancelling(uid, "deleted");
       }
       this.db.exec(
-        `INSERT INTO removed_events (uid, sequence, removed_at)
-         SELECT uid, max(sequence), ? FROM events WHERE uid = ? GROUP BY uid
+        `INSERT INTO removed_events (uid, sequence, removed_at, organiser)
+         SELECT uid, max(sequence), ?, ? FROM events WHERE uid = ? GROUP BY uid
          ON CONFLICT (uid) DO UPDATE SET
            sequence = max(sequence, excluded.sequence),
-           removed_at = excluded.removed_at`,
+           removed_at = excluded.removed_at, organiser = excluded.organiser`,
         now,
+        organiser && JSON.stringify(organiser),
         uid,
       );
       this.db.exec("DELETE FROM events WHERE uid = ?", uid);
@@ -1615,7 +1620,20 @@ export class EventStore {
     now: number,
   ): OutsideResult {
     const { series } = invitation;
-    if (this.#rows("SELECT 1 FROM removed_events WHERE uid = ?", uid).length) {
+    const [removal] = this.#rows<{ organiser: string | null }>(
+      "SELECT organiser FROM removed_events WHERE uid = ?",
+      uid,
+    );
+    // Removing a copy that came without its organiser's proof doesn't keep out their own.
+    const removed = parseOrganiser(removal?.organiser ?? null);
+    if (
+      removal &&
+      !(
+        invitation.fromOrganiser &&
+        removed?.kind === "outside" &&
+        !removed.fromOrganiser
+      )
+    ) {
       return "unchanged";
     }
     const held = this.#series(uid);
@@ -1649,6 +1667,7 @@ export class EventStore {
           this.db.exec("DELETE FROM events WHERE uid = ?", uid);
           this.db.exec("DELETE FROM event_people WHERE uid = ?", uid);
         }
+        this.db.exec("DELETE FROM removed_events WHERE uid = ?", uid);
         this.#takeParts(null, copyOf, series, invitation.changes, now);
         this.#takePeople(invitation, uid, undefined);
       });
