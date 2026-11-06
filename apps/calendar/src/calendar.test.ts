@@ -2,7 +2,9 @@ import { beforeEach, expect, test } from "bun:test";
 import { applyMigrations } from "@cloudysuite/object-sql";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
 import { MIGRATIONS } from "./migrations";
-import { EventStore } from "./store";
+import { readCalendarFile } from "./outside/ics";
+import { calendarFile } from "./outside/test-support";
+import { EventStore, groupForImport } from "./store";
 import {
   ALICE,
   BOB,
@@ -13,6 +15,7 @@ import {
   SYDNEY,
   TEAM,
 } from "./test-support";
+import { addDays } from "./time";
 import type {
   EmailAddress,
   EventTime,
@@ -1545,6 +1548,140 @@ test("every weekday counts the days where the event is, not on the device", asyn
     await alice.create("Alice Stone", draft(at(SYDNEY), { repeat }), []),
   ).toEqual({ status: "noDatesLeft", needs: onDate("2026-11-09") });
 });
+
+async function imported(...lines: string[]) {
+  const reading = readCalendarFile(calendarFile(...lines), SYDNEY);
+  if (reading.status !== "read") throw new Error(reading.status);
+  const answer = await (
+    await kit.as(ALICE)
+  ).importEvents("Alice Stone", groupForImport(reading.events));
+  if (answer.status !== "done") throw new Error(answer.status);
+}
+
+const IMPORTED = "standup@example.com" as EventUid;
+const NOVEMBER_17 = "20261116T220000Z" as OccurrenceId;
+const NOVEMBER_24 = "20261123T220000Z" as OccurrenceId;
+
+const removedAt9 = (days: string[]) =>
+  `EXDATE;TZID=Australia/Sydney:${days.map((day) => `${day.replaceAll("-", "")}T090000`).join(",")}`;
+
+// Weekly three times from Tuesday 10 November. A file can remove a date and change it too,
+// as one imported again after the date was removed here does, and Calendar shows the change.
+const standupFile = (removed: string[], moved: string) => [
+  "BEGIN:VEVENT",
+  `UID:${IMPORTED}`,
+  "DTSTART;TZID=Australia/Sydney:20261110T090000",
+  "DTEND;TZID=Australia/Sydney:20261110T093000",
+  "RRULE:FREQ=WEEKLY;COUNT=3",
+  removedAt9(removed),
+  "SUMMARY:Standup",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  `UID:${IMPORTED}`,
+  `RECURRENCE-ID;TZID=Australia/Sydney:${moved.replaceAll("-", "")}T090000`,
+  `DTSTART;TZID=Australia/Sydney:${moved.replaceAll("-", "")}T110000`,
+  `DTEND;TZID=Australia/Sydney:${moved.replaceAll("-", "")}T113000`,
+  "SUMMARY:Standup moved",
+  "END:VEVENT",
+];
+
+test.each([
+  ["after one time", weekly(afterTimes(1))],
+  ["every month until the 17th", monthly(onDate("2026-11-17"))],
+])(
+  "changing all of an imported repeat to end %s, when its one date left was removed and changed too, saves with that date as it was changed",
+  async (_, repeat) => {
+    await imported(...standupFile(["2026-11-10"], "2026-11-10"));
+    expect(
+      shown((await listed("2026-11-01", "2027-01-01")).occurrences),
+    ).toEqual([
+      ["Standup moved", "2026-11-10 11:00"],
+      ["Standup", "2026-11-17 09:00"],
+      ["Standup", "2026-11-24 09:00"],
+    ]);
+    const alice = await kit.as(ALICE);
+    expect(
+      await alice.update(
+        { uid: IMPORTED, occurrenceId: NOVEMBER_17 },
+        "all",
+        draft(at9("2026-11-17"), { title: "Standup", repeat }),
+        [],
+      ),
+    ).toEqual({ status: "done" });
+    expect(
+      shown((await listed("2026-11-01", "2027-01-01")).occurrences),
+    ).toEqual([["Standup moved", "2026-11-10 11:00"]]);
+  },
+);
+
+test("the fewest times asked for count a date that was removed and changed too, and that many saves", async () => {
+  await imported(...standupFile(["2026-11-10", "2026-11-17"], "2026-11-17"));
+  const alice = await kit.as(ALICE);
+  const change = (times: number) =>
+    alice.update(
+      { uid: IMPORTED, occurrenceId: NOVEMBER_24 },
+      "all",
+      draft(at9("2026-11-24"), {
+        title: "Standup",
+        repeat: weekly(afterTimes(times)),
+      }),
+      [],
+    );
+  expect(await change(1)).toEqual({
+    status: "noDatesLeft",
+    needs: afterTimes(2),
+  });
+  expect(shown((await listed("2026-11-01", "2027-01-01")).occurrences)).toEqual(
+    [
+      ["Standup moved", "2026-11-17 11:00"],
+      ["Standup", "2026-11-24 09:00"],
+    ],
+  );
+  expect(await change(2)).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2027-01-01")).occurrences)).toEqual(
+    [["Standup moved", "2026-11-17 11:00"]],
+  );
+});
+
+test.each([
+  [998, afterTimes(999), "2029-08-04"],
+  [999, onDate("2029-08-05"), "2029-08-05"],
+] as const)(
+  "changing all of a daily repeat with its first %p dates removed to end after one time asks for the fewest times up to the most a repeat can have, and past that for the earliest last date, and that saves",
+  async (count, needs, kept) => {
+    const first = date("2026-11-10");
+    await imported(
+      "BEGIN:VEVENT",
+      `UID:${IMPORTED}`,
+      "DTSTART;TZID=Australia/Sydney:20261110T090000",
+      "DTEND;TZID=Australia/Sydney:20261110T093000",
+      "RRULE:FREQ=DAILY",
+      removedAt9(
+        Array.from({ length: count }, (_, day) => addDays(first, day)),
+      ),
+      "SUMMARY:Daily",
+      "END:VEVENT",
+    );
+    const [opened] = (await listed(kept, addDays(date(kept), 1))).occurrences;
+    if (!opened) throw new Error("no date to open");
+    const alice = await kit.as(ALICE);
+    const change = (end: Repeat["end"]) =>
+      alice.update(
+        { uid: IMPORTED, occurrenceId: opened.occurrenceId },
+        "all",
+        draft(opened.time, { title: "Daily", repeat: daily(end) }),
+        [],
+      );
+    expect(await change(afterTimes(1))).toEqual({
+      status: "noDatesLeft",
+      needs,
+    });
+    expect(await change(needs)).toEqual({ status: "done" });
+    expect(
+      shown((await listed("2026-11-01", "2030-01-01")).occurrences),
+    ).toEqual([["Daily", `${kept} 09:00`]]);
+  },
+);
 
 test("removing this and later ones from the first date removes the event, and keeps its record", async () => {
   const uid = await created(

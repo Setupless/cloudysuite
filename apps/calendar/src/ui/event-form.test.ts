@@ -15,6 +15,7 @@ import {
   newForm,
   nextHalfHour,
   scopesFor,
+  scopeToAsk,
   slotStart,
   withStart,
 } from "./event-form";
@@ -241,22 +242,53 @@ test.each([
   [
     "the last date",
     { kind: "onDate", date: date("2026-11-23") },
+    { repeatEnd: "onDate", startDate: "2026-11-21" },
     "repeatUntil",
     `Set the last date to ${dayTitle(date("2026-11-23"), TODAY)} or later.`,
   ],
   [
     "the number of times",
     { kind: "afterTimes", times: 2 },
+    { repeatEnd: "afterTimes", startDate: "2026-11-21" },
     "repeatTimes",
     "Set the number of times to 2 or more.",
   ],
+  [
+    "a last date, when the number of times would be more than a repeat can have,",
+    { kind: "onDate", date: date("2029-08-05") },
+    { repeatEnd: "afterTimes", startDate: "2029-08-05" },
+    "repeatUntil",
+    `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-05"), TODAY)} or later.`,
+  ],
+  [
+    "a last date no earlier than the day it starts",
+    { kind: "onDate", date: date("2029-08-05") },
+    { repeatEnd: "afterTimes", startDate: "2029-08-10" },
+    "repeatUntil",
+    `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-10"), TODAY)} or later.`,
+  ],
 ] as const)(
   "a repeat with no dates points at %s and asks for one that gives it a date",
-  (_, needs, field, advice) => {
-    expect(askForEnd(needs, TODAY)).toEqual({
+  (_, needs, more, field, advice) => {
+    expect(askForEnd(needs, form(more), TODAY)).toEqual({
       field,
       message: `The repeat would end up with no dates, so it wasn't saved. ${advice}`,
     });
+  },
+);
+
+test.each([
+  ["keeps the one picked before", "all", ["thisAndLater", "all"], "all"],
+  [
+    "picks the first one when the one picked before isn't offered",
+    "this",
+    ["thisAndLater", "all"],
+    "thisAndLater",
+  ],
+] as const)(
+  "asking again which ones to change %s",
+  (_, picked, scopes, asked) => {
+    expect(scopeToAsk(picked, [...scopes])).toBe(asked);
   },
 );
 
