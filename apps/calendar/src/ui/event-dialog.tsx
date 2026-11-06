@@ -298,7 +298,8 @@ export function EventDialog({
   opening: Opening;
   calendars: CalendarEntry[];
   zone: TimeZone;
-  onSaved: (uid: EventUid, firstDay: CivilDate) => void;
+  // `firstDay` is the day a new event first happens, and null after a change.
+  onSaved: (uid: EventUid, firstDay: CivilDate | null) => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
@@ -365,6 +366,7 @@ export function EventDialog({
     setFailure(null);
     try {
       let uid: EventUid;
+      let firstDay: CivilDate | null = null;
       if (place) {
         await call(() =>
           updateEvent({
@@ -382,11 +384,15 @@ export function EventDialog({
           !choice || choice === "personal"
             ? await call(() => ensureMyCalendar())
             : choice;
-        uid = await call(() => createEvent({ data: { calendarId, draft } }));
+        const created = await call(() =>
+          createEvent({ data: { calendarId, draft } }),
+        );
+        uid = created.uid;
+        firstDay = daySpanOf(created.first, zone).first;
         rememberUsed(me, calendarId);
       }
       await client.invalidateQueries({ queryKey: calendarKeys.all });
-      onSaved(uid, daySpanOf(draft.time, zone).first);
+      onSaved(uid, firstDay);
     } catch (thrown) {
       setFailure({ field: null, message: (thrown as Error).message });
       setPending(false);

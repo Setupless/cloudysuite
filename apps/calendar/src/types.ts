@@ -210,11 +210,17 @@ export type OutsideRefused = {
   why: Exclude<OutsideInviting, "ready">;
 };
 
+// `first` is the event's first date, which a repeat can put after the start, as every
+// weekday does from a Saturday.
+export type CreatedEvent = { uid: EventUid; first: EventTime };
+
 export type CreateResult =
-  | { status: "created"; uid: EventUid }
+  | ({ status: "created" } & CreatedEvent)
   | { status: "noAccess" }
   // Someone asked for can't be invited, because they were removed or suspended.
   | { status: "notInvitable" }
+  // A repeat that ends before its first date.
+  | { status: "neverHappens" }
   | OutsideRefused;
 
 export type ChangeResult =

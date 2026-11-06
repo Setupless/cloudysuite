@@ -149,7 +149,7 @@ async function invite(
   invited: UserId[],
   more: Partial<EventDraft> = {},
 ): Promise<EventUid> {
-  const uid = await as(people.manager).createEvent({
+  const { uid } = await as(people.manager).createEvent({
     data: { calendarId: TEAM, draft: planning({ people: invited, ...more }) },
   });
   await objects.settle();
@@ -477,7 +477,7 @@ test.each([
 
 test("nobody can put an event in someone else's calendar through a server function", async () => {
   const theirs = await as(people.manager).ensureMyCalendar();
-  const uid = await as(people.manager).createEvent({
+  const { uid } = await as(people.manager).createEvent({
     data: { calendarId: theirs, draft: planning({ title: "Private" }) },
   });
   const target = { uid, occurrenceId: null };
@@ -1061,7 +1061,7 @@ test("while Calendar is off, invitations and answers wait, and go once it's back
     await objects.settle();
   };
   try {
-    const uid = await as(people.manager).createEvent({
+    const { uid } = await as(people.manager).createEvent({
       data: {
         calendarId: TEAM,
         draft: planning({ people: [people.outsider] }),

@@ -257,7 +257,7 @@ test("removing someone takes their access away on their next request", async () 
 });
 
 test("the delete confirmation counts each event once, however often it repeats", async () => {
-  const uid = await as(people.editor).createEvent({
+  const { uid } = await as(people.editor).createEvent({
     data: {
       calendarId: TEAM,
       draft: draft(
@@ -459,7 +459,7 @@ test("removing someone hands their calendar to the person chosen, events and all
       ),
     },
   });
-  const planning = await as(removed).createEvent({
+  const { uid: planning } = await as(removed).createEvent({
     data: {
       calendarId: TEAM,
       draft: draft(

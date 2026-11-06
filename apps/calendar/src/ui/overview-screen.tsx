@@ -561,8 +561,9 @@ function LiveOverview() {
     );
   };
   // An event days away doesn't show here, so the person is told where it went.
-  const afterSave = (firstDay: CivilDate) => {
+  const afterSave = (firstDay: CivilDate | null) => {
     close();
+    if (!firstDay) return;
     toast({
       message: `Event added for ${dayTitle(firstDay, today)}.`,
       action: {

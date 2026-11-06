@@ -583,7 +583,7 @@ const TUESDAY: EventTime = {
 } as EventTime;
 
 async function inviteFrom(calendarId: CalendarId, people: PersonToInvite[]) {
-  const uid = await as().createEvent({
+  const { uid } = await as().createEvent({
     data: {
       calendarId,
       draft: {

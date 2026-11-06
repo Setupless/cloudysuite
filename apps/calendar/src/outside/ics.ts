@@ -1,7 +1,7 @@
 import ICAL from "ical.js";
 import { parseEmailAddress } from "../email-address";
 import { followableRule } from "../followable";
-import { datesOf } from "../repeat";
+import { firstDateOf } from "../repeat";
 import {
   addDays,
   allDayOccurrenceId,
@@ -553,7 +553,7 @@ function readEvent(block: Block, zones: Zones): OutsideEvent {
     skip("unreadable");
   }
   const followable = rule !== null && followableRule(rule) !== null;
-  if (followable && datesOf(rule, time, { steps: 1 }).next().done) {
+  if (followable && firstDateOf(rule, time) === null) {
     skip("neverHappens");
   }
   const exdates =

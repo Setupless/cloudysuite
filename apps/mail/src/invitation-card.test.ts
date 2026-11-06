@@ -585,7 +585,7 @@ test("a cancellation shows as cancelled, with Remove from my calendar while it's
 
 test("a reply says who answered and whether it was recorded, or that the sender couldn't be confirmed", async () => {
   const personal = await ensurePersonalCalendar(kit.database, kit.admin);
-  const uid = (await inCalendar().createEvent({
+  const { uid } = await inCalendar().createEvent({
     data: {
       calendarId: personal,
       draft: {
@@ -597,7 +597,7 @@ test("a reply says who answered and whether it was recorded, or that the sender 
         people: [{ email: DANA as EmailAddress }],
       },
     },
-  })) as EventUid;
+  });
   await calendars.settle();
   const reply = (from: string, auth: string, partstat: string, about = uid) =>
     invitationEmail({
@@ -742,7 +742,7 @@ test("someone who can't open the mailbox gets nothing from its invitations", asy
 });
 
 async function inviteFrom(calendarId: CalendarId, people: PersonToInvite[]) {
-  const uid = await inCalendar().createEvent({
+  const { uid } = await inCalendar().createEvent({
     data: {
       calendarId,
       draft: {
