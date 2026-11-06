@@ -196,7 +196,7 @@ export function TitlePicker({
           type="button"
           aria-haspopup="dialog"
           aria-expanded={open}
-          className={`flex h-[34px] min-w-0 cursor-pointer items-center gap-1.5 rounded px-2 text-[18px] font-semibold hover:bg-field @lg:text-[21px] ${open ? "bg-field" : ""} ${FOCUS}`}
+          className={`flex h-[34px] max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-2 text-[18px] font-semibold hover:bg-field @lg:text-[21px] ${open ? "bg-field" : ""} ${FOCUS}`}
           onClick={onToggle}
         >
           <span className="truncate @lg:hidden">{shortTitle}</span>

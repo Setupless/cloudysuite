@@ -107,18 +107,19 @@ function DayHeading({
 }) {
   const isToday = day === today;
   // A week's seven columns are too narrow on a phone for the day and its number side
-  // by side, so there the number goes under the day.
+  // by side, so there the number goes under the day. Day does the same, so switching
+  // between them doesn't move the hours.
   const content = (
     <>
       <span>{weekdayShort(day)}</span>
       <span
-        className={`flex items-center justify-center rounded-full font-semibold ${linked ? "size-7 text-base @3xl:size-[30px] @3xl:text-[19px]" : "size-[30px] text-[19px]"} ${isToday ? "bg-accent text-on-accent" : "text-text"}`}
+        className={`flex size-7 items-center justify-center rounded-full text-base font-semibold @3xl:size-[30px] @3xl:text-[19px] ${isToday ? "bg-accent text-on-accent" : "text-text"}`}
       >
         {dayNumber(day)}
       </span>
     </>
   );
-  const look = `flex items-center px-1.5 pt-1 pb-1.5 text-xs ${linked ? "flex-col justify-center @3xl:flex-row @3xl:justify-start @3xl:gap-1.5" : "gap-1.5"} ${isToday ? "font-semibold text-accent" : "text-secondary"}`;
+  const look = `flex flex-col pt-1 pb-1.5 text-xs @3xl:flex-row @3xl:items-center @3xl:gap-1.5 @3xl:px-1.5 ${linked ? "items-center" : "items-start px-1.5"} ${isToday ? "font-semibold text-accent" : "text-secondary"}`;
   return linked ? (
     <button
       type="button"

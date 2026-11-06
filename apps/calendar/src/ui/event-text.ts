@@ -77,8 +77,8 @@ export function weekTitle(
   );
 }
 
-export const monthTitle = (date: CivilDate) =>
-  dayFormat({ month: "long", year: "numeric" }).format(onDay(date));
+export const monthTitle = (date: CivilDate, month: "long" | "short" = "long") =>
+  dayFormat({ month, year: "numeric" }).format(onDay(date));
 
 export const weekdayShort = (date: CivilDate) =>
   dayFormat({ weekday: "short" }).format(onDay(date));

@@ -106,9 +106,15 @@ function Week({
               className={`mt-1 ml-1 flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-full px-1.5 text-xs font-semibold whitespace-nowrap ${FOCUS} ${isToday ? "bg-accent text-on-accent" : `hover:bg-field ${inMonth ? "text-text" : "text-secondary"}`}`}
               onClick={() => onOpenDay(day)}
             >
-              {day.endsWith("-01") && !inMonth
-                ? dayAndMonth(day)
-                : dayNumber(day)}
+              {day.endsWith("-01") && !inMonth ? (
+                <>
+                  {/* On a phone a day is too narrow for its month as well. */}
+                  <span className="@max-3xl:hidden">{dayAndMonth(day)}</span>
+                  <span className="@3xl:hidden">{dayNumber(day)}</span>
+                </>
+              ) : (
+                dayNumber(day)
+              )}
             </button>
           </div>
         );

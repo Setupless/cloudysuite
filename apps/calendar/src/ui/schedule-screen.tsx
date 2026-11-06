@@ -46,11 +46,12 @@ import { type EventHandlers, TimeGrid } from "./time-grid";
 // sidebar takes room from it on a tablet.
 const SCREEN = "@container flex h-[calc(100dvh-52px)] flex-col";
 // Narrow, it's two lines: the buttons that move, then the title and the views. That
-// split is the same in every view, so switching views never moves the grid.
+// split is the same in every view, so switching views never moves the grid. It's one
+// line only from a width where that line still leaves room for a long title.
 const TOOLBAR =
   "flex flex-none flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3 pb-2.5";
-const NARROW_SECOND_LINE = "order-1 @3xl:order-none";
-const LINE_BREAK = `h-1 basis-full @3xl:hidden ${NARROW_SECOND_LINE}`;
+const NARROW_SECOND_LINE = "order-1 @4xl:order-none";
+const LINE_BREAK = `h-1 basis-full @4xl:hidden ${NARROW_SECOND_LINE}`;
 const FOCUS =
   "outline-accent focus-visible:outline-2 focus-visible:outline-offset-1";
 const VIEW_NAMES: Record<ScheduleView, string> = {
@@ -270,7 +271,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
       ? [dayTitle(place.date, today), shortDayTitle(place.date, today)]
       : place.view === "week"
         ? [weekTitle(window, today), weekTitle(window, today, "short")]
-        : [monthTitle(place.date), monthTitle(place.date)];
+        : [monthTitle(place.date), monthTitle(place.date, "short")];
 
   return (
     <div className={SCREEN}>
@@ -326,7 +327,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex flex-none">
+        <div className="ml-auto flex h-[34px] flex-none items-center">
           <Button
             ref={newButton}
             variant="toolbarAction"
@@ -436,7 +437,7 @@ function Schedule({ search }: { search: ScheduleSearch }) {
       <div className={TOOLBAR}>
         <div className="h-[34px]" />
         <div className={LINE_BREAK} />
-        <div className={`h-[34px] @3xl:hidden ${NARROW_SECOND_LINE}`} />
+        <div className={`h-[34px] @4xl:hidden ${NARROW_SECOND_LINE}`} />
       </div>
     </div>
   );
