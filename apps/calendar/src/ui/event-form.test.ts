@@ -218,6 +218,18 @@ test.each([
     "The repeat ends before the event starts.",
   ],
   [
+    "every weekday from a Saturday to the Sunday",
+    {
+      startDate: "2026-11-07",
+      endDate: "2026-11-07",
+      repeat: "weekdays",
+      repeatEnd: "onDate",
+      repeatUntil: "2026-11-08",
+    },
+    "repeatUntil",
+    "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.",
+  ],
+  [
     "a repeat of no times",
     { repeat: "daily", repeatEnd: "afterTimes", repeatTimes: "0" },
     "repeatTimes",

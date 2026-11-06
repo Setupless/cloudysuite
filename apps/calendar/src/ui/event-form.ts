@@ -1,7 +1,9 @@
 import { type CalendarId, levelOfRole, type UserId } from "@cloudysuite/access";
+import { isWeekend } from "../schedule";
 import {
   addDays,
   dateOfWall,
+  daysBetween,
   instantOf,
   parseCivilDate,
   type WallTime,
@@ -284,6 +286,19 @@ function repeatOf(
         return problem(
           "repeatUntil",
           "The repeat ends before the event starts.",
+        );
+      }
+      const start = parseCivilDate(startDate);
+      if (
+        frequency === "weekdays" &&
+        start &&
+        isWeekend(start) &&
+        isWeekend(date) &&
+        daysBetween(start, date) <= 1
+      ) {
+        return problem(
+          "repeatUntil",
+          "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.",
         );
       }
       return { repeat: { frequency, end: { kind: "onDate", date } } };
