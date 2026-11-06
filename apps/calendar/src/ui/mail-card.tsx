@@ -137,17 +137,25 @@ type Shown = {
 const OFF_NOTE =
   "Calendar is off, so this can't be answered or added to your calendar from here. Ask your admin to turn Calendar back on.";
 
+const UNCONFIRMED_CHANGE_NOTE =
+  "This email changes the event, but the sender couldn't be confirmed, so your calendar keeps it as it was.";
+
+// The card shows a change to some dates from the email itself, so an unconfirmed one
+// needs the warning even when the calendar holds the same version.
 function versionNote(
   version: "later" | "same" | "earlier",
   confirmed: boolean,
+  someDates: boolean,
 ): string | null {
   if (version === "later") {
     return "This event has changed since this email. Your calendar has the latest version.";
   }
-  if (version === "same") return null;
+  if (version === "same") {
+    return someDates && !confirmed ? UNCONFIRMED_CHANGE_NOTE : null;
+  }
   return confirmed
     ? "This email's change isn't in your calendar."
-    : "This email changes the event, but the sender couldn't be confirmed, so your calendar keeps it as it was.";
+    : UNCONFIRMED_CHANGE_NOTE;
 }
 
 function shownOf(card: InvitationCard): Shown {
@@ -244,7 +252,11 @@ function shownOf(card: InvitationCard): Shown {
           remove: true,
         };
       }
-      const version = versionNote(standing.version, standing.confirmed);
+      const version = versionNote(
+        standing.version,
+        standing.confirmed,
+        someDates,
+      );
       return {
         ...base,
         notes: [
