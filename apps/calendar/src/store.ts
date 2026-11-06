@@ -33,6 +33,7 @@ import {
   type Budget,
   type DateOfSeries,
   datesOf,
+  firstDateOf,
   indexOf,
   repeatOf,
   ruleOf,
@@ -1194,6 +1195,9 @@ export class EventStore {
     );
     if (planned.status !== "planned") return planned;
     const { attendees } = planned;
+    const rule = draft.repeat && ruleOf(draft.repeat, draft.time);
+    const first = rule === null ? draft.time : firstDateOf(rule, draft.time);
+    if (!first) return { status: "neverHappens" };
     const uid = crypto.randomUUID() as EventUid;
     this.db.transaction(() => {
       this.#write(
@@ -1204,7 +1208,7 @@ export class EventStore {
           location: draft.location,
           notes: draft.notes,
           time: draft.time,
-          rule: draft.repeat && ruleOf(draft.repeat, draft.time),
+          rule,
           exdates: [],
           organiser: {
             kind: "madeHere",
@@ -1222,7 +1226,7 @@ export class EventStore {
       }
       this.#queueFor(uid, [], attendees, actor, now);
     });
-    return { status: "created", uid };
+    return { status: "created", uid, first };
   }
 
   update(

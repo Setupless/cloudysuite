@@ -1,9 +1,10 @@
-import { Notice, useHydrated } from "@cloudysuite/ui";
+import { Button, Notice, useHydrated, useToast } from "@cloudysuite/ui";
 import {
   IconCalendar,
   IconCheck,
   IconClock,
   IconMapPin,
+  IconPlus,
   IconUsers,
 } from "@tabler/icons-react";
 import {
@@ -11,12 +12,15 @@ import {
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { calendarsQuery, eventsQuery, invitationsQuery } from "../queries";
 import { keyOf, searchOf, todayIn } from "../schedule";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
+import { EventDialog } from "./event-dialog";
+import { type FormStart, nextHalfHour } from "./event-form";
 import { dayNumber, dayTitle, timeText, weekdayShort } from "./event-text";
 import { AnswerButtons } from "./invitation-parts";
 import { JoinButton } from "./join-button";
@@ -24,7 +28,12 @@ import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
-import { deviceZone } from "./schedule-screen";
+import {
+  deviceZone,
+  focusedElement,
+  focusFirst,
+  unlessDialog,
+} from "./schedule-screen";
 import {
   type ShownEvent,
   shownEvents,
@@ -51,6 +60,9 @@ const ROW = `grid items-center gap-2.5 border-b border-line px-1 py-2.5 text-sm 
 const SPAN_COLUMNS = "grid-cols-[6.5rem_auto_minmax(0,1fr)]";
 const START_COLUMNS = "grid-cols-[4.5rem_auto_minmax(0,1fr)]";
 
+// `back` is where focus goes once the dialog closes.
+type NewEvent = { start: FormStart; back: HTMLElement | null };
+
 // Ticks on the minute, so "in 25 minutes" and the finished events change together and
 // the page draws once a minute.
 function useMinute(): number {
@@ -67,16 +79,19 @@ function useMinute(): number {
   return now;
 }
 
+// A time stays on one line, so a narrow column breaks "2:00 pm to 3:00 pm" only at "to".
+const wholeTime = (time: number) => timeText(time).replaceAll(" ", "\u00a0");
+
 function hoursText(hours: HoursOnDay, startOnly = false): string {
   switch (hours.kind) {
     case "between":
       return startOnly
-        ? timeText(hours.start)
-        : `${timeText(hours.start)} to ${timeText(hours.end)}`;
+        ? wholeTime(hours.start)
+        : `${wholeTime(hours.start)} to ${wholeTime(hours.end)}`;
     case "from":
-      return `From ${timeText(hours.start)}`;
+      return `From ${wholeTime(hours.start)}`;
     case "until":
-      return `Until ${timeText(hours.end)}`;
+      return `Until ${wholeTime(hours.end)}`;
     case "allDay":
       return "All day";
   }
@@ -510,13 +525,13 @@ function AllDayChip({
 function Heading({ children }: { children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 px-4 pt-3.5 pb-2.5">
-      <h1 className="text-[21px] font-semibold">Today</h1>
+      <h1 className="text-[21px] font-semibold">Overview</h1>
       {children}
     </div>
   );
 }
 
-function LiveToday() {
+function LiveOverview() {
   const [zone] = useState(deviceZone);
   const now = useMinute();
   const today = todayIn(zone, now);
@@ -538,6 +553,46 @@ function LiveToday() {
   );
   const failure = calendars.error ?? listing.error;
   const ready = listing.data && calendars.data;
+  const [opening, setOpening] = useState<NewEvent | null>(null);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const navigate = useNavigate();
+  const toast = useToast();
+
+  // Nothing opens before the calendars load, or the dialog would appear later with no warning.
+  const openNew = (back: HTMLElement | null) => {
+    if (calendars.data) {
+      setOpening({ start: nextHalfHour(Date.now(), zone), back });
+    }
+  };
+  const close = () => {
+    const back = opening?.back;
+    setOpening(null);
+    focusFirst(
+      () => back,
+      () => newButton.current,
+    );
+  };
+  // An event days away doesn't show here, so the person is told where it went.
+  const afterSave = (firstDay: CivilDate | null) => {
+    close();
+    if (!firstDay) return;
+    toast({
+      message: `Event added for ${dayTitle(firstDay, today)}.`,
+      action: {
+        label: "Show in Schedule",
+        run: () =>
+          void navigate({
+            to: "/calendar/schedule",
+            search: searchOf("day", firstDay),
+          }),
+      },
+    });
+  };
+
+  useHotkey(
+    "N",
+    unlessDialog(() => openNew(focusedElement())),
+  );
 
   return (
     <>
@@ -546,6 +601,18 @@ function LiveToday() {
         {plan.allDay.map((event) => (
           <AllDayChip key={event.key} event={event} zone={zone} today={today} />
         ))}
+        <div className="ml-auto">
+          <Button
+            ref={newButton}
+            variant="toolbarAction"
+            icon={IconPlus}
+            aria-keyshortcuts="N"
+            disabled={!calendars.data}
+            onClick={(click) => openNew(click.currentTarget)}
+          >
+            New event
+          </Button>
+        </div>
       </Heading>
       <div
         className="flex flex-col gap-5 px-4 pb-6"
@@ -575,25 +642,34 @@ function LiveToday() {
         {/* It loads on its own, so invitations still show when the events can't. */}
         {(ready || failure) && <Invitations zone={zone} today={today} />}
       </div>
+      {opening && calendars.data && (
+        <EventDialog
+          opening={{ kind: "new", start: opening.start }}
+          calendars={calendars.data}
+          zone={zone}
+          onSaved={(_uid, firstDay) => afterSave(firstDay)}
+          onClose={close}
+        />
+      )}
     </>
   );
 }
 
-function Today() {
+function Overview() {
   // The server knows neither the reader's time zone nor their language, so the day
   // waits for the browser. The events are already here by then.
   const hydrated = useHydrated();
-  return hydrated ? <LiveToday /> : <Heading />;
+  return hydrated ? <LiveOverview /> : <Heading />;
 }
 
-export function TodayScreen({
+export function OverviewScreen({
   prefetched,
 }: {
   prefetched: DehydratedState | undefined;
 }) {
   return (
     <HydrationBoundary state={prefetched}>
-      <Today />
+      <Overview />
     </HydrationBoundary>
   );
 }

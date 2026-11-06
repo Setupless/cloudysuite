@@ -186,7 +186,7 @@ export async function prefetchSchedule(search: ScheduleSearch) {
 }
 
 // The server's own day stands in for the reader's here too, for the same reason.
-export async function prefetchToday() {
+export async function prefetchOverview() {
   if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await client.prefetchQuery(

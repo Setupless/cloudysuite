@@ -156,6 +156,8 @@ function MonthOfDays({
 // A day chosen in Week shows that day's week, so the picker keeps the view.
 export function TitlePicker({
   title,
+  shortTitle,
+  className,
   place,
   today,
   open,
@@ -165,6 +167,10 @@ export function TitlePicker({
   onChoose,
 }: {
   title: string;
+  // Shown until the toolbar has room for the longest full title, such as a week
+  // that crosses into a new year.
+  shortTitle: string;
+  className: string;
   place: SchedulePlace;
   today: CivilDate;
   open: boolean;
@@ -184,17 +190,18 @@ export function TitlePicker({
   }, [open, onClose]);
 
   return (
-    <div ref={wrapper} className="relative min-w-0">
+    <div ref={wrapper} className={`relative flex min-w-0 ${className}`}>
       <h1 className="min-w-0">
         <button
           ref={button}
           type="button"
           aria-haspopup="dialog"
           aria-expanded={open}
-          className={`flex min-w-0 cursor-pointer items-center gap-1.5 rounded px-2 py-0.5 text-[21px] font-semibold hover:bg-field ${open ? "bg-field" : ""} ${FOCUS}`}
+          className={`flex h-[34px] max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-2 text-[18px] font-semibold hover:bg-field @lg:text-[21px] ${open ? "bg-field" : ""} ${FOCUS}`}
           onClick={onToggle}
         >
-          <span className="truncate">{title}</span>
+          <span className="truncate @5xl:hidden">{shortTitle}</span>
+          <span className="hidden truncate @5xl:block">{title}</span>
           <IconChevronDown
             size={16}
             stroke={1.75}

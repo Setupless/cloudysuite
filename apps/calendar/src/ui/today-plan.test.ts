@@ -159,7 +159,7 @@ test("near midnight, an event under way is not next, and the next one is tomorro
   expect(titles(after.ahead)).toEqual(["Late shift"]);
 });
 
-test("an all-day event is on Today wherever its date is today", () => {
+test("an all-day event is on Overview wherever its date is today", () => {
   const holiday = allDay("Holiday", "2026-11-05", "2026-11-06");
   const nextDay = allDay("Next day", "2026-11-06", "2026-11-07");
   // 12:00 on the 5th in Los Angeles is 09:00 on the 6th in Auckland.
@@ -174,7 +174,7 @@ test("an all-day event is on Today wherever its date is today", () => {
   expect(auckland.tomorrowEvents).toEqual([]);
 });
 
-test("a hidden calendar's events are left out of Today", () => {
+test("a hidden calendar's events are left out of Overview", () => {
   const entry = (id: string, hidden: boolean): CalendarEntry => ({
     id: id as CalendarId,
     kind: "team",

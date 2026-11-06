@@ -1,9 +1,12 @@
 import { type CalendarId, levelOfRole, type UserId } from "@cloudysuite/access";
+import { isWeekend } from "../schedule";
 import {
   addDays,
   dateOfWall,
+  daysBetween,
   instantOf,
   parseCivilDate,
+  startDateOf,
   type WallTime,
   wallOf,
   wallOfDate,
@@ -301,6 +304,23 @@ function repeatOf(
       return { repeat: { frequency, end: { kind: "afterTimes", times } } };
     }
   }
+}
+
+export const WEEKEND_ONLY_MESSAGE =
+  "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.";
+
+// The only repeat the dialog offers that can have no dates. The days are the event's own,
+// as the repeat follows its zone, not the device's.
+export function weekendOnly({ time, repeat }: EventDraft): boolean {
+  if (repeat?.frequency !== "weekdays" || repeat.end.kind !== "onDate") {
+    return false;
+  }
+  const start = startDateOf(time);
+  return (
+    isWeekend(start) &&
+    isWeekend(repeat.end.date) &&
+    daysBetween(start, repeat.end.date) <= 1
+  );
 }
 
 // `zone` is the device's, which the fields are on.

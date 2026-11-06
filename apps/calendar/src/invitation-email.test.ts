@@ -180,7 +180,7 @@ async function invite(
   more: Partial<EventDraft> = {},
   by: UserId = people.manager,
 ) {
-  const uid = await as(by).createEvent({
+  const { uid } = await as(by).createEvent({
     data: { calendarId: TEAM, draft: planning({ people: invited, ...more }) },
   });
   await objects.settle();
@@ -452,7 +452,7 @@ test("nothing goes once the organiser is suspended, their address leaves their m
     ],
   ];
   for (const [name, before, after, reason] of cases) {
-    const uid = await as(people.manager).createEvent({
+    const { uid } = await as(people.manager).createEvent({
       data: {
         calendarId: TEAM,
         draft: planning({ title: name, people: [outside(OUTSIDE)] }),
