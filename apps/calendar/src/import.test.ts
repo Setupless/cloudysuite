@@ -14,10 +14,17 @@ import {
   BOB,
   createCalendarTest,
   date,
+  draft,
   LONDON,
   SYDNEY,
 } from "./test-support";
-import type { EmailAddress, EventUid, Occurrence, TimeZone } from "./types";
+import type {
+  EmailAddress,
+  EventUid,
+  Occurrence,
+  Repeat,
+  TimeZone,
+} from "./types";
 import { meetingLink } from "./ui/meeting-link";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
@@ -263,6 +270,49 @@ test("a repeat with an extra date shows its main repeat and is counted as such",
     ["Planning", "2026-11-10 09:00"],
     ["Planning", "2026-11-17 09:00"],
   ]);
+});
+
+test("renaming an imported fortnightly repeat keeps its dates as the file wrote them", async () => {
+  await importFile(
+    calendarFile(
+      "BEGIN:VEVENT",
+      "UID:pay-run@example.net",
+      "DTSTART;TZID=Australia/Sydney:20261103T080000",
+      "DTEND;TZID=Australia/Sydney:20261103T083000",
+      // Ends at 07:00 on 15 December, before that day's 08:00 date.
+      "RRULE:FREQ=WEEKLY;INTERVAL=2;WKST=SU;UNTIL=20261214T200000Z",
+      "EXDATE;TZID=Australia/Sydney:20261117T080000",
+      "SUMMARY:Pay run",
+      "END:VEVENT",
+    ),
+  );
+  const dates = ["2026-11-03 08:00", "2026-12-01 08:00"];
+  expect(await shown("2026-11-01", "2027-01-01")).toEqual(
+    dates.map((when) => ["Pay run", when]),
+  );
+  const listing = await (
+    await kit.as(ALICE)
+  ).listRange({
+    from: date("2026-11-01"),
+    to: date("2026-11-04"),
+    timeZone: SYDNEY,
+  });
+  const [first] = listing.occurrences;
+  expect(first?.repeat?.frequency).toBe("fortnightly");
+
+  expect(
+    await (
+      await kit.as(ALICE)
+    ).update(
+      { uid: first!.uid, occurrenceId: null },
+      "all",
+      draft(first!.time, { title: "Pay day", repeat: first!.repeat as Repeat }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(await shown("2026-11-01", "2027-01-01")).toEqual(
+    dates.map((when) => ["Pay day", when]),
+  );
 });
 
 test("a retry after a crash part way through ends the same as one import", async () => {

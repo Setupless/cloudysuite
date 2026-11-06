@@ -259,6 +259,69 @@ test("a repeat ends on its last day or after its number of times", async () => {
   );
 });
 
+test("a fortnightly event is on every other week, and splitting it keeps the rhythm from the chosen date", async () => {
+  const fortnightly: Repeat = {
+    frequency: "fortnightly",
+    end: { kind: "afterTimes", times: 4 },
+  };
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+    { title: "Pay run", repeat: fortnightly },
+  );
+  const { occurrences } = await listed("2026-11-01", "2027-02-01");
+  expect(shown(occurrences)).toEqual([
+    ["Pay run", "2026-11-02 09:00"],
+    ["Pay run", "2026-11-16 09:00"],
+    ["Pay run", "2026-11-30 09:00"],
+    ["Pay run", "2026-12-14 09:00"],
+  ]);
+  expect(occurrences[0]?.repeat).toEqual(fortnightly);
+  expect(occurrences[0]?.changeable).toBe(true);
+
+  await (
+    await kit.as(ALICE)
+  ).update(
+    { uid, occurrenceId: occurrences[2]!.occurrenceId },
+    "thisAndLater",
+    draft(timed("2026-12-01T09:00:00+11:00", "2026-12-01T09:15:00+11:00"), {
+      title: "Pay run",
+      repeat: fortnightly,
+    }),
+    [],
+  );
+  expect(shown((await listed("2026-11-01", "2027-02-01")).occurrences)).toEqual(
+    [
+      ["Pay run", "2026-11-02 09:00"],
+      ["Pay run", "2026-11-16 09:00"],
+      ["Pay run", "2026-12-01 09:00"],
+      ["Pay run", "2026-12-15 09:00"],
+    ],
+  );
+});
+
+test("a fortnightly repeat from outside shows as Every fortnight and can be changed", async () => {
+  kit.arrive({
+    uid: "pay@example.net",
+    title: "Pay run",
+    start: Date.parse("2026-11-03T08:00:00+11:00"),
+    end: Date.parse("2026-11-03T08:30:00+11:00"),
+    timeZone: SYDNEY,
+    rule: "FREQ=WEEKLY;INTERVAL=2;UNTIL=20261201T000000Z",
+    organiser: { kind: "madeHere", userId: ALICE, name: "Alice Stone" },
+  });
+  const { occurrences } = await listed("2026-11-01", "2027-01-01");
+  expect(shown(occurrences)).toEqual([
+    ["Pay run", "2026-11-03 08:00"],
+    ["Pay run", "2026-11-17 08:00"],
+    ["Pay run", "2026-12-01 08:00"],
+  ]);
+  expect(occurrences[0]?.repeat).toEqual({
+    frequency: "fortnightly",
+    end: { kind: "onDate", date: date("2026-12-01") },
+  });
+  expect(occurrences[0]?.changeable).toBe(true);
+});
+
 test("a yearly event on 29 February is on 29 February in leap years only", async () => {
   await created(
     {

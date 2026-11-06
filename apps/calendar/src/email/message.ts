@@ -32,6 +32,7 @@ const REPEATS: Record<RepeatFrequency, string> = {
   daily: "Every day",
   weekdays: "Every weekday",
   weekly: "Every week",
+  fortnightly: "Every fortnight",
   monthly: "Every month",
   yearly: "Every year",
 };

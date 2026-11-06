@@ -498,6 +498,20 @@ export const occurrenceOf = (
 const sameTime = (a: EventTime, b: EventTime) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+const endValue = (end: Repeat["end"]) =>
+  end.kind === "onDate"
+    ? end.date
+    : end.kind === "afterTimes"
+      ? end.times
+      : null;
+
+const sameRepeat = (a: Repeat | null, b: ShownRepeat | null) =>
+  a === null || b === null || !("end" in b)
+    ? a === b
+    : a.frequency === b.frequency &&
+      a.end.kind === b.end.kind &&
+      endValue(a.end) === endValue(b.end);
+
 // Colleagues only, since only they have a calendar here to deliver a copy to.
 const idsOf = (attendees: readonly StoredAttendee[]) =>
   attendees.flatMap((attendee) =>
@@ -1143,8 +1157,11 @@ export class EventStore {
     after: StoredAttendee[],
     now: number,
   ): ChangeResult {
-    const rule = repeat && ruleOf(repeat, time);
-    const datesMoved = rule !== series.rule || !sameTime(time, series.time);
+    // A rule from outside may be spelled differently from the one Calendar writes, so
+    // a change that keeps the same repeat keeps its text, and its changed and removed dates.
+    const datesMoved =
+      !sameTime(time, series.time) || !sameRepeat(repeat, shownRepeat(series));
+    const rule = datesMoved ? repeat && ruleOf(repeat, time) : series.rule;
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
