@@ -1046,6 +1046,46 @@ test("a date removed from a copy stays removed when the organiser moves every da
   expect(await dates()).toEqual(["20261109T220000Z"]);
 });
 
+test("a copy keeps the removed and moved dates when the organiser makes every date longer", async () => {
+  const uid = await invite([people.outsider], { repeat: WEEKLY });
+  await change(
+    uid,
+    {
+      title: "Moved",
+      time: timed("2026-11-24T14:00:00+11:00", "2026-11-24T15:00:00+11:00"),
+      repeat: WEEKLY,
+      people: [people.outsider],
+    },
+    { occurrenceId: THIRD, scope: "this" },
+  );
+  await as(people.manager).deleteEvent({
+    data: {
+      calendarId: TEAM,
+      target: { uid, occurrenceId: SECOND },
+      scope: "this",
+    },
+  });
+  await objects.settle();
+  await change(uid, {
+    time: timed("2026-11-10T09:00:00+11:00", "2026-11-10T10:30:00+11:00"),
+    repeat: WEEKLY,
+    people: [people.outsider],
+  });
+
+  expect(
+    (await seen(people.outsider)).map((entry) => [
+      entry.occurrenceId,
+      entry.title,
+      entry.cancelled,
+    ]),
+  ).toEqual([
+    ["20261109T220000Z", "Weekly planning", false],
+    [SECOND, "Weekly planning", true],
+    [THIRD, "Moved", false],
+    ["20261130T220000Z", "Weekly planning", false],
+  ]);
+});
+
 test("while Calendar is off, invitations and answers wait, and go once it's back on", async () => {
   const calendarOn = (on: boolean) =>
     kit.sqlite.run(

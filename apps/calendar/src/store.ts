@@ -210,6 +210,22 @@ export function addSummary(total: ImportSummary, part: ImportSummary): void {
 // About 200 ms of ical.js on the slowest rules, shared by every series in one call.
 export const STEPS_PER_CALL = 100_000;
 
+function stillDates(
+  rule: string | null,
+  time: EventTime,
+  ids: readonly OccurrenceId[],
+): Set<OccurrenceId> {
+  const asked = new Set(ids);
+  const found = new Set<OccurrenceId>();
+  if (rule === null || asked.size === 0) return found;
+  const last = ids.reduce((top, id) => (id > top ? id : top));
+  for (const date of datesOf(rule, time, { steps: STEPS_PER_CALL })) {
+    if (date.id > last) break;
+    if (asked.has(date.id)) found.add(date.id);
+  }
+  return found;
+}
+
 export type EventRow = SqlRow & {
   uid: string;
   recurrence_id: string | null;
@@ -1114,36 +1130,37 @@ export class EventStore {
     }
 
     const repeat = continuing(draft.repeat, shownRepeat(series), place);
+    const rule = repeat && ruleOf(repeat, draft.time);
     const uid = crypto.randomUUID() as EventUid;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
     const carried = after.map((attendee) => ({ ...attendee, revision: 0 }));
-    // The new series keeps the later dates removed or changed alone only while its dates
-    // fall where the old series' did.
-    const keepsDates =
-      sameTime(draft.time, timeOfDate(series, id)) &&
-      sameRepeat(draft.repeat, shownRepeat(series));
     this.db.transaction(() => {
-      const laterChanges = keepsDates
-        ? this.#rows<EventRow>(
-            "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
-            series.uid,
-            id,
-          ).map(parseRow)
-        : [];
+      const laterChanges = this.#rows<EventRow>(
+        "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
+        series.uid,
+        id,
+      ).map(parseRow);
+      const laterExdates = series.exdates.filter((exdate) => exdate > id);
+      const kept = stillDates(rule, draft.time, [
+        ...laterExdates,
+        ...laterChanges.map((change) => change.recurrenceId as OccurrenceId),
+      ]);
       this.#endBefore(series, id, now);
       this.#queueFor(series.uid, before, before, actor, now);
-      for (const change of laterChanges) this.#write({ ...change, uid }, now);
+      for (const change of laterChanges) {
+        if (kept.has(change.recurrenceId as OccurrenceId)) {
+          this.#write({ ...change, uid }, now);
+        }
+      }
       this.#write(
         {
           ...details,
           uid,
           recurrenceId: null,
           time: draft.time,
-          rule: repeat && ruleOf(repeat, draft.time),
-          exdates: keepsDates
-            ? series.exdates.filter((exdate) => exdate > id)
-            : [],
+          rule,
+          exdates: laterExdates.filter((exdate) => kept.has(exdate)),
           organiser: series.organiser,
           sequence: 0,
           cancelled: false,
@@ -1173,23 +1190,37 @@ export class EventStore {
     now: number,
   ): ChangeResult {
     // A rule from outside may be spelled differently from the one Calendar writes, so
-    // a change that keeps the same repeat keeps its text, and its changed and removed dates.
-    const datesMoved =
-      !sameTime(time, series.time) || !sameRepeat(repeat, shownRepeat(series));
-    const rule = datesMoved ? repeat && ruleOf(repeat, time) : series.rule;
+    // a change that keeps the same repeat keeps its text.
+    const unchanged =
+      sameTime(time, series.time) && sameRepeat(repeat, shownRepeat(series));
+    const rule = unchanged ? series.rule : repeat && ruleOf(repeat, time);
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
       const sequence = this.#nextSequence(series.uid);
-      // A changed date names a date the series may no longer have.
-      if (datesMoved) this.#dropChanges(series.uid, null);
+      const changed = this.#rows<{ recurrence_id: OccurrenceId }>(
+        "SELECT recurrence_id FROM events WHERE uid = ? AND recurrence_id IS NOT NULL",
+        series.uid,
+      ).map((row) => row.recurrence_id);
+      const kept = unchanged
+        ? new Set([...series.exdates, ...changed])
+        : stillDates(rule, time, [...series.exdates, ...changed]);
+      for (const id of changed) {
+        if (!kept.has(id)) {
+          this.db.exec(
+            "DELETE FROM events WHERE uid = ? AND recurrence_id = ?",
+            series.uid,
+            id,
+          );
+        }
+      }
       this.#write(
         {
           ...series,
           ...details,
           time,
           rule,
-          exdates: datesMoved ? [] : series.exdates,
+          exdates: series.exdates.filter((exdate) => kept.has(exdate)),
           sequence,
         },
         now,
