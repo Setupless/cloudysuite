@@ -1,12 +1,9 @@
 import { type CalendarId, levelOfRole, type UserId } from "@cloudysuite/access";
-import { isWeekend } from "../schedule";
 import {
   addDays,
   dateOfWall,
-  daysBetween,
   instantOf,
   parseCivilDate,
-  startDateOf,
   type WallTime,
   wallOf,
   wallOfDate,
@@ -22,6 +19,7 @@ import {
   type EventTime,
   keyOfPerson,
   MAX_REPEAT_TIMES,
+  NEVER_HAPPENS_MESSAGE,
   type Occurrence,
   type PersonToInvite,
   type Repeat,
@@ -306,22 +304,20 @@ function repeatOf(
   }
 }
 
-export const WEEKEND_ONLY_MESSAGE =
-  "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.";
+const END_FIELDS: Record<RepeatEnd["kind"], FormField> = {
+  never: "repeatEnd",
+  onDate: "repeatUntil",
+  afterTimes: "repeatTimes",
+};
 
-// The only repeat the dialog offers that can have no dates. The days are the event's own,
-// as the repeat follows its zone, not the device's.
-export function weekendOnly({ time, repeat }: EventDraft): boolean {
-  if (repeat?.frequency !== "weekdays" || repeat.end.kind !== "onDate") {
-    return false;
-  }
-  const start = startDateOf(time);
-  return (
-    isWeekend(start) &&
-    isWeekend(repeat.end.date) &&
-    daysBetween(start, repeat.end.date) <= 1
-  );
-}
+// What a refused save points at. A repeat that would never happen is fixed where it
+// ends, which is on the form, not on the choice of which ones.
+export const failureOf = (message: string, form: EventForm) => ({
+  field: message.startsWith(NEVER_HAPPENS_MESSAGE)
+    ? END_FIELDS[form.repeatEnd]
+    : null,
+  message,
+});
 
 // `zone` is the device's, which the fields are on.
 export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {

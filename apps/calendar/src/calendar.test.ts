@@ -1525,6 +1525,20 @@ test("changing this and later ones so the new half's only date is one removed on
   );
 });
 
+test("every weekday counts the days where the event is, not on the device", async () => {
+  // 22:00 on Friday in London is 09:00 on Saturday in Sydney.
+  const at = (timeZone: TimeZone) =>
+    timed("2026-11-06T22:00:00Z", "2026-11-06T23:00:00Z", timeZone);
+  const alice = await kit.as(ALICE);
+  const repeat = weekdays(onDate("2026-11-07"));
+  expect(
+    await alice.create("Alice Stone", draft(at(LONDON), { repeat }), []),
+  ).toMatchObject({ status: "created" });
+  expect(
+    await alice.create("Alice Stone", draft(at(SYDNEY), { repeat }), []),
+  ).toEqual({ status: "neverHappens", firstDay: date("2026-11-09") });
+});
+
 test("removing this and later ones from the first date removes the event, and keeps its record", async () => {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),

@@ -53,7 +53,8 @@ import {
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
   type Member,
-  NEVER_HAPPENS_MESSAGE,
+  type NeverHappens,
+  neverHappensMessage,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
@@ -91,6 +92,22 @@ const me = () => requireCalendarUser(getRequest());
 
 // Small enough that no one call to the Calendar object holds a large file.
 const IMPORT_BATCH = 200;
+
+// Written on the server, which has no reader's language, so in the organisation's own
+// English. The day is where the event is, which is where the end of a repeat is read.
+const neverHappens = ({ firstDay }: NeverHappens) =>
+  refusal(
+    400,
+    neverHappensMessage(
+      new Intl.DateTimeFormat("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(`${firstDay}T00:00:00Z`)),
+    ),
+  );
 
 const FILE_REFUSALS = {
   tooLarge: () => refusal(413, IMPORT_TOO_LARGE_MESSAGE),
@@ -147,7 +164,7 @@ function answerChange(result: ChangeResult): void {
     case "peopleForOneDate":
       throw refusal(400, PEOPLE_FOR_ONE_DATE_MESSAGE);
     case "neverHappens":
-      throw refusal(400, NEVER_HAPPENS_MESSAGE);
+      throw neverHappens(result);
     case "outsideNotAllowed":
       throw refusal(403, OUTSIDE_REFUSED_MESSAGES[result.why]);
   }
@@ -354,7 +371,7 @@ export const createEvent = createServerFn({ method: "POST" })
       case "created":
         return { uid: result.uid, first: result.first };
       case "neverHappens":
-        throw refusal(400, NEVER_HAPPENS_MESSAGE);
+        throw neverHappens(result);
       case "noAccess":
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":

@@ -34,7 +34,6 @@ import {
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
-  NEVER_HAPPENS_MESSAGE,
   type OutsideInviting,
   REPEAT_FREQUENCIES,
   type TimeZone,
@@ -42,12 +41,11 @@ import {
 import { calendarFill } from "./colours";
 import {
   draftOf,
-  WEEKEND_ONLY_MESSAGE,
-  weekendOnly,
   type EventAction,
   type EventForm,
   type FormField,
   type FormStart,
+  failureOf,
   formOf,
   type Guest,
   guestKey,
@@ -397,11 +395,9 @@ export function EventDialog({
       await client.invalidateQueries({ queryKey: calendarKeys.all });
       onSaved(uid, firstDay);
     } catch (thrown) {
-      const { message } = thrown as Error;
-      // The end day to change is on the form, not on the choice of which ones.
-      const endTooSoon = message === NEVER_HAPPENS_MESSAGE;
-      if (endTooSoon) setAsking(null);
-      setFailure({ field: endTooSoon ? "repeatUntil" : null, message });
+      const failed = failureOf((thrown as Error).message, form);
+      if (failed.field) setAsking(null);
+      setFailure(failed);
       setPending(false);
     }
   }
@@ -411,10 +407,6 @@ export function EventDialog({
     const checked = draftOf(form, zone);
     if (!checked.ok) {
       setFailure({ field: checked.field, message: checked.message });
-      return;
-    }
-    if (!editing && weekendOnly(checked.draft)) {
-      setFailure({ field: "repeatUntil", message: WEEKEND_ONLY_MESSAGE });
       return;
     }
     const scopes = editing && scopesFor(editing, checked.draft);
