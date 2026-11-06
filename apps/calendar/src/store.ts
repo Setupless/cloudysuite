@@ -1118,9 +1118,22 @@ export class EventStore {
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
     const carried = after.map((attendee) => ({ ...attendee, revision: 0 }));
+    // The new series keeps the later dates removed or changed alone only while its dates
+    // fall where the old series' did.
+    const keepsDates =
+      sameTime(draft.time, timeOfDate(series, id)) &&
+      sameRepeat(draft.repeat, shownRepeat(series));
     this.db.transaction(() => {
+      const laterChanges = keepsDates
+        ? this.#rows<EventRow>(
+            "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
+            series.uid,
+            id,
+          ).map(parseRow)
+        : [];
       this.#endBefore(series, id, now);
       this.#queueFor(series.uid, before, before, actor, now);
+      for (const change of laterChanges) this.#write({ ...change, uid }, now);
       this.#write(
         {
           ...details,
@@ -1128,7 +1141,9 @@ export class EventStore {
           recurrenceId: null,
           time: draft.time,
           rule: repeat && ruleOf(repeat, draft.time),
-          exdates: [],
+          exdates: keepsDates
+            ? series.exdates.filter((exdate) => exdate > id)
+            : [],
           organiser: series.organiser,
           sequence: 0,
           cancelled: false,
