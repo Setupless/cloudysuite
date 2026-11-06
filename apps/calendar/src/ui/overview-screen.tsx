@@ -555,8 +555,12 @@ function LiveOverview() {
   const navigate = useNavigate();
   const toast = useToast();
 
-  const openNew = (back: HTMLElement | null) =>
-    setOpening({ start: nextHalfHour(Date.now(), zone), back });
+  // Nothing opens before the calendars load, or the dialog would appear later with no warning.
+  const openNew = (back: HTMLElement | null) => {
+    if (calendars.data) {
+      setOpening({ start: nextHalfHour(Date.now(), zone), back });
+    }
+  };
   const close = () => {
     const back = opening?.back;
     setOpening(null);

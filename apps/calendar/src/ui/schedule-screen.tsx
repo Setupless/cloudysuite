@@ -167,8 +167,10 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     setPicking(false);
     setDialog(opened);
   };
-  const openNew = (start: FormStart, back: HTMLElement | null) =>
-    openDialog({ kind: "new", start, back });
+  // Nothing opens before the calendars load, or the dialog would appear later with no warning.
+  const openNew = (start: FormStart, back: HTMLElement | null) => {
+    if (calendars.data) openDialog({ kind: "new", start, back });
+  };
   const closeDialog = () => {
     const back = dialog?.back;
     setDialog(null);
