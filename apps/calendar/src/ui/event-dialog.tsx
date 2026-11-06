@@ -27,6 +27,7 @@ import { call, calendarKeys, outsideInvitingQuery } from "../queries";
 import {
   type CalendarEntry,
   type ChangeScope,
+  type CivilDate,
   type EventDraft,
   type EventUid,
   MAX_LOCATION_LENGTH,
@@ -57,6 +58,7 @@ import {
 import { REPEAT_NAMES, whoCanSee } from "./event-text";
 import { useMe } from "./me";
 import { PeoplePicker } from "./people-picker";
+import { daySpanOf } from "./schedule-layout";
 import type { ShownEvent } from "./shown-event";
 
 const LABEL =
@@ -296,7 +298,7 @@ export function EventDialog({
   opening: Opening;
   calendars: CalendarEntry[];
   zone: TimeZone;
-  onSaved: (uid: EventUid) => void;
+  onSaved: (uid: EventUid, firstDay: CivilDate) => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
@@ -384,7 +386,7 @@ export function EventDialog({
         rememberUsed(me, calendarId);
       }
       await client.invalidateQueries({ queryKey: calendarKeys.all });
-      onSaved(uid);
+      onSaved(uid, daySpanOf(draft.time, zone).first);
     } catch (thrown) {
       setFailure({ field: null, message: (thrown as Error).message });
       setPending(false);

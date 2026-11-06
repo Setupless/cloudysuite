@@ -71,7 +71,9 @@ const eventWithUid = (uid: EventUid) =>
   );
 
 // After the page has drawn what changed, to the first of these still on it.
-function focusFirst(...candidates: (() => HTMLElement | null | undefined)[]) {
+export function focusFirst(
+  ...candidates: (() => HTMLElement | null | undefined)[]
+) {
   requestAnimationFrame(() => {
     for (const candidate of candidates) {
       const element = candidate();
@@ -94,7 +96,7 @@ function useNow(): number {
 }
 
 // A dialog over the page, such as New team calendar, keeps the keys to itself.
-const unlessDialog = (run: () => void) => () => {
+export const unlessDialog = (run: () => void) => () => {
   if (!document.querySelector(":modal")) run();
 };
 // So Esc can still close that dialog, and the arrows can still move between its choices.

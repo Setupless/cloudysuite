@@ -1,9 +1,10 @@
-import { Notice, useHydrated } from "@cloudysuite/ui";
+import { Button, Notice, useHydrated, useToast } from "@cloudysuite/ui";
 import {
   IconCalendar,
   IconCheck,
   IconClock,
   IconMapPin,
+  IconPlus,
   IconUsers,
 } from "@tabler/icons-react";
 import {
@@ -11,12 +12,15 @@ import {
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useHotkey } from "@tanstack/react-hotkeys";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { calendarsQuery, eventsQuery, invitationsQuery } from "../queries";
 import { keyOf, searchOf, todayIn } from "../schedule";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
+import { EventDialog } from "./event-dialog";
+import { type FormStart, nextHalfHour } from "./event-form";
 import { dayNumber, dayTitle, timeText, weekdayShort } from "./event-text";
 import { AnswerButtons } from "./invitation-parts";
 import { JoinButton } from "./join-button";
@@ -24,7 +28,7 @@ import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
-import { deviceZone } from "./schedule-screen";
+import { deviceZone, focusFirst, unlessDialog } from "./schedule-screen";
 import {
   type ShownEvent,
   shownEvents,
@@ -50,6 +54,9 @@ const SECTION =
 const ROW = `grid items-center gap-2.5 border-b border-line px-1 py-2.5 text-sm hover:bg-field ${FOCUS}`;
 const SPAN_COLUMNS = "grid-cols-[6.5rem_auto_minmax(0,1fr)]";
 const START_COLUMNS = "grid-cols-[4.5rem_auto_minmax(0,1fr)]";
+
+// `back` is where focus goes once the dialog closes.
+type NewEvent = { start: FormStart; back: HTMLElement | null };
 
 // Ticks on the minute, so "in 25 minutes" and the finished events change together and
 // the page draws once a minute.
@@ -538,6 +545,48 @@ function LiveOverview() {
   );
   const failure = calendars.error ?? listing.error;
   const ready = listing.data && calendars.data;
+  const [opening, setOpening] = useState<NewEvent | null>(null);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const navigate = useNavigate();
+  const toast = useToast();
+
+  const openNew = (back: HTMLElement | null) =>
+    setOpening({ start: nextHalfHour(Date.now(), zone), back });
+  const close = () => {
+    const back = opening?.back;
+    setOpening(null);
+    focusFirst(
+      () => back,
+      () => newButton.current,
+    );
+  };
+  // An event days away doesn't show here, so the person is told where it went.
+  const afterSave = (firstDay: CivilDate) => {
+    close();
+    toast({
+      message: `Event added for ${dayTitle(firstDay, today)}.`,
+      action: {
+        label: "Show in Schedule",
+        run: () =>
+          void navigate({
+            to: "/calendar/schedule",
+            search: searchOf("day", firstDay),
+          }),
+      },
+    });
+  };
+
+  useHotkey(
+    "N",
+    unlessDialog(() =>
+      openNew(
+        document.activeElement instanceof HTMLElement &&
+          document.activeElement !== document.body
+          ? document.activeElement
+          : null,
+      ),
+    ),
+  );
 
   return (
     <>
@@ -546,6 +595,18 @@ function LiveOverview() {
         {plan.allDay.map((event) => (
           <AllDayChip key={event.key} event={event} zone={zone} today={today} />
         ))}
+        <div className="ml-auto">
+          <Button
+            ref={newButton}
+            variant="toolbarAction"
+            icon={IconPlus}
+            aria-keyshortcuts="N"
+            disabled={!calendars.data}
+            onClick={(click) => openNew(click.currentTarget)}
+          >
+            New event
+          </Button>
+        </div>
       </Heading>
       <div
         className="flex flex-col gap-5 px-4 pb-6"
@@ -575,6 +636,15 @@ function LiveOverview() {
         {/* It loads on its own, so invitations still show when the events can't. */}
         {(ready || failure) && <Invitations zone={zone} today={today} />}
       </div>
+      {opening && calendars.data && (
+        <EventDialog
+          opening={{ kind: "new", start: opening.start }}
+          calendars={calendars.data}
+          zone={zone}
+          onSaved={(_uid, firstDay) => afterSave(firstDay)}
+          onClose={close}
+        />
+      )}
     </>
   );
 }
