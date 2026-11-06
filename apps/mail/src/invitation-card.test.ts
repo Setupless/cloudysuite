@@ -14,6 +14,8 @@ import {
 } from "@cloudysuite/access";
 import * as start from "@tanstack/react-start";
 import * as startServer from "@tanstack/react-start/server";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
 import {
   createKit,
@@ -55,6 +57,7 @@ import type {
   PersonToInvite,
   TimeZone,
 } from "../../calendar/src/types";
+import { MailInvitationCard } from "../../calendar/src/ui/mail-card";
 import { ingest, receiveInbound } from "./ingest";
 import { createTestEnv } from "./test-support";
 import type { MessageId } from "./types";
@@ -499,6 +502,38 @@ test("an update shows what the calendar holds, and says when the sender couldn't
   expect(await readCard(first)).toMatchObject({
     standing: { kind: "held", version: "later" },
   });
+});
+
+// The words on the card as Mail's reading pane shows them.
+async function cardText(messageId: MessageId) {
+  const card = await readCard(messageId);
+  if (!card) throw new Error("no card");
+  const markup = renderToStaticMarkup(
+    createElement(MailInvitationCard, {
+      card,
+      actions: {
+        answer: async () => {},
+        add: async () => {},
+        remove: async () => {},
+      },
+    }),
+  );
+  return markup.replace(/<[^>]+>/g, " ").replaceAll("&#x27;", "'");
+}
+
+test("an email that changes one date says when the sender couldn't be confirmed", async () => {
+  await arrive(google());
+  const oneDate = { recurrenceId: "20261110T100000", sequence: 0 };
+
+  const forged = await arrive(
+    google({ ...oneDate, title: "Pay invoice at evil" }, { from: MALLORY }),
+  );
+  expect(await cardText(forged)).toContain(
+    "the sender couldn't be confirmed, so your calendar keeps it as it was",
+  );
+
+  const real = await arrive(google({ ...oneDate, title: "Moved review" }));
+  expect(await cardText(real)).not.toContain("couldn't be confirmed");
 });
 
 test("a cancellation shows as cancelled, with Remove from my calendar while it's held", async () => {

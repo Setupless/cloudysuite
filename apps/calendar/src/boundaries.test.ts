@@ -134,6 +134,18 @@ test("only Mail's invitation card reaches Calendar's entry for it", () => {
   }
 });
 
+test("Mail's card UI takes only types from the card's server entry", () => {
+  const source = readFileSync(
+    join(import.meta.dir, "ui/mail-card.tsx"),
+    "utf8",
+  );
+  const imports = [
+    ...source.matchAll(/^import\b[^;]*?from "\.\.\/mail-card";/gm),
+  ].map(([statement]) => statement.startsWith("import type "));
+  expect(imports.length).toBeGreaterThan(0);
+  expect(imports.every(Boolean)).toBe(true);
+});
+
 test("only the Calendar object makes an event store", () => {
   expect(usersOf(/\bnew EventStore\b/)).toEqual([
     "apps/calendar/src/calendar.ts",
