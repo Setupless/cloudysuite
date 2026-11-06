@@ -11,6 +11,7 @@ import { colleaguesAt, personOfMailbox } from "./email/senders";
 import type {
   OutsideInvitation,
   OutsidePart,
+  OutsidePerson,
   OutsideReply,
 } from "./invitations";
 import {
@@ -66,14 +67,14 @@ const ANSWERS: Record<InvitedPerson["answer"], Answer> = {
   needsAction: "needsAnswer",
 };
 
-type Taken<Method extends CalendarMethod> = {
+export type Taken<Method extends CalendarMethod> = {
   method: Method;
   group: EventGroup;
 };
 
 // Google sends the same file twice, as the invitation and as invite.ics, so the parts
 // are read together and each event counts once for each method.
-function eventsOf(parts: string[]): Taken<CalendarMethod>[] {
+export function eventsOf(parts: string[]): Taken<CalendarMethod>[] {
   const byMethod = new Map<CalendarMethod, OutsideEvent[]>();
   for (const text of new Set(parts)) {
     const reading = readCalendarFile(text, UTC, LIMITS);
@@ -90,8 +91,9 @@ function eventsOf(parts: string[]): Taken<CalendarMethod>[] {
     .slice(0, MAX_EVENTS_PER_EMAIL);
 }
 
-const isReply = (taken: Taken<CalendarMethod>): taken is Taken<"reply"> =>
-  taken.method === "reply";
+export const isReply = (
+  taken: Taken<CalendarMethod>,
+): taken is Taken<"reply"> => taken.method === "reply";
 
 // The one way Mail reaches Calendar, from Mail's alarm. Mail stored the message before
 // this runs, so nothing here can lose or hold up mail. A throw asks Mail to try again
@@ -117,7 +119,7 @@ export async function receiveCalendarMail(
   }
 }
 
-const partOf = (event: OutsideEvent): OutsidePart => ({
+export const partOf = (event: OutsideEvent): OutsidePart => ({
   recurrenceId: event.recurrenceId,
   title: event.title,
   location: event.location,
@@ -130,12 +132,12 @@ const partOf = (event: OutsideEvent): OutsidePart => ({
   cancelled: event.cancelled,
 });
 
-type Person = { id: UserId; name: string };
+export type Person = { id: UserId; name: string };
 
 // The person whose calendar it is shows as themselves, by their own name, so their
 // answer is on the list and the sender can't choose what it's sent under. Google lists
 // the organiser as a guest too, and People already names them.
-function peopleOf(
+export function peopleOf(
   invited: InvitedPerson[],
   organiser: EmailAddress,
   colleagues: Map<EmailAddress, UserId>,
@@ -201,22 +203,39 @@ async function takeInvitations(
     : await findPersonalCalendar(env.DB, person.id);
   if (!calendarId) return;
   const receiver = mailReceiver(env, calendarId);
-  for (const { method, group, event, organiser } of outside) {
-    const invitation: OutsideInvitation = {
-      method,
-      to: person.id,
-      uid: group.uid,
-      organiser,
-      series: group.series && partOf(group.series),
-      changes: group.changes.map(partOf),
-      people: peopleOf(event.attendees, organiser.email, colleagues, person),
-      fromOrganiser: sender.proved && sender.from === organiser.email,
-    };
-    await receiver.invitation(invitation);
+  for (const { method, group, organiser } of outside) {
+    await receiver.invitation(
+      invitationFor({ method, group }, organiser, person, colleagues, sender),
+    );
   }
 }
 
-const GIVEN: Partial<Record<InvitedPerson["answer"], GivenAnswer>> = {
+export function invitationFor(
+  { method, group }: Taken<"request" | "cancel">,
+  organiser: OutsidePerson,
+  person: Person,
+  colleagues: Map<EmailAddress, UserId>,
+  sender: { from: EmailAddress | null; proved: boolean },
+): OutsideInvitation {
+  const event = group.series ?? group.changes[0];
+  return {
+    method,
+    to: person.id,
+    uid: group.uid,
+    organiser,
+    series: group.series && partOf(group.series),
+    changes: group.changes.map(partOf),
+    people: peopleOf(
+      event?.attendees ?? [],
+      organiser.email,
+      colleagues,
+      person,
+    ),
+    fromOrganiser: sender.proved && sender.from === organiser.email,
+  };
+}
+
+export const GIVEN: Partial<Record<InvitedPerson["answer"], GivenAnswer>> = {
   accepted: "yes",
   tentative: "maybe",
   declined: "no",

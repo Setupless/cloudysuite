@@ -11,9 +11,14 @@ import { findEvents } from "./event-search";
 import { listInvitations } from "./invitation-list";
 import {
   type AnswerNotice,
+  type CopyLookup,
+  type CopyStanding,
   copyUidOf,
   type Delivery,
   type DeliveryResult,
+  type HeldAnswer,
+  type MailAdd,
+  type MailAddResult,
   type OutsideInvitation,
   type OutsideReply,
   type OutsideResult,
@@ -32,6 +37,7 @@ import type {
   ChangeScope,
   CreateResult,
   DayRange,
+  EmailAddress,
   EraseResult,
   EventDraft,
   EventSearchResult,
@@ -199,6 +205,29 @@ export class Calendar extends DurableObject<Env> {
   // Everyone on the calendar sees who organised its events.
   organiserOf(_actor: Actor, uid: EventUid): UserId | null {
     return this.#store.organiserOf(uid);
+  }
+
+  // The card in Mail reads and adds through these, for the person's own calendar.
+  copyStanding(actor: Actor, lookup: CopyLookup): CopyStanding {
+    return this.#store.copyStanding(actor, lookup);
+  }
+
+  async addFromCard(actor: Actor, add: MailAdd): Promise<MailAddResult> {
+    const uid = await copyUidOf(
+      add.kind === "outside"
+        ? add.invitation.organiser.email
+        : add.delivery.from,
+      add.kind === "outside" ? add.invitation.uid : add.delivery.uid,
+    );
+    return this.#store.addFromCard(actor, add, uid, Date.now());
+  }
+
+  outsideAnswer(
+    _actor: Actor,
+    uid: EventUid,
+    email: EmailAddress,
+  ): HeldAnswer | null {
+    return this.#store.outsideAnswer(uid, email);
   }
 
   async erase(actor: Actor): Promise<EraseResult> {

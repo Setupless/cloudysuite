@@ -9,6 +9,8 @@ import type { OutsideEvent } from "./outside/ics";
 import {
   type AnswerNotice,
   type CancelledDate,
+  type CopyLookup,
+  type CopyStanding,
   type DeliveredPart,
   type Delivery,
   type DeliveryResult,
@@ -16,6 +18,9 @@ import {
   type EmailPlan,
   type EmailPlanOrganiser,
   type Gone,
+  type HeldAnswer,
+  type MailAdd,
+  type MailAddResult,
   type OutsideInvitation,
   type OutsidePart,
   type OutsideReply,
@@ -638,6 +643,17 @@ const deliveredPartOf = (event: StoredEvent): DeliveredPart => ({
   sequence: event.sequence,
   conference: event.conference,
 });
+
+const outsideOrganiserOf = (invitation: OutsideInvitation): Organiser => ({
+  kind: "outside",
+  ...invitation.organiser,
+  uid: invitation.uid,
+  fromOrganiser: invitation.fromOrganiser,
+});
+
+// A colleague's copy, found by the calendar it came from and the event's UID there.
+const COLLEAGUE_COPY = `json_extract(organiser, '$.kind') = 'colleague'
+  AND json_extract(organiser, '$.userId') = ? AND json_extract(organiser, '$.uid') = ?`;
 
 const parseOrganiser = (raw: string | null) =>
   raw === null ? null : (JSON.parse(raw) as Organiser);
@@ -1389,6 +1405,15 @@ export class EventStore {
     if (this.#rows("SELECT 1 FROM removed_events WHERE uid = ?", uid).length) {
       return "unchanged";
     }
+    return this.db.transaction(() => this.#takeDelivery(delivery, uid, now));
+  }
+
+  // In the caller's transaction.
+  #takeDelivery(
+    delivery: Delivery,
+    uid: EventUid,
+    now: number,
+  ): DeliveryResult {
     const held = this.#series(uid);
     if (
       held &&
@@ -1429,49 +1454,44 @@ export class EventStore {
       organiser,
       cancelled: false,
     });
-    let changed = false;
-    this.db.transaction(() => {
-      changed = this.#takeParts(
-        held,
-        copyOf,
-        seriesPart,
-        delivery.parts.filter((part) => part !== seriesPart),
-        now,
+    let changed = this.#takeParts(
+      held,
+      copyOf,
+      seriesPart,
+      delivery.parts.filter((part) => part !== seriesPart),
+      now,
+    );
+    const heldPeople = this.#people(uid);
+    if (!heldPeople || delivery.peopleRevision > heldPeople.revision) {
+      changed = true;
+      const given = heldPeople?.reply;
+      const [onItsWay] = this.#rows(
+        "SELECT 1 FROM answer_notices WHERE calendar_id = ? AND uid = ?",
+        delivery.from,
+        delivery.uid,
       );
-      const heldPeople = this.#people(uid);
-      if (!heldPeople || delivery.peopleRevision > heldPeople.revision) {
-        changed = true;
-        const given = heldPeople?.reply;
-        const [onItsWay] = this.#rows(
-          "SELECT 1 FROM answer_notices WHERE calendar_id = ? AND uid = ?",
-          delivery.from,
-          delivery.uid,
-        );
-        const isReplier = (person: Attendee, replier: UserId) =>
-          person.kind === "colleague" && person.userId === replier;
-        const theirs = delivery.people.find((person) =>
-          isReplier(person, delivery.to),
-        );
-        // The organiser's record of this person's answer, unless the one given here hasn't
-        // reached the organiser yet. So someone taken off and put back is asked again.
-        const reply: Reply = {
-          ...(given ?? { for: delivery.to, revision: 0 }),
-          answer:
-            given && onItsWay
-              ? given.answer
-              : (theirs?.answer ?? "needsAnswer"),
-        };
-        this.#writePeople(uid, {
-          attendees: delivery.people.map((person) => ({
-            ...person,
-            answer: isReplier(person, reply.for) ? reply.answer : person.answer,
-            revision: 0,
-          })),
-          revision: delivery.peopleRevision,
-          reply,
-        });
-      }
-    });
+      const isReplier = (person: Attendee, replier: UserId) =>
+        person.kind === "colleague" && person.userId === replier;
+      const theirs = delivery.people.find((person) =>
+        isReplier(person, delivery.to),
+      );
+      // The organiser's record of this person's answer, unless the one given here hasn't
+      // reached the organiser yet. So someone taken off and put back is asked again.
+      const reply: Reply = {
+        ...(given ?? { for: delivery.to, revision: 0 }),
+        answer:
+          given && onItsWay ? given.answer : (theirs?.answer ?? "needsAnswer"),
+      };
+      this.#writePeople(uid, {
+        attendees: delivery.people.map((person) => ({
+          ...person,
+          answer: isReplier(person, reply.for) ? reply.answer : person.answer,
+          revision: 0,
+        })),
+        revision: delivery.peopleRevision,
+        reply,
+      });
+    }
     return changed ? "received" : "unchanged";
   }
 
@@ -1643,12 +1663,7 @@ export class EventStore {
     ) {
       return "refused";
     }
-    const organiser: Organiser = {
-      kind: "outside",
-      ...invitation.organiser,
-      uid: invitation.uid,
-      fromOrganiser: invitation.fromOrganiser,
-    };
+    const organiser = outsideOrganiserOf(invitation);
     const copyOf = (part: OutsidePart): StoredEvent => ({
       ...part,
       uid,
@@ -1852,6 +1867,136 @@ export class EventStore {
       this.#queue(reply.uid, idsOf(attendees), calendarId, now);
     });
     return true;
+  }
+
+  // What the card in Mail shows for an invitation: the copy held here, or that the person
+  // removed it. Anyone on the calendar sees its events.
+  copyStanding(actor: Actor, lookup: CopyLookup): CopyStanding {
+    const [row] =
+      lookup.kind === "outside"
+        ? this.#rows<EventRow>(
+            "SELECT * FROM events WHERE uid = ? AND recurrence_id IS NULL",
+            lookup.uid,
+          )
+        : this.#rows<EventRow>(
+            `SELECT * FROM events WHERE recurrence_id IS NULL AND ${COLLEAGUE_COPY}
+             LIMIT 1`,
+            lookup.organiser,
+            lookup.uid,
+          );
+    if (row) {
+      const series = parseRow(row);
+      const parts = this.#rows<EventRow>(
+        "SELECT * FROM events WHERE uid = ?",
+        series.uid,
+      ).map(parseRow);
+      const reply = this.#people(series.uid)?.reply;
+      return {
+        kind: "held",
+        copy: {
+          uid: series.uid,
+          title: series.title,
+          location: series.location,
+          notes: series.notes,
+          time: series.time,
+          rule: series.rule,
+          conference: series.conference,
+          organiser: series.organiser,
+          sequence: Math.max(...parts.map((part) => part.sequence)),
+          cancelled: series.cancelled,
+          calledOff: [
+            ...series.exdates,
+            ...parts.flatMap((part) =>
+              part.recurrenceId !== null && part.cancelled
+                ? [part.recurrenceId]
+                : [],
+            ),
+          ],
+          answer: reply?.for === actor.userId ? reply.answer : null,
+        },
+      };
+    }
+    const [removed] =
+      lookup.kind === "outside"
+        ? this.#rows<{ organiser: string | null }>(
+            "SELECT organiser FROM removed_events WHERE uid = ?",
+            lookup.uid,
+          )
+        : this.#rows<{ organiser: string | null }>(
+            `SELECT organiser FROM removed_events WHERE ${COLLEAGUE_COPY} LIMIT 1`,
+            lookup.organiser,
+            lookup.uid,
+          );
+    return removed
+      ? { kind: "removed", organiser: parseOrganiser(removed.organiser) }
+      : { kind: "none" };
+  }
+
+  // "Add to my calendar" on the card in Mail. It's the person's own choice, so it
+  // overrides a removal, and it adds the version in that email, unanswered. From then on
+  // the usual rule for UID and sequence applies, so adding it again changes nothing.
+  // `uid` is the copy's own here, from copyUidOf.
+  addFromCard(
+    actor: Actor,
+    add: MailAdd,
+    uid: EventUid,
+    now: number,
+  ): MailAddResult {
+    if (!canEdit(actor)) return "noAccess";
+    if (this.#series(uid)) return "held";
+    if (add.kind === "outside") {
+      const { invitation } = add;
+      const { series } = invitation;
+      if (invitation.method !== "request" || !series || series.cancelled) {
+        return "nothing";
+      }
+      const organiser = outsideOrganiserOf(invitation);
+      this.db.transaction(() => {
+        this.db.exec("DELETE FROM removed_events WHERE uid = ?", uid);
+        this.#takeParts(
+          null,
+          (part: OutsidePart): StoredEvent => ({ ...part, uid, organiser }),
+          series,
+          invitation.changes,
+          now,
+        );
+        this.#takePeople(invitation, uid, undefined);
+      });
+      return "added";
+    }
+    if (!add.delivery.parts.some((part) => part.recurrenceId === null)) {
+      return "nothing";
+    }
+    this.db.transaction(() => {
+      this.db.exec("DELETE FROM removed_events WHERE uid = ?", uid);
+      this.#takeDelivery(add.delivery, uid, now);
+      // The organiser's calendar keeps the count of the last answer it heard from this
+      // copy, and the copy's own count went with the removal, so it counts from the clock.
+      const people = this.#people(uid);
+      if (people?.reply) {
+        this.#writePeople(uid, {
+          ...people,
+          reply: { ...people.reply, revision: now },
+        });
+      }
+    });
+    return "added";
+  }
+
+  outsideAnswer(uid: EventUid, email: EmailAddress): HeldAnswer | null {
+    const series = this.#series(uid);
+    const people = this.#people(uid);
+    if (series?.organiser.kind !== "madeHere" || people?.reply) return null;
+    const attendee = people?.attendees.find(
+      (person) => person.kind === "outside" && person.email === email,
+    );
+    if (!attendee) return null;
+    const { title, location, notes, time, rule } = series;
+    return {
+      name: attendee.name,
+      answer: attendee.answer,
+      event: { title, location, notes, time, rule },
+    };
   }
 
   dueDeliveries(now: number, limit: number): QueuedDelivery[] {

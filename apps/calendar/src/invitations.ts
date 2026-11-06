@@ -8,6 +8,7 @@ import type {
   EventUid,
   GivenAnswer,
   OccurrenceId,
+  Organiser,
   PersonKey,
 } from "./types";
 
@@ -56,6 +57,52 @@ export type OutsideReply = {
 };
 
 export type OutsideResult = "added" | "updated" | "unchanged" | "refused";
+
+// How the card in Mail finds a copy from what an email says. A copy from outside goes by
+// its own UID here, from copyUidOf with the organiser's address. A colleague's email
+// carries the event's UID in their calendar, which their copy names.
+export type CopyLookup =
+  | { kind: "outside"; uid: EventUid }
+  | { kind: "colleague"; organiser: UserId; uid: EventUid };
+
+// A copy as the card in Mail shows it, from the series held here.
+export type HeldCopy = EventDetails & {
+  // The copy's own UID here.
+  uid: EventUid;
+  time: EventTime;
+  rule: string | null;
+  conference: string | null;
+  organiser: Organiser;
+  // The highest the series or any of its changed dates holds.
+  sequence: number;
+  cancelled: boolean;
+  // Dates the organiser called off.
+  calledOff: OccurrenceId[];
+  // This person's answer, on a copy sent to them.
+  answer: Answer | null;
+};
+
+export type CopyStanding =
+  | { kind: "held"; copy: HeldCopy }
+  // The person removed it. Null for a removal kept before its organiser was.
+  | { kind: "removed"; organiser: Organiser | null }
+  | { kind: "none" };
+
+// "Add to my calendar" on the card in Mail, with the version in that email. A colleague's
+// copy can only come back once removed, from the calendar its removal names.
+export type MailAdd =
+  | { kind: "outside"; invitation: OutsideInvitation }
+  | { kind: "colleague"; delivery: Extract<Delivery, { kind: "event" }> };
+
+// Held: it was already here. Nothing: the email has no event to add.
+export type MailAddResult = "added" | "held" | "nothing" | "noAccess";
+
+// Someone outside's answer, and the event organised here that holds it.
+export type HeldAnswer = {
+  name: string;
+  answer: Answer;
+  event: EventDetails & { time: EventTime; rule: string | null };
+};
 
 // What one Calendar object hands another person's calendar. It's read from the event as
 // it is when it goes, so a retry carries the latest version, never an older one.
