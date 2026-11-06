@@ -503,9 +503,10 @@ export function EventDialog({
           {...invalid("title")}
         />
         <div
-          className={`grid gap-2 ${sameDayTimed ? "grid-cols-[1.4fr_1fr_1fr] max-sm:grid-cols-2" : "grid-cols-[1.4fr_1fr]"}`}
+          className={`grid gap-2 max-sm:grid-cols-2 ${sameDayTimed ? "grid-cols-[1.4fr_1fr_1fr]" : "grid-cols-[1.4fr_1fr]"}`}
         >
-          {/* On a phone three fields side by side cut off the times, so the day gets its own row. */}
+          {/* On a phone the fields split evenly, or their times and dates get cut off, and
+              the day gets its own row rather than sharing it three ways. */}
           <label
             className={`${LABEL} ${sameDayTimed ? "max-sm:col-span-2" : ""}`}
           >

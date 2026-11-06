@@ -167,7 +167,8 @@ export function TitlePicker({
   onChoose,
 }: {
   title: string;
-  // Shown where the toolbar is narrow, so the title rarely has to be cut short.
+  // Shown until the toolbar has room for the longest full title, such as a week
+  // that crosses into a new year.
   shortTitle: string;
   className: string;
   place: SchedulePlace;
@@ -199,8 +200,8 @@ export function TitlePicker({
           className={`flex h-[34px] max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-2 text-[18px] font-semibold hover:bg-field @lg:text-[21px] ${open ? "bg-field" : ""} ${FOCUS}`}
           onClick={onToggle}
         >
-          <span className="truncate @lg:hidden">{shortTitle}</span>
-          <span className="hidden truncate @lg:block">{title}</span>
+          <span className="truncate @5xl:hidden">{shortTitle}</span>
+          <span className="hidden truncate @5xl:block">{title}</span>
           <IconChevronDown
             size={16}
             stroke={1.75}
