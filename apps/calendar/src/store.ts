@@ -749,7 +749,8 @@ function carryOwnDates(
     if (!date) continue;
     const row = plain(date);
     takeChanged(row, change, old);
-    if (!sameTime(change.time, timeOfDate(old, id))) row.time = change.time;
+    const slot = timeOfDate(old, id);
+    row.time = shifted(date.time, slot, slot, change.time);
     if (!isPlain(row, date)) changes.set(date.id, row);
   }
   const date = opened && landing(opened.id);
@@ -769,14 +770,15 @@ const wallStart = (time: EventTime) =>
 
 // The time moved by whole days onto the day, when it starts before it.
 function lastDateBefore(
-  rule: string,
-  time: EventTime,
+  series: StoredEvent & { rule: string },
   id: OccurrenceId,
 ): EventTime | null {
   let last: EventTime | null = null;
-  for (const date of datesOf(rule, time, { steps: STEPS_PER_CALL })) {
+  for (const date of datesOf(series.rule, series.time, {
+    steps: STEPS_PER_CALL,
+  })) {
     if (date.id >= id) break;
-    last = date.time;
+    if (!series.exdates.includes(date.id)) last = date.time;
   }
   return last;
 }
@@ -1321,7 +1323,7 @@ export class EventStore {
 
     // A new half starting on or before the old half's last date would show those days
     // twice, so it then stays on the days it splits from.
-    const lastBefore = lastDateBefore(series.rule, series.time, id);
+    const lastBefore = lastDateBefore({ ...series, rule: series.rule }, id);
     const time =
       draft.repeat !== null &&
       lastBefore !== null &&

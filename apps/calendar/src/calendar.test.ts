@@ -992,6 +992,72 @@ test("moving this and later ones of a daily series to before the day it splits f
   );
 });
 
+test("moving this and later ones into the day of a removed date just before it keeps every later date", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
+    { repeat: daily({ kind: "afterTimes", times: 8 }) },
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.remove(
+      { uid, occurrenceId: "20261103T220000Z" as OccurrenceId },
+      "this",
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261104T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-04T09:00:00+11:00", "2026-11-04T10:00:00+11:00"), {
+        repeat: daily({ kind: "afterTimes", times: 8 }),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2026-12-01")).occurrences)).toEqual(
+    novemberAt("09:00", [2, 3, 4, 5, 6, 7, 8]),
+  );
+});
+
+test("moving all of them an hour later moves the dates changed on their own too, keeping what each changed", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T10:00:00+11:00"),
+    { repeat: weekly({ kind: "afterTimes", times: 5 }) },
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261122T220000Z" as OccurrenceId },
+      "this",
+      draft(timed("2026-11-25T09:00:00+11:00", "2026-11-25T10:00:00+11:00")),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261129T220000Z" as OccurrenceId },
+      "this",
+      draft(timed("2026-11-30T09:00:00+11:00", "2026-11-30T11:00:00+11:00")),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261101T220000Z" as OccurrenceId },
+      "all",
+      draft(timed("2026-11-02T10:00:00+11:00", "2026-11-02T11:00:00+11:00"), {
+        repeat: weekly({ kind: "afterTimes", times: 5 }),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  const { occurrences } = await listed("2026-11-01", "2026-12-01");
+  expect(shown(occurrences)).toEqual(novemberAt("10:00", [2, 9, 16, 25, 30]));
+  const last = occurrences.at(-1)?.time;
+  expect(last?.kind === "timed" && last.end - last.start).toBe(7_200_000);
+});
+
 test("moving all of them past midnight keeps a removed date and a renamed date with the sessions they were", async () => {
   const uid = await created(
     timed("2026-11-02T23:30:00+11:00", "2026-11-02T23:45:00+11:00"),
