@@ -401,6 +401,51 @@ test("changing only this one moves one date and leaves the rest", async () => {
   expect(occurrences[1]?.occurrenceId).toBe(second);
 });
 
+test("renaming this and later ones keeps the later dates that were removed or moved", async () => {
+  const uid = await created(
+    timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+    { repeat: weekly({ kind: "afterTimes", times: 6 }) },
+  );
+  const alice = await kit.as(ALICE);
+  expect(
+    await alice.remove(
+      { uid, occurrenceId: "20261122T220000Z" as OccurrenceId },
+      "this",
+    ),
+  ).toEqual({ status: "done" });
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261129T220000Z" as OccurrenceId },
+      "this",
+      draft(timed("2026-11-30T14:00:00+11:00", "2026-11-30T14:15:00+11:00"), {
+        title: "Moved standup",
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+
+  expect(
+    await alice.update(
+      { uid, occurrenceId: "20261115T220000Z" as OccurrenceId },
+      "thisAndLater",
+      draft(timed("2026-11-16T09:00:00+11:00", "2026-11-16T09:15:00+11:00"), {
+        title: "Renamed standup",
+        repeat: weekly({ kind: "afterTimes", times: 6 }),
+      }),
+      [],
+    ),
+  ).toEqual({ status: "done" });
+  expect(shown((await listed("2026-11-01", "2027-01-01")).occurrences)).toEqual(
+    [
+      ["Team standup", "2026-11-02 09:00"],
+      ["Team standup", "2026-11-09 09:00"],
+      ["Renamed standup", "2026-11-16 09:00"],
+      ["Moved standup", "2026-11-30 14:00"],
+      ["Renamed standup", "2026-12-07 09:00"],
+    ],
+  );
+});
+
 test("this and later ones splits the series, and each half then changes alone", async () => {
   const uid = await created(
     timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
