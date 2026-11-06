@@ -28,6 +28,7 @@ export const REPEAT_FREQUENCIES = [
   "daily",
   "weekdays",
   "weekly",
+  "fortnightly",
   "monthly",
   "yearly",
 ] as const;
