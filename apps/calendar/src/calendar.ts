@@ -44,6 +44,7 @@ import type {
   RangeListing,
   RetryResult,
   TimeZone,
+  UnsentCancellation,
 } from "./types";
 
 const DELIVERIES_PER_WAKE_UP = 25;
@@ -186,6 +187,11 @@ export class Calendar extends DurableObject<Env> {
   }
 
   // Anyone on the calendar sees its events, so anyone on it may know how many there are.
+  // Everyone on the calendar sees the People of its events, so these too.
+  unsentCancellations(_actor: Actor): UnsentCancellation[] {
+    return this.#store.unsentCancellations();
+  }
+
   countEvents(_actor: Actor): number {
     return this.#store.countEvents();
   }

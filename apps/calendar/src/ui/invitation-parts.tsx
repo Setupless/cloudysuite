@@ -1,3 +1,4 @@
+import type { CalendarId } from "@cloudysuite/access";
 import { Button, Notice } from "@cloudysuite/ui";
 import type { Icon } from "@tabler/icons-react";
 import {
@@ -15,10 +16,11 @@ import { answerInvitation, retryInvitationEmail } from "../functions";
 import { call, calendarKeys, outsideInvitingQuery } from "../queries";
 import {
   type Answer,
+  type EventUid,
   GIVEN_ANSWERS,
   type GivenAnswer,
   keyOfPerson,
-  type NotSent,
+  type UnsentTo,
 } from "../types";
 import { useMe } from "./me";
 import {
@@ -142,18 +144,21 @@ function PersonLine({
   );
 }
 
-type Person = ShownEvent["people"][number];
-
 // An invitation email that didn't go, or may not have. Try again is offered to anyone
 // who can change the event, and the server checks that too.
-function NotSentLine({
-  event,
-  person,
-  notSent,
+export function NotSentLine({
+  calendarId,
+  uid,
+  to,
+  about,
+  canRetry,
 }: {
-  event: ShownEvent;
-  person: Person;
-  notSent: NotSent;
+  calendarId: CalendarId;
+  uid: EventUid;
+  to: UnsentTo;
+  // The event, where the line isn't on the event itself.
+  about?: string;
+  canRetry: boolean;
 }) {
   const client = useQueryClient();
   const [trying, setTrying] = useState(false);
@@ -165,11 +170,7 @@ function NotSentLine({
     try {
       await call(() =>
         retryInvitationEmail({
-          data: {
-            calendarId: event.calendarId,
-            uid: event.uid,
-            recipient: keyOfPerson(person),
-          },
+          data: { calendarId, uid, recipient: to.key },
         }),
       );
       await client.invalidateQueries({ queryKey: calendarKeys.all });
@@ -190,13 +191,12 @@ function NotSentLine({
           className="flex-none"
         />
         <span dir="auto" className="min-w-0 truncate">
-          Not sent to {person.name}
+          Not sent to {to.name}
         </span>
       </span>
-      <span className="text-secondary">
-        {notSentText(notSent, person.name)}
-      </span>
-      {event.changeable && (
+      {about && <span dir="auto">{about}</span>}
+      <span className="text-secondary">{notSentText(to.notSent, to.name)}</span>
+      {canRetry && (
         <span>
           <Button
             variant="toolbar"
@@ -218,7 +218,7 @@ function NotSentLine({
 export function PeopleList({ event }: { event: ShownEvent }) {
   const me = useMe();
   const headingId = useId();
-  if (event.people.length === 0) return null;
+  if (event.people.length === 0 && event.takenOff.length === 0) return null;
   const { organiser } = event;
   const organiserName =
     organiser.kind === "outside"
@@ -254,13 +254,36 @@ export function PeopleList({ event }: { event: ShownEvent }) {
             person.notSent && (
               <NotSentLine
                 key={`not-sent-${keyOfPerson(person)}`}
-                event={event}
-                person={person}
-                notSent={person.notSent}
+                calendarId={event.calendarId}
+                uid={event.uid}
+                to={{
+                  key: keyOfPerson(person),
+                  name: person.name,
+                  notSent: person.notSent,
+                }}
+                canRetry={event.changeable}
               />
             ),
         )}
       </ul>
+      {event.takenOff.length > 0 && (
+        <>
+          <h4 className="text-xs font-semibold text-secondary">
+            Taken off the list
+          </h4>
+          <ul className="flex flex-col gap-1.5 text-[13px]">
+            {event.takenOff.map((to) => (
+              <NotSentLine
+                key={to.key}
+                calendarId={event.calendarId}
+                uid={event.uid}
+                to={to}
+                canRetry={event.changeable}
+              />
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

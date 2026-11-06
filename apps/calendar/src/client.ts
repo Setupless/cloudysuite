@@ -34,6 +34,7 @@ import type {
   PersonKey,
   RangeListing,
   RetryResult,
+  UnsentCancellation,
   TimeZone,
 } from "./types";
 
@@ -62,6 +63,7 @@ export type CalendarClient = {
   ): Promise<ImportResult>;
   answer(uid: EventUid, answer: Answer): Promise<AnswerResult>;
   retryEmail(uid: EventUid, recipient: PersonKey): Promise<RetryResult>;
+  unsentCancellations(): Promise<UnsentCancellation[]>;
   countEvents(): Promise<number>;
   // Null for an event that's gone, or a copy of one organised elsewhere.
   organiserOf(uid: EventUid): Promise<UserId | null>;
@@ -111,6 +113,8 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
       (await stub.answerEvent(actor, uid, answer)) as AnswerResult,
     retryEmail: async (uid, recipient) =>
       (await stub.retryEmail(actor, uid, recipient)) as RetryResult,
+    unsentCancellations: async () =>
+      (await stub.unsentCancellations(actor)) as UnsentCancellation[],
     countEvents: () => stub.countEvents(actor),
     organiserOf: async (uid) =>
       (await stub.organiserOf(actor, uid)) as UserId | null,

@@ -141,6 +141,18 @@ export type NotSentReason = (typeof NOT_SENT_REASONS)[number];
 export type NotSent =
   { kind: "refused"; reason: NotSentReason } | { kind: "unclear" };
 
+// Someone an email about an event didn't reach, or may not have, by the name they had on
+// its list when the email was due.
+export type UnsentTo = { key: PersonKey; name: string; notSent: NotSent };
+
+// The cancellation of an event that's been deleted, which didn't reach someone.
+export type UnsentCancellation = {
+  uid: EventUid;
+  title: string;
+  time: EventTime;
+  to: UnsentTo;
+};
+
 // Whether people outside can be invited to an event, from its organiser's address.
 export type OutsideInviting = "ready" | "mailOff" | "noSender";
 
@@ -156,6 +168,8 @@ export type Occurrence = EventDetails & {
   // Everyone invited, in the order they were added. Only the organiser's calendar knows
   // which emails didn't go, so a copy says null for everyone.
   people: (Attendee & { notSent: NotSent | null })[];
+  // Taken off the list, while the email telling them it's off didn't go.
+  takenOff: UnsentTo[];
   // The viewer's own answer, on a copy of an invitation sent to them, and null otherwise.
   answer: Answer | null;
   // The organiser called off this date, or the whole event.

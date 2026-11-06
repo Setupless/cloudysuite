@@ -30,14 +30,23 @@ import {
   renameTeamCalendar,
   setCalendarColour,
 } from "../functions";
-import { call, calendarKeys, eventCountQuery, membersQuery } from "../queries";
+import {
+  call,
+  calendarKeys,
+  eventCountQuery,
+  membersQuery,
+  unsentCancellationsQuery,
+} from "../queries";
+import { startDateOf } from "../time";
 import {
   type CalendarEntry,
   IMPORT_TOO_LARGE_MESSAGE,
   MAX_IMPORT_BYTES,
 } from "../types";
 import { COLOUR_NAMES, calendarFill } from "./colours";
+import { dayAndMonth } from "./event-text";
 import { importLines } from "./import-text";
+import { NotSentLine } from "./invitation-parts";
 import { PeoplePicker, ROLE_SELECT, ROLES } from "./people-picker";
 
 const ROLE_LABELS = Object.fromEntries(
@@ -255,6 +264,7 @@ function PersonalSettings({
         onImport={(change) => void run({ kind: "import" }, change)}
         onRefuse={setError}
       />
+      {entry.id && <UnsentCancellations calendarId={entry.id} canEdit />}
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex justify-end">
         <Button variant="toolbarAction" onClick={onClose}>
@@ -262,6 +272,42 @@ function PersonalSettings({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+// A deleted event has no People list left, so an email telling someone it's off that
+// didn't go is listed here instead.
+function UnsentCancellations({
+  calendarId,
+  canEdit,
+}: {
+  calendarId: CalendarId;
+  canEdit: boolean;
+}) {
+  const unsent = useQuery(unsentCancellationsQuery(calendarId));
+  if (unsent.isError) {
+    return <Notice tone="danger">{unsent.error.message}</Notice>;
+  }
+  if (!unsent.data?.length) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className={HEADING}>Cancellations not sent</h3>
+      <p className="text-sm text-secondary">
+        These events are deleted, but the email telling someone didn't go.
+      </p>
+      <ul className="flex max-h-60 flex-col gap-1.5 overflow-y-auto text-[13px]">
+        {unsent.data.map((one) => (
+          <NotSentLine
+            key={`${one.uid} ${one.to.key}`}
+            calendarId={calendarId}
+            uid={one.uid}
+            to={one.to}
+            about={`${one.title}, ${dayAndMonth(startDateOf(one.time))}`}
+            canRetry={canEdit}
+          />
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -547,6 +593,7 @@ function TeamSettings({
           onRefuse={setError}
         />
       )}
+      <UnsentCancellations calendarId={calendarId} canEdit={canEdit} />
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="flex gap-2">
         {canManage && (

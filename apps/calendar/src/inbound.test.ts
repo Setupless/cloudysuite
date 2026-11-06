@@ -476,6 +476,57 @@ test("a forged invitation that arrives first doesn't keep the real one out", asy
   expect(reading.events[0]?.uid).toBe(GOOGLE_INVITE_UID as EventUid);
 });
 
+test("the organiser's own cancellation calls off a forged copy, whatever its sequence", async () => {
+  await arrive(
+    google({ title: "Moved to my place", sequence: 9 }, { from: MALLORY }),
+  );
+  await arrive(
+    google({ sequence: 1, status: "CANCELLED" }, { method: "CANCEL" }),
+  );
+  expect((await schedule())[0]).toMatchObject({
+    title: "Moved to my place",
+    cancelled: true,
+  });
+
+  // From then on the organiser's own sequence counts, so an older version arriving late
+  // doesn't bring it back, and a newer one does.
+  await arrive(google({ sequence: 0 }));
+  expect((await schedule())[0]?.cancelled).toBe(true);
+  await arrive(google({ sequence: 2, title: "Supplier review, back on" }));
+  expect((await schedule())[0]).toMatchObject({
+    title: "Supplier review, back on",
+    cancelled: false,
+  });
+});
+
+test("the organiser's own cancellation of one date calls it off on a forged copy", async () => {
+  const weekly = { rule: "FREQ=WEEKLY;COUNT=3" };
+  await arrive(google({ ...weekly, sequence: 9 }, { from: MALLORY }));
+  await arrive(
+    google(
+      {
+        ...weekly,
+        sequence: 1,
+        status: "CANCELLED",
+        recurrenceId: "20261110T100000",
+      },
+      { method: "CANCEL" },
+    ),
+  );
+  expect((await schedule())[0]?.cancelled).toBe(true);
+});
+
+test("between the organiser's own versions, an older cancellation changes nothing", async () => {
+  await arrive(google({ sequence: 3, title: "Supplier review, moved" }));
+  await arrive(
+    google({ sequence: 1, status: "CANCELLED" }, { method: "CANCEL" }),
+  );
+  expect((await schedule())[0]).toMatchObject({
+    title: "Supplier review, moved",
+    cancelled: false,
+  });
+});
+
 test("a removed invitation stays removed when its organiser changes it", async () => {
   await arrive(google());
   await as().deleteEvent({
