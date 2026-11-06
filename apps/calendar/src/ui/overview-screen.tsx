@@ -32,6 +32,7 @@ import {
   deviceZone,
   focusedElement,
   focusFirst,
+  NARROW_SECOND_LINE,
   unlessDialog,
 } from "./schedule-screen";
 import {
@@ -522,11 +523,29 @@ function AllDayChip({
   );
 }
 
-function Heading({ children }: { children?: ReactNode }) {
+// The lines keep their height before the browser knows the day, so nothing moves when
+// the date and New event arrive. The padding goes inside the container, so its queries
+// see the screen's width, as Schedule's do.
+function Heading({
+  children,
+  action,
+}: {
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 px-4 pt-3.5 pb-2.5">
-      <h1 className="text-[21px] font-semibold">Overview</h1>
-      {children}
+    <div className="@container">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 pt-3 pb-2.5">
+        <h1 className="px-1 text-[21px] leading-[34px] font-semibold">
+          Overview
+        </h1>
+        <div
+          className={`flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @3xl:basis-0 ${NARROW_SECOND_LINE}`}
+        >
+          {children}
+        </div>
+        <div className="ml-auto self-start">{action}</div>
+      </div>
     </div>
   );
 }
@@ -596,12 +615,8 @@ function LiveOverview() {
 
   return (
     <>
-      <Heading>
-        <p className="text-secondary">{dayTitle(today, today)}</p>
-        {plan.allDay.map((event) => (
-          <AllDayChip key={event.key} event={event} zone={zone} today={today} />
-        ))}
-        <div className="ml-auto">
+      <Heading
+        action={
           <Button
             ref={newButton}
             variant="toolbarAction"
@@ -612,7 +627,14 @@ function LiveOverview() {
           >
             New event
           </Button>
-        </div>
+        }
+      >
+        <p className="basis-full px-1 text-secondary @3xl:basis-auto">
+          {dayTitle(today, today)}
+        </p>
+        {plan.allDay.map((event) => (
+          <AllDayChip key={event.key} event={event} zone={zone} today={today} />
+        ))}
       </Heading>
       <div
         className="flex flex-col gap-5 px-4 pb-6"
