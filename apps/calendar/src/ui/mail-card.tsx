@@ -142,11 +142,11 @@ function versionNote(
   confirmed: boolean,
 ): string | null {
   if (version === "later") {
-    return "This event has changed since this email. The card shows it as your calendar has it now.";
+    return "This event has changed since this email. Your calendar has the latest version.";
   }
   if (version === "same") return null;
   return confirmed
-    ? "This email's change isn't in your calendar, so the card shows the event as your calendar has it."
+    ? "This email's change isn't in your calendar."
     : "This email changes the event, but the sender couldn't be confirmed, so your calendar keeps it as it was.";
 }
 

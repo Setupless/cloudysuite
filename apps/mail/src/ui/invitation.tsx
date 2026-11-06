@@ -45,9 +45,13 @@ export function MessageInvitation({
       />
     );
   }
+  // Another message, or another mailbox's copy, can show the same event.
   const after = async (action: () => Promise<void>) => {
     await callAction(action);
-    await client.invalidateQueries({ queryKey });
+    await client.invalidateQueries({
+      predicate: (query) =>
+        query.queryKey[0] === "mail" && query.queryKey[2] === "invitation",
+    });
   };
   return (
     <MailInvitationCard

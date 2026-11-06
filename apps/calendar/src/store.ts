@@ -1875,7 +1875,8 @@ export class EventStore {
     const [row] =
       lookup.kind === "outside"
         ? this.#rows<EventRow>(
-            "SELECT * FROM events WHERE uid = ? AND recurrence_id IS NULL",
+            `SELECT * FROM events WHERE uid = ? AND recurrence_id IS NULL
+             AND json_extract(organiser, '$.kind') = 'outside'`,
             lookup.uid,
           )
         : this.#rows<EventRow>(

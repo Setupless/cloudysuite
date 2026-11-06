@@ -132,6 +132,8 @@ const NOTHING_TO_ADD_MESSAGE =
   "This email doesn't hold an event that can be added. It may cancel the event, or change only one date of it.";
 const FROM_COLLEAGUE_MESSAGE =
   "This invitation is from a colleague, so it reaches your calendar from theirs. If you removed it, it can come back from here. Otherwise ask them to invite you again.";
+const UNCONFIRMED_MESSAGE =
+  "The sender of this email couldn't be confirmed, so it can't bring the event back. Open the invitation your colleague sent, or ask them to invite you again.";
 const CANCELLED_MESSAGE =
   "This event was cancelled, so there's nothing to answer.";
 
@@ -292,9 +294,12 @@ async function invitationCard(
       someDates ? fromEmail(event, false) : fromCalendar(copy),
     );
   }
-  // A colleague's copy comes back only from the calendar its removal names.
+  // A colleague's copy comes back only from the calendar its removal names, and only
+  // from an email its organiser sent, since a newer forged one would keep theirs out.
   const removedColleague =
-    standing.kind === "removed" && standing.organiser?.kind === "colleague";
+    standing.kind === "removed" &&
+    standing.organiser?.kind === "colleague" &&
+    confirmedFor(mail, invitation.organiser);
   return card({
     kind: standing.kind === "removed" ? "removed" : "notHeld",
     addable: !someDates && (lookup.kind === "outside" || removedColleague),
@@ -308,26 +313,31 @@ async function cancellationCard(
 ): Promise<InvitationCard> {
   const { taken, event } = invitation;
   const someDates = taken.group.series === null;
-  const shown = fromEmail(event, true);
-  const card = (standing: CancellationStanding) =>
-    ({ kind: "cancellation", event: shown, someDates, standing }) as const;
+  const card = (
+    standing: CancellationStanding,
+    shown = fromEmail(event, true),
+  ) => ({ kind: "cancellation", event: shown, someDates, standing }) as const;
   if (await calendarOff()) return card({ kind: "calendarOff" });
 
   const { standing } = await standingOf(person.id, invitation);
   if (standing.kind !== "held") return card({ kind: "notHeld" });
   const { copy } = standing;
-  return card({
-    kind: "held",
-    cancelled: someDates
-      ? taken.group.changes.every(
-          (change) =>
-            change.recurrenceId !== null &&
-            copy.calledOff.includes(change.recurrenceId),
-        )
-      : copy.cancelled,
-    version: versionOf(copy, taken),
-    confirmed: confirmedFor(mail, invitation.organiser),
-  });
+  return card(
+    {
+      kind: "held",
+      cancelled: someDates
+        ? taken.group.changes.every(
+            (change) =>
+              change.recurrenceId !== null &&
+              copy.calledOff.includes(change.recurrenceId),
+          )
+        : copy.cancelled,
+      version: versionOf(copy, taken),
+      confirmed: confirmedFor(mail, invitation.organiser),
+    },
+    // Nothing about a meeting that's off is worth joining.
+    someDates ? fromEmail(event, true) : { ...fromCalendar(copy), join: null },
+  );
 }
 
 // As search asks calendars.
@@ -450,7 +460,13 @@ export async function addFromMail(
 ): Promise<void> {
   await requireCalendarOn();
   const invitation = invitationOf(mail);
-  if (!invitation || invitation.taken.method !== "request") {
+  const series = invitation?.taken.group.series;
+  if (
+    !invitation ||
+    invitation.taken.method !== "request" ||
+    !series ||
+    series.cancelled
+  ) {
     throw refusal(409, NOTHING_TO_ADD_MESSAGE);
   }
   const { taken, event, organiser } = invitation;
@@ -490,9 +506,16 @@ export async function addFromMail(
   if (!calendar || source?.kind !== "colleague") {
     throw refusal(409, FROM_COLLEAGUE_MESSAGE);
   }
-  const parts = [taken.group.series, ...taken.group.changes].flatMap((part) =>
-    part && !part.cancelled ? [partOf(part)] : [],
+  if (!confirmedFor(mail, organiser)) throw refusal(409, UNCONFIRMED_MESSAGE);
+  const calledOff = taken.group.changes.flatMap((change) =>
+    change.cancelled && change.recurrenceId ? [change.recurrenceId] : [],
   );
+  const parts = [
+    { ...partOf(series), exdates: [...series.exdates, ...calledOff].sort() },
+    ...taken.group.changes.flatMap((change) =>
+      change.cancelled ? [] : [partOf(change)],
+    ),
+  ];
   answerAdd(
     await calendar.addFromCard({
       kind: "colleague",

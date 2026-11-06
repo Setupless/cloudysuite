@@ -434,6 +434,23 @@ test("Add to my calendar brings back a removed invitation, and its organiser's l
   });
 });
 
+test("an email that changes only one date offers nothing to add, and makes no calendar", async () => {
+  const messageId = await arrive(
+    google({ recurrenceId: "20261110T100000", sequence: 1 }),
+    "support@example.com",
+  );
+  expect(await readCard(messageId, mailboxes.support)).toMatchObject({
+    someDates: true,
+    standing: { kind: "notHeld", addable: false },
+  });
+  expect(
+    await refusalOf(
+      inMail().addInvitationFromMail(target(messageId, mailboxes.support)),
+    ),
+  ).toMatchObject({ status: 409 });
+  expect((await inCalendar().getCalendars())[0]?.id).toBeNull();
+});
+
 test("imported mail, and mail that came while Calendar was off, offer Add to my calendar", async () => {
   const imported = await ingest(mail.env, {
     source: "import",
@@ -488,10 +505,11 @@ test("a cancellation shows as cancelled, with Remove from my calendar while it's
   const invitation = await arrive(google());
   const forged = await arrive(
     google(
-      { sequence: 1, status: "CANCELLED" },
+      { sequence: 1, status: "CANCELLED", title: "Off, see my new invite" },
       { method: "CANCEL", auth: AUTH.failed(PARTNER) },
     ),
   );
+  // The event shows as the calendar still holds it.
   expect(await readCard(forged)).toMatchObject({
     kind: "cancellation",
     event: { title: "Supplier review", join: null },
@@ -747,6 +765,17 @@ test("a colleague's invitation email shows the copy their calendar sent, answers
   expect(await readCard(messageId, mailboxes.jo, jo)).toMatchObject({
     standing: { kind: "removed", addable: true },
   });
+  // A copy of it that can't show it came from the organiser can't bring it back.
+  const unproved = await arrive(invitation!.raw, "jo@example.com");
+  expect(await readCard(unproved, mailboxes.jo, jo)).toMatchObject({
+    standing: { kind: "removed", addable: false },
+  });
+  expect(
+    await refusalOf(
+      inMail(jo).addInvitationFromMail(target(unproved, mailboxes.jo)),
+    ),
+  ).toMatchObject({ status: 409 });
+  expect(await schedule(jo)).toEqual([]);
   await inMail(jo).addInvitationFromMail(target(messageId, mailboxes.jo));
   expect((await schedule(jo)).map((one) => [one.uid, one.answer])).toEqual([
     [copy!.uid, "needsAnswer"],
