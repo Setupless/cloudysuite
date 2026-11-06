@@ -374,6 +374,8 @@ export const VIEW_ONLY_MESSAGE =
   "You can only view this calendar. Ask one of its managers if you need to change it.";
 export const READ_ONLY_MESSAGE =
   "This event was set up somewhere else, so it can't be changed here. You can still remove it from your calendar.";
+export const NEVER_HAPPENS_MESSAGE =
+  "The repeat ends before its first date, so the event would never happen. Choose a later last date.";
 export const EVENT_GONE_MESSAGE =
   "This event isn't on the calendar any more. Someone may have changed or removed it.";
 export const ONLY_MANAGERS_MESSAGE =

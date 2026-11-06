@@ -28,12 +28,14 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
   MAX_IMPORT_BYTES,
+  NEVER_HAPPENS_MESSAGE,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   type OccurrenceId,
   ONLY_MANAGERS_MESSAGE,
   PERSONAL_CALENDAR_MESSAGE,
   READ_ONLY_MESSAGE,
+  type Repeat,
   VIEW_ONLY_MESSAGE,
 } from "./types";
 import { draftOf, formOf } from "./ui/event-form";
@@ -199,6 +201,12 @@ const timed = (start: string, end: string): EventTime =>
     timeZone: SYDNEY,
   }) as EventTime;
 
+const allDay = (startDate: string, endDate: string): EventTime => ({
+  kind: "allDay",
+  startDate: date(startDate),
+  endDate: date(endDate),
+});
+
 test("the last manager can't leave or step down, and anyone else can leave", async () => {
   expect(
     await refused(
@@ -279,6 +287,53 @@ test("the delete confirmation counts each event once, however often it repeats",
     status: 403,
     message: NO_ACCESS_MESSAGE,
   });
+});
+
+const saturday = timed(
+  "2026-11-07T09:00:00+11:00",
+  "2026-11-07T09:30:00+11:00",
+);
+const weekdays = (end: Repeat["end"] = { kind: "never" }): Repeat => ({
+  frequency: "weekdays",
+  end,
+});
+
+test.each([
+  ["a one-off event", saturday, null, saturday],
+  [
+    "a weekday repeat from a Saturday",
+    saturday,
+    weekdays(),
+    timed("2026-11-09T09:00:00+11:00", "2026-11-09T09:30:00+11:00"),
+  ],
+  [
+    "an all-day weekday repeat from a Saturday",
+    allDay("2026-11-07", "2026-11-08"),
+    weekdays(),
+    allDay("2026-11-09", "2026-11-10"),
+  ],
+] as const)("%s says when it first happens", async (_, time, repeat, first) => {
+  const created = await as(people.editor).createEvent({
+    data: { calendarId: TEAM, draft: draft(time, { repeat }) },
+  });
+  expect(created.first).toEqual(first);
+});
+
+test("a repeat that ends before its first date is refused, and nothing is kept", async () => {
+  const before = calendarNow().events;
+  expect(
+    await refused(
+      as(people.editor).createEvent({
+        data: {
+          calendarId: TEAM,
+          draft: draft(saturday, {
+            repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
+          }),
+        },
+      }),
+    ),
+  ).toEqual({ status: 400, message: NEVER_HAPPENS_MESSAGE });
+  expect(calendarNow().events).toEqual(before);
 });
 
 test("a personal calendar takes a new colour, but can't be deleted, left, renamed, or shared", async () => {
