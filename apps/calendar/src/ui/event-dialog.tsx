@@ -24,6 +24,7 @@ import {
   updateEvent,
 } from "../functions";
 import { call, calendarKeys, outsideInvitingQuery } from "../queries";
+import { todayIn } from "../schedule";
 import {
   type CalendarEntry,
   type ChangeScope,
@@ -34,15 +35,15 @@ import {
   MAX_NOTES_LENGTH,
   MAX_REPEAT_TIMES,
   MAX_TITLE_LENGTH,
+  type NoDatesLeft,
   type OutsideInviting,
   REPEAT_FREQUENCIES,
   type TimeZone,
 } from "../types";
 import { calendarFill } from "./colours";
 import {
+  askForEnd,
   draftOf,
-  WEEKEND_ONLY_MESSAGE,
-  weekendOnly,
   type EventAction,
   type EventForm,
   type FormField,
@@ -54,6 +55,7 @@ import {
   newForm,
   SCOPE_LABELS,
   scopesFor,
+  scopeToAsk,
   withStart,
   writableCalendars,
 } from "./event-form";
@@ -363,6 +365,13 @@ export function EventDialog({
       ? { "aria-invalid": true, "aria-describedby": failureId }
       : {};
 
+  // The end is on the form, not on the choice of which ones.
+  function showEndNeeded({ needs }: NoDatesLeft) {
+    setAsking(null);
+    setFailure(askForEnd(needs, form, todayIn(zone, Date.now())));
+    setPending(false);
+  }
+
   async function save(draft: EventDraft, changeScope: ChangeScope) {
     setPending(true);
     setFailure(null);
@@ -370,7 +379,7 @@ export function EventDialog({
       let uid: EventUid;
       let firstDay: CivilDate | null = null;
       if (place) {
-        await call(() =>
+        const changed = await call(() =>
           updateEvent({
             data: {
               calendarId: place.calendarId,
@@ -380,7 +389,12 @@ export function EventDialog({
             },
           }),
         );
-        uid = place.target.uid;
+        switch (changed.status) {
+          case "noDatesLeft":
+            return showEndNeeded(changed);
+          case "done":
+            uid = place.target.uid;
+        }
       } else {
         const calendarId =
           !choice || choice === "personal"
@@ -389,6 +403,7 @@ export function EventDialog({
         const created = await call(() =>
           createEvent({ data: { calendarId, draft } }),
         );
+        if (created.status === "noDatesLeft") return showEndNeeded(created);
         uid = created.uid;
         firstDay = daySpanOf(created.first, zone).first;
         rememberUsed(me, calendarId);
@@ -408,14 +423,10 @@ export function EventDialog({
       setFailure({ field: checked.field, message: checked.message });
       return;
     }
-    if (!editing && weekendOnly(checked.draft)) {
-      setFailure({ field: "repeatUntil", message: WEEKEND_ONLY_MESSAGE });
-      return;
-    }
     const scopes = editing && scopesFor(editing, checked.draft);
     if (scopes) {
       setFailure(null);
-      setScope(scopes[0] as ChangeScope);
+      setScope((picked) => scopeToAsk(picked, scopes));
       setAsking({ draft: checked.draft, scopes });
       return;
     }
@@ -505,237 +516,247 @@ export function EventDialog({
         onSubmit={submit}
         className="flex flex-col gap-3"
       >
-        <input
-          ref={title}
-          name="title"
-          aria-label="Title"
-          placeholder="Add a title"
-          maxLength={MAX_TITLE_LENGTH}
-          className={`${FIELD} py-2 text-base font-semibold`}
-          value={form.title}
-          onChange={(event) => set({ title: event.target.value })}
-          {...invalid("title")}
-        />
-        <div
-          className={`grid gap-2 max-sm:grid-cols-2 ${sameDayTimed ? "grid-cols-[1.4fr_1fr_1fr]" : "grid-cols-[1.4fr_1fr]"}`}
-        >
-          {/* On a phone the fields split evenly, or their times and dates get cut off, and
-              the day gets its own row rather than sharing it three ways. */}
-          <label
-            className={`${LABEL} ${sameDayTimed ? "max-sm:col-span-2" : ""}`}
+        {/* Locked while saving, so a refusal points at the fields as they were saved. */}
+        <fieldset disabled={pending} className="flex min-w-0 flex-col gap-3">
+          <input
+            ref={title}
+            name="title"
+            aria-label="Title"
+            placeholder="Add a title"
+            maxLength={MAX_TITLE_LENGTH}
+            className={`${FIELD} py-2 text-base font-semibold`}
+            value={form.title}
+            onChange={(event) => set({ title: event.target.value })}
+            {...invalid("title")}
+          />
+          <div
+            className={`grid gap-2 max-sm:grid-cols-2 ${sameDayTimed ? "grid-cols-[1.4fr_1fr_1fr]" : "grid-cols-[1.4fr_1fr]"}`}
           >
-            Day
-            <input
-              type="date"
-              name="startDate"
-              className={FIELD}
-              value={form.startDate}
-              onChange={(event) => moveStart({ startDate: event.target.value })}
-              {...invalid("startDate")}
-            />
-          </label>
-          {form.allDay ? (
-            showEndDay && endDay
-          ) : (
-            <>
-              <label className={LABEL}>
-                Starts
-                <input
-                  type="time"
-                  name="startTime"
-                  className={FIELD}
-                  value={form.startTime}
-                  onChange={(event) =>
-                    moveStart({ startTime: event.target.value })
-                  }
-                  {...invalid("startTime")}
-                />
-              </label>
-              {showEndDay && endDay}
-              {endTime}
-            </>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <label className="flex cursor-pointer items-center gap-2 text-[13px]">
-            <input
-              type="checkbox"
-              name="allDay"
-              className={CHECK}
-              checked={form.allDay}
-              onChange={(event) => set({ allDay: event.target.checked })}
-            />
-            All day
-          </label>
-          {!showEndDay && (
-            <button
-              type="button"
-              className={LINK}
-              onClick={() => {
-                setEndDayAsked(true);
-                requestAnimationFrame(() =>
-                  (
-                    formElement.current?.elements.namedItem(
-                      "endDate",
-                    ) as HTMLInputElement | null
-                  )?.focus(),
-                );
-              }}
+            {/* On a phone the fields split evenly, or their times and dates get cut off, and
+              the day gets its own row rather than sharing it three ways. */}
+            <label
+              className={`${LABEL} ${sameDayTimed ? "max-sm:col-span-2" : ""}`}
             >
-              Ends on another day
-            </button>
-          )}
-          <span className={`${WITH_ICON} ml-auto w-[11.5rem]`}>
-            <IconRepeat
-              size={15}
-              stroke={1.75}
-              className={FIELD_ICON}
-              aria-hidden
-            />
-            <select
-              name="repeat"
-              aria-label="Repeat"
-              className={`${FIELD} pl-8`}
-              value={form.repeat}
-              onChange={(event) =>
-                set({ repeat: event.target.value as EventForm["repeat"] })
-              }
-            >
-              <option value="none">Doesn't repeat</option>
-              {REPEAT_FREQUENCIES.map((frequency) => (
-                <option key={frequency} value={frequency}>
-                  {REPEAT_NAMES[frequency]}
-                </option>
-              ))}
-            </select>
-          </span>
-        </div>
-        {form.repeat !== "none" && (
-          <div className="grid grid-cols-2 gap-2">
-            <label className={LABEL}>
-              Repeat ends
-              <select
-                name="repeatEnd"
+              Day
+              <input
+                type="date"
+                name="startDate"
                 className={FIELD}
-                value={form.repeatEnd}
+                value={form.startDate}
                 onChange={(event) =>
-                  set({
-                    repeatEnd: event.target.value as EventForm["repeatEnd"],
-                  })
+                  moveStart({ startDate: event.target.value })
+                }
+                {...invalid("startDate")}
+              />
+            </label>
+            {form.allDay ? (
+              showEndDay && endDay
+            ) : (
+              <>
+                <label className={LABEL}>
+                  Starts
+                  <input
+                    type="time"
+                    name="startTime"
+                    className={FIELD}
+                    value={form.startTime}
+                    onChange={(event) =>
+                      moveStart({ startTime: event.target.value })
+                    }
+                    {...invalid("startTime")}
+                  />
+                </label>
+                {showEndDay && endDay}
+                {endTime}
+              </>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <label className="flex cursor-pointer items-center gap-2 text-[13px]">
+              <input
+                type="checkbox"
+                name="allDay"
+                className={CHECK}
+                checked={form.allDay}
+                onChange={(event) => set({ allDay: event.target.checked })}
+              />
+              All day
+            </label>
+            {!showEndDay && (
+              <button
+                type="button"
+                className={LINK}
+                onClick={() => {
+                  setEndDayAsked(true);
+                  requestAnimationFrame(() =>
+                    (
+                      formElement.current?.elements.namedItem(
+                        "endDate",
+                      ) as HTMLInputElement | null
+                    )?.focus(),
+                  );
+                }}
+              >
+                Ends on another day
+              </button>
+            )}
+            <span className={`${WITH_ICON} ml-auto w-[11.5rem]`}>
+              <IconRepeat
+                size={15}
+                stroke={1.75}
+                className={FIELD_ICON}
+                aria-hidden
+              />
+              <select
+                name="repeat"
+                aria-label="Repeat"
+                className={`${FIELD} pl-8`}
+                value={form.repeat}
+                onChange={(event) =>
+                  set({ repeat: event.target.value as EventForm["repeat"] })
                 }
               >
-                <option value="never">Never</option>
-                <option value="onDate">On a day</option>
-                <option value="afterTimes">After a number of times</option>
-              </select>
-            </label>
-            {form.repeatEnd === "onDate" && (
-              <label className={LABEL}>
-                Last date
-                <input
-                  type="date"
-                  name="repeatUntil"
-                  className={FIELD}
-                  min={form.startDate}
-                  value={form.repeatUntil}
-                  onChange={(event) => set({ repeatUntil: event.target.value })}
-                  {...invalid("repeatUntil")}
-                />
-              </label>
-            )}
-            {form.repeatEnd === "afterTimes" && (
-              <label className={LABEL}>
-                Number of times
-                <input
-                  type="number"
-                  name="repeatTimes"
-                  inputMode="numeric"
-                  min={1}
-                  max={MAX_REPEAT_TIMES}
-                  className={FIELD}
-                  value={form.repeatTimes}
-                  onChange={(event) => set({ repeatTimes: event.target.value })}
-                  {...invalid("repeatTimes")}
-                />
-              </label>
-            )}
-          </div>
-        )}
-        {place ? (
-          <div className={LABEL}>
-            Calendar
-            <span className="flex items-center gap-2 py-0.5 text-sm font-normal text-text">
-              <CalendarSwatch colour={place.calendar.colour} />
-              <span dir="auto" className="min-w-0 truncate">
-                {place.calendar.name}
-              </span>
-            </span>
-            <SeenBy entry={place.calendar} />
-          </div>
-        ) : (
-          <label className={LABEL}>
-            Calendar
-            <span className={WITH_ICON}>
-              {chosen && (
-                <span className="pointer-events-none absolute left-2.5 flex">
-                  <CalendarSwatch colour={chosen.colour} />
-                </span>
-              )}
-              <select
-                name="calendar"
-                className={`${FIELD} pl-8`}
-                value={choice}
-                onChange={(event) => setChoice(event.target.value as Choice)}
-              >
-                {writable.map((entry) => (
-                  <option key={choiceOf(entry)} value={choiceOf(entry)}>
-                    {entry.name}
+                <option value="none">Doesn't repeat</option>
+                {REPEAT_FREQUENCIES.map((frequency) => (
+                  <option key={frequency} value={frequency}>
+                    {REPEAT_NAMES[frequency]}
                   </option>
                 ))}
               </select>
             </span>
-            {chosen && <SeenBy entry={chosen} />}
-          </label>
-        )}
-        <InviteField
-          guests={form.people}
-          event={organised}
-          organiser={organiser}
-          organiserName={organiserName}
-          disabled={pending}
-          onChange={(people) => set({ people })}
-        />
-        <label className={LABEL}>
-          Where
-          <span className={WITH_ICON}>
-            <IconMapPin
-              size={15}
-              stroke={1.75}
-              className={FIELD_ICON}
-              aria-hidden
-            />
-            <input
-              name="location"
-              placeholder="Add a place"
-              maxLength={MAX_LOCATION_LENGTH}
-              className={`${FIELD} pl-8`}
-              value={form.location}
-              onChange={(event) => set({ location: event.target.value })}
-            />
-          </span>
-        </label>
-        <label className={LABEL}>
-          Notes
-          <textarea
-            name="notes"
-            rows={3}
-            placeholder="Add details"
-            maxLength={MAX_NOTES_LENGTH}
-            className={`${FIELD} resize-y`}
-            value={form.notes}
-            onChange={(event) => set({ notes: event.target.value })}
+          </div>
+          {form.repeat !== "none" && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className={LABEL}>
+                Repeat ends
+                <select
+                  name="repeatEnd"
+                  className={FIELD}
+                  value={form.repeatEnd}
+                  onChange={(event) =>
+                    set({
+                      repeatEnd: event.target.value as EventForm["repeatEnd"],
+                    })
+                  }
+                  {...invalid("repeatEnd")}
+                >
+                  <option value="never">Never</option>
+                  <option value="onDate">On a day</option>
+                  <option value="afterTimes">After a number of times</option>
+                </select>
+              </label>
+              {form.repeatEnd === "onDate" && (
+                <label className={LABEL}>
+                  Last date
+                  <input
+                    type="date"
+                    name="repeatUntil"
+                    className={FIELD}
+                    min={form.startDate}
+                    value={form.repeatUntil}
+                    onChange={(event) =>
+                      set({ repeatUntil: event.target.value })
+                    }
+                    {...invalid("repeatUntil")}
+                  />
+                </label>
+              )}
+              {form.repeatEnd === "afterTimes" && (
+                <label className={LABEL}>
+                  Number of times
+                  <input
+                    type="number"
+                    name="repeatTimes"
+                    inputMode="numeric"
+                    min={1}
+                    max={MAX_REPEAT_TIMES}
+                    className={FIELD}
+                    value={form.repeatTimes}
+                    onChange={(event) =>
+                      set({ repeatTimes: event.target.value })
+                    }
+                    {...invalid("repeatTimes")}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+          {place ? (
+            <div className={LABEL}>
+              Calendar
+              <span className="flex items-center gap-2 py-0.5 text-sm font-normal text-text">
+                <CalendarSwatch colour={place.calendar.colour} />
+                <span dir="auto" className="min-w-0 truncate">
+                  {place.calendar.name}
+                </span>
+              </span>
+              <SeenBy entry={place.calendar} />
+            </div>
+          ) : (
+            <label className={LABEL}>
+              Calendar
+              <span className={WITH_ICON}>
+                {chosen && (
+                  <span className="pointer-events-none absolute left-2.5 flex">
+                    <CalendarSwatch colour={chosen.colour} />
+                  </span>
+                )}
+                <select
+                  name="calendar"
+                  className={`${FIELD} pl-8`}
+                  value={choice}
+                  onChange={(event) => setChoice(event.target.value as Choice)}
+                >
+                  {writable.map((entry) => (
+                    <option key={choiceOf(entry)} value={choiceOf(entry)}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
+              {chosen && <SeenBy entry={chosen} />}
+            </label>
+          )}
+          <InviteField
+            guests={form.people}
+            event={organised}
+            organiser={organiser}
+            organiserName={organiserName}
+            disabled={pending}
+            onChange={(people) => set({ people })}
           />
-        </label>
+          <label className={LABEL}>
+            Where
+            <span className={WITH_ICON}>
+              <IconMapPin
+                size={15}
+                stroke={1.75}
+                className={FIELD_ICON}
+                aria-hidden
+              />
+              <input
+                name="location"
+                placeholder="Add a place"
+                maxLength={MAX_LOCATION_LENGTH}
+                className={`${FIELD} pl-8`}
+                value={form.location}
+                onChange={(event) => set({ location: event.target.value })}
+              />
+            </span>
+          </label>
+          <label className={LABEL}>
+            Notes
+            <textarea
+              name="notes"
+              rows={3}
+              placeholder="Add details"
+              maxLength={MAX_NOTES_LENGTH}
+              className={`${FIELD} resize-y`}
+              value={form.notes}
+              onChange={(event) => set({ notes: event.target.value })}
+            />
+          </label>
+        </fieldset>
         {failureNotice}
         <Actions>
           <Button variant="toolbar" disabled={pending} onClick={onClose}>

@@ -51,6 +51,7 @@ import type {
   RetryResult,
   TimeZone,
   UnsentCancellation,
+  UpdateResult,
 } from "./types";
 
 const DELIVERIES_PER_WAKE_UP = 25;
@@ -129,7 +130,7 @@ export class Calendar extends DurableObject<Env> {
     scope: ChangeScope,
     draft: EventDraft,
     invitable: Invitee[],
-  ): Promise<ChangeResult> {
+  ): Promise<UpdateResult> {
     const outside = await this.#outsideFor(
       draft,
       this.#store.organiserOf(target.uid),

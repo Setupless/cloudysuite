@@ -8,16 +8,18 @@ import {
 } from "../test-support";
 import type { Occurrence, OccurrenceId } from "../types";
 import {
+  askForEnd,
   draftOf,
   type EventForm,
   formOf,
   newForm,
   nextHalfHour,
   scopesFor,
+  scopeToAsk,
   slotStart,
-  weekendOnly,
   withStart,
 } from "./event-form";
+import { dayTitle } from "./event-text";
 
 let kit: Awaited<ReturnType<typeof createCalendarTest>>;
 
@@ -234,42 +236,61 @@ test.each([
   expect(draftOf(form(more), SYDNEY)).toEqual({ ok: false, field, message });
 });
 
+const TODAY = date("2026-11-07");
+
 test.each([
-  ["Saturday", "2026-11-07", "Sunday", "2026-11-08", true],
-  ["Sunday", "2026-11-08", "Sunday", "2026-11-08", true],
-  ["Saturday", "2026-11-07", "Monday", "2026-11-09", false],
-  ["Friday", "2026-11-06", "Sunday", "2026-11-08", false],
-  ["Sunday", "2026-11-08", "the Saturday after", "2026-11-14", false],
+  [
+    "the last date",
+    { kind: "onDate", date: date("2026-11-23") },
+    { repeatEnd: "onDate", startDate: "2026-11-21" },
+    "repeatUntil",
+    `Set the last date to ${dayTitle(date("2026-11-23"), TODAY)} or later.`,
+  ],
+  [
+    "the number of times",
+    { kind: "afterTimes", times: 2 },
+    { repeatEnd: "afterTimes", startDate: "2026-11-21" },
+    "repeatTimes",
+    "Set the number of times to 2 or more.",
+  ],
+  [
+    "a last date, when the number of times would be more than a repeat can have,",
+    { kind: "onDate", date: date("2029-08-05") },
+    { repeatEnd: "afterTimes", startDate: "2029-08-05" },
+    "repeatEnd",
+    `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-05"), TODAY)} or later.`,
+  ],
+  [
+    "a last date no earlier than the day it starts",
+    { kind: "onDate", date: date("2029-08-05") },
+    { repeatEnd: "afterTimes", startDate: "2029-08-10" },
+    "repeatEnd",
+    `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-10"), TODAY)} or later.`,
+  ],
 ] as const)(
-  "every weekday from a %s to %s has no dates: %p",
-  (_, startDate, __, repeatUntil, expected) => {
-    const weekdays = form({
-      startDate,
-      endDate: startDate,
-      repeat: "weekdays",
-      repeatEnd: "onDate",
-      repeatUntil,
+  "a repeat with no dates points at %s and asks for one that gives it a date",
+  (_, needs, more, field, advice) => {
+    expect(askForEnd(needs, form(more), TODAY)).toEqual({
+      field,
+      message: `The repeat would end up with no dates, so it wasn't saved. ${advice}`,
     });
-    expect(weekendOnly(drafted(weekdays))).toBe(expected);
-    expect(weekendOnly(drafted({ ...weekdays, allDay: true }))).toBe(expected);
   },
 );
 
-test("every weekday counts the days where the event is, not on the device", () => {
-  // 09:00 on Saturday in Sydney is 22:00 on Friday in London, which is a weekday.
-  const london = form({
-    startDate: "2026-11-07",
-    endDate: "2026-11-07",
-    startTime: "09:00",
-    endTime: "10:00",
-    timeZone: LONDON,
-    repeat: "weekdays",
-    repeatEnd: "onDate",
-    repeatUntil: "2026-11-07",
-  });
-  expect(weekendOnly(drafted(london))).toBe(false);
-  expect(weekendOnly(drafted({ ...london, timeZone: SYDNEY }))).toBe(true);
-});
+test.each([
+  ["keeps the one picked before", "all", ["thisAndLater", "all"], "all"],
+  [
+    "picks the first one when the one picked before isn't offered",
+    "this",
+    ["thisAndLater", "all"],
+    "thisAndLater",
+  ],
+] as const)(
+  "asking again which ones to change %s",
+  (_, picked, scopes, asked) => {
+    expect(scopeToAsk(picked, [...scopes])).toBe(asked);
+  },
+);
 
 test("moving the start keeps the event's length", () => {
   const long = form({ endDate: "2026-11-06", endTime: "10:00" });

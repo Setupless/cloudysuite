@@ -16,8 +16,10 @@ import type {
   CalendarEntry,
   CalendarOccurrence,
   CivilDate,
+  CreatedEvent,
   EventDraft,
   EventTime,
+  NoDatesLeft,
   Organiser,
   TimeZone,
 } from "./types";
@@ -56,6 +58,12 @@ export const SYDNEY = "Australia/Sydney" as TimeZone;
 export const LONDON = "Europe/London" as TimeZone;
 
 export const date = (text: string) => text as CivilDate;
+
+// What creating an event gave, where the test only needs it saved.
+export function saved(answer: CreatedEvent | NoDatesLeft): CreatedEvent {
+  if (answer.status !== "created") throw new Error("the event wasn't saved");
+  return answer;
+}
 
 export const draft = (time: EventTime, more: Partial<EventDraft> = {}) =>
   ({

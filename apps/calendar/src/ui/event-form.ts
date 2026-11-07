@@ -1,12 +1,9 @@
 import { type CalendarId, levelOfRole, type UserId } from "@cloudysuite/access";
-import { isWeekend } from "../schedule";
 import {
   addDays,
   dateOfWall,
-  daysBetween,
   instantOf,
   parseCivilDate,
-  startDateOf,
   type WallTime,
   wallOf,
   wallOfDate,
@@ -22,6 +19,7 @@ import {
   type EventTime,
   keyOfPerson,
   MAX_REPEAT_TIMES,
+  type NoDatesLeft,
   type Occurrence,
   type PersonToInvite,
   type Repeat,
@@ -29,6 +27,7 @@ import {
   type RepeatFrequency,
   type TimeZone,
 } from "../types";
+import { dayTitle } from "./event-text";
 
 const MINUTE_MS = 60_000;
 const SLOT_MINUTES = 30;
@@ -306,22 +305,38 @@ function repeatOf(
   }
 }
 
-export const WEEKEND_ONLY_MESSAGE =
-  "Every weekday skips Saturday and Sunday, so this repeat would never happen. Choose a later day for it to end.";
-
-// The only repeat the dialog offers that can have no dates. The days are the event's own,
-// as the repeat follows its zone, not the device's.
-export function weekendOnly({ time, repeat }: EventDraft): boolean {
-  if (repeat?.frequency !== "weekdays" || repeat.end.kind !== "onDate") {
-    return false;
+// The answer to a repeat with no dates, at the field it's fixed in. It says what saving
+// would do rather than what the form shows, since the two can differ. The form takes no
+// last date before the day it starts, and any later one still gives the repeat a date.
+export function askForEnd(
+  needs: NoDatesLeft["needs"],
+  { repeatEnd, startDate }: EventForm,
+  today: CivilDate,
+): { field: FormField; message: string } {
+  const told = "The repeat would end up with no dates, so it wasn't saved.";
+  if (needs.kind === "afterTimes") {
+    return {
+      field: "repeatTimes",
+      message: `${told} Set the number of times to ${needs.times} or more.`,
+    };
   }
-  const start = startDateOf(time);
-  return (
-    isWeekend(start) &&
-    isWeekend(repeat.end.date) &&
-    daysBetween(start, repeat.end.date) <= 1
-  );
+  const start = parseCivilDate(startDate);
+  const day = dayTitle(start && start > needs.date ? start : needs.date, today);
+  return repeatEnd === "onDate"
+    ? {
+        field: "repeatUntil",
+        message: `${told} Set the last date to ${day} or later.`,
+      }
+    : {
+        field: "repeatEnd",
+        message: `${told} It would take more than ${MAX_REPEAT_TIMES} times to reach one, so set it to end on a day, ${day} or later.`,
+      };
 }
+
+// Asked again which ones to change, as after a refusal, the one picked before stays if
+// it's still offered.
+export const scopeToAsk = (picked: ChangeScope, scopes: ChangeScope[]) =>
+  scopes.includes(picked) ? picked : (scopes[0] as ChangeScope);
 
 // `zone` is the device's, which the fields are on.
 export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {

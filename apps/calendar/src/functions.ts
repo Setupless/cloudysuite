@@ -53,7 +53,7 @@ import {
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
   type Member,
-  NEVER_HAPPENS_MESSAGE,
+  type NoDatesLeft,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_IT_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
@@ -339,7 +339,7 @@ const organiserName = (person: { name: string }) =>
 
 export const createEvent = createServerFn({ method: "POST" })
   .validator(parseNewEventInput)
-  .handler(async ({ data }): Promise<CreatedEvent> => {
+  .handler(async ({ data }): Promise<CreatedEvent | NoDatesLeft> => {
     const person = await me();
     const calendar = await openCalendarAs(person.id, data.calendarId);
     const draft = await withColleagues(data.draft);
@@ -350,9 +350,8 @@ export const createEvent = createServerFn({ method: "POST" })
     );
     switch (result.status) {
       case "created":
-        return { uid: result.uid, first: result.first };
-      case "neverHappens":
-        throw refusal(400, NEVER_HAPPENS_MESSAGE);
+      case "noDatesLeft":
+        return result;
       case "noAccess":
         throw refusal(403, VIEW_ONLY_MESSAGE);
       case "notInvitable":
@@ -364,17 +363,18 @@ export const createEvent = createServerFn({ method: "POST" })
 
 export const updateEvent = createServerFn({ method: "POST" })
   .validator(parseEventChangeInput)
-  .handler(async ({ data }): Promise<void> => {
+  .handler(async ({ data }): Promise<{ status: "done" } | NoDatesLeft> => {
     const calendar = await openCalendarAs((await me()).id, data.calendarId);
     const draft = await withColleagues(data.draft);
-    answerChange(
-      await calendar.update(
-        data.target,
-        data.scope,
-        draft,
-        await invitableIn(draft),
-      ),
+    const result = await calendar.update(
+      data.target,
+      data.scope,
+      draft,
+      await invitableIn(draft),
     );
+    if (result.status === "noDatesLeft") return result;
+    answerChange(result);
+    return { status: "done" };
   });
 
 export const deleteEvent = createServerFn({ method: "POST" })
