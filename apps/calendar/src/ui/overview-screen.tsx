@@ -534,11 +534,11 @@ function Heading({
 }) {
   return (
     <div className="@container">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 pt-3 pb-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-3 px-4 pt-3 pb-3.5 @2xl:pb-2.5">
         <h1 className="pl-1 text-[21px] leading-[34px] font-semibold">
           Overview
         </h1>
-        <div className="order-1 flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @3xl:order-none @3xl:min-h-0 @3xl:basis-0">
+        <div className="order-1 flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @2xl:order-none @2xl:min-h-0 @2xl:basis-0">
           {children}
         </div>
         <div className="ml-auto flex h-[34px] items-center self-start">
@@ -630,7 +630,7 @@ function LiveOverview() {
           </Button>
         }
       >
-        <p className="basis-full pl-1 text-secondary @3xl:basis-auto @3xl:pl-0">
+        <p className="basis-full pl-1 text-secondary @2xl:basis-auto @2xl:pl-0">
           {dayTitle(today, today)}
         </p>
         {plan.allDay.map((event) => (
