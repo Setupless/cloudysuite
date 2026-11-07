@@ -33,7 +33,6 @@ import {
   type Budget,
   type DateOfSeries,
   datesOf,
-  firstDateOf,
   indexOf,
   repeatOf,
   ruleOf,
@@ -74,6 +73,8 @@ import {
   keyOfPerson,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
+  MAX_REPEAT_TIMES,
+  type NoDatesLeft,
   type NotSentReason,
   type Occurrence,
   type OccurrenceId,
@@ -92,6 +93,7 @@ import {
   type TimeZone,
   type UnsentCancellation,
   type UnsentTo,
+  type UpdateResult,
 } from "./types";
 
 export type Actor = {
@@ -764,6 +766,59 @@ function carryOwnDates(
   return { exdates: [...exdates].sort(), changes: [...changes.values()] };
 }
 
+const NO_OWN_DATES: OwnDates = { exdates: [], changes: [] };
+
+type DateKept = { before: number; time: EventTime };
+
+// The first date a series shows, and how many of its dates come before it. A date removed
+// on its own and changed too still shows, as its change. Each date removed takes at most
+// one step, so the walk ends within one more than there are.
+function firstDateKept(
+  { rule, time }: Pick<StoredEvent, "rule" | "time">,
+  own: OwnDates,
+): DateKept | null {
+  if (rule === null) return { before: 0, time };
+  const changed = new Set(own.changes.map(idOfChange));
+  const removed = new Set(own.exdates.filter((id) => !changed.has(id)));
+  let before = 0;
+  for (const date of datesOf(rule, time, { steps: removed.size + 1 })) {
+    if (!removed.has(date.id)) return { before, time: date.time };
+    before++;
+  }
+  return null;
+}
+
+// The edited series' first date, given `own`, the dates removed or changed on their own as
+// carried onto it. When it has none, the nearest end of the kind asked for that gives it
+// one: the end that just reaches the first date of the same repeat with no end, with those
+// dates carried onto that by `carryOnto`. Past the most times a repeat can have, that's the
+// earliest last date instead.
+function firstDateOrEnd(
+  repeat: Repeat | null,
+  edited: Pick<StoredEvent, "rule" | "time">,
+  own: OwnDates,
+  carryOnto: (rule: string) => OwnDates,
+): DateKept | NoDatesLeft {
+  const kept = firstDateKept(edited, own);
+  // A one-off event has its one date, and a repeat with no end goes on past every date
+  // removed, so both always have a first date. So does the repeat below with no end.
+  if (kept || repeat === null || repeat.end.kind === "never") {
+    return kept as DateKept;
+  }
+  const asked: NoDatesLeft["needs"] = repeat.end;
+  const { time } = edited;
+  const rule = ruleOf({ ...repeat, end: { kind: "never" } }, time);
+  const reached = firstDateKept({ rule, time }, carryOnto(rule)) as DateKept;
+  const times = reached.before + 1;
+  return {
+    status: "noDatesLeft",
+    needs:
+      asked.kind === "afterTimes" && times <= MAX_REPEAT_TIMES
+        ? { kind: "afterTimes", times }
+        : { kind: "onDate", date: startDateOf(reached.time) },
+  };
+}
+
 const wallStart = (time: EventTime) =>
   time.kind === "allDay"
     ? wallOfDate(time.startDate)
@@ -1195,9 +1250,15 @@ export class EventStore {
     );
     if (planned.status !== "planned") return planned;
     const { attendees } = planned;
-    const rule = draft.repeat && ruleOf(draft.repeat, draft.time);
-    const first = rule === null ? draft.time : firstDateOf(rule, draft.time);
-    if (!first) return { status: "neverHappens" };
+    const { repeat, time } = draft;
+    const rule = repeat && ruleOf(repeat, time);
+    const first = firstDateOrEnd(
+      repeat,
+      { rule, time },
+      NO_OWN_DATES,
+      () => NO_OWN_DATES,
+    );
+    if ("status" in first) return first;
     const uid = crypto.randomUUID() as EventUid;
     this.db.transaction(() => {
       this.#write(
@@ -1207,7 +1268,7 @@ export class EventStore {
           title: draft.title,
           location: draft.location,
           notes: draft.notes,
-          time: draft.time,
+          time,
           rule,
           exdates: [],
           organiser: {
@@ -1226,7 +1287,7 @@ export class EventStore {
       }
       this.#queueFor(uid, [], attendees, actor, now);
     });
-    return { status: "created", uid, first };
+    return { status: "created", uid, first: first.time };
   }
 
   update(
@@ -1237,7 +1298,7 @@ export class EventStore {
     invitable: readonly Invitee[],
     outside: OutsideInviting,
     now: number,
-  ): ChangeResult {
+  ): UpdateResult {
     if (!canEdit(actor)) return { status: "noAccess" };
     const series = this.#series(target.uid);
     if (!series) return { status: "gone" };
@@ -1351,25 +1412,24 @@ export class EventStore {
       sequence: 0,
       cancelled: false,
     };
+    const later: OwnDates = {
+      exdates: series.exdates.filter((exdate) => exdate > id),
+      changes: this.#rows<EventRow>(
+        "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
+        series.uid,
+        id,
+      ).map(parseRow),
+    };
+    const carryOnto = (rule: string | null) =>
+      carryOwnDates(series, later, { ...edited, rule }, slot, opened);
+    const own = carryOnto(edited.rule);
+    const shown = firstDateOrEnd(repeat, edited, own, carryOnto);
+    if ("status" in shown) return shown;
     const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
     const carried = after.map((attendee) => ({ ...attendee, revision: 0 }));
     this.db.transaction(() => {
-      const own = carryOwnDates(
-        series,
-        {
-          exdates: series.exdates.filter((exdate) => exdate > id),
-          changes: this.#rows<EventRow>(
-            "SELECT * FROM events WHERE uid = ? AND recurrence_id > ?",
-            series.uid,
-            id,
-          ).map(parseRow),
-        },
-        edited,
-        slot,
-        opened,
-      );
       this.#endBefore(series, id, now);
       this.#queueFor(series.uid, before, before, actor, now);
       this.#write({ ...edited, exdates: own.exdates }, now);
@@ -1394,35 +1454,33 @@ export class EventStore {
     after: StoredAttendee[],
     opened: Opened | null,
     now: number,
-  ): ChangeResult {
+  ): UpdateResult {
     const { time } = values;
     // A rule from outside may be spelled differently from the one Calendar writes, so
     // a change that keeps the same repeat keeps its text.
     const unchanged =
       sameTime(time, series.time) && sameRepeat(repeat, shownRepeat(series));
-    const rule = unchanged ? series.rule : repeat && ruleOf(repeat, time);
+    const edited: StoredEvent = {
+      ...series,
+      ...values,
+      rule: unchanged ? series.rule : repeat && ruleOf(repeat, time),
+      sequence: this.#nextSequence(series.uid),
+    };
+    const all: OwnDates = {
+      exdates: series.exdates,
+      changes: this.#rows<EventRow>(
+        "SELECT * FROM events WHERE uid = ? AND recurrence_id IS NOT NULL",
+        series.uid,
+      ).map(parseRow),
+    };
+    const carryOnto = (rule: string | null) =>
+      carryOwnDates(series, all, { ...edited, rule }, series.time, opened);
+    const own = carryOnto(edited.rule);
+    const shown = firstDateOrEnd(repeat, edited, own, carryOnto);
+    if ("status" in shown) return shown;
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {
-      const edited: StoredEvent = {
-        ...series,
-        ...values,
-        rule,
-        sequence: this.#nextSequence(series.uid),
-      };
-      const own = carryOwnDates(
-        series,
-        {
-          exdates: series.exdates,
-          changes: this.#rows<EventRow>(
-            "SELECT * FROM events WHERE uid = ? AND recurrence_id IS NOT NULL",
-            series.uid,
-          ).map(parseRow),
-        },
-        edited,
-        series.time,
-        opened,
-      );
       this.#dropChanges(series.uid, null);
       this.#write({ ...edited, exdates: own.exdates }, now);
       for (const row of own.changes) this.#write(row, now);

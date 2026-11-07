@@ -23,7 +23,7 @@ import {
   type SentEmail,
 } from "./email/test-support";
 import { readCalendarFile } from "./outside/ics";
-import { createCalendarTest, SYDNEY, TEAM } from "./test-support";
+import { createCalendarTest, SYDNEY, saved, TEAM } from "./test-support";
 import type {
   CalendarOccurrence,
   CivilDate,
@@ -180,9 +180,11 @@ async function invite(
   more: Partial<EventDraft> = {},
   by: UserId = people.manager,
 ) {
-  const { uid } = await as(by).createEvent({
-    data: { calendarId: TEAM, draft: planning({ people: invited, ...more }) },
-  });
+  const { uid } = saved(
+    await as(by).createEvent({
+      data: { calendarId: TEAM, draft: planning({ people: invited, ...more }) },
+    }),
+  );
   await objects.settle();
   return uid;
 }
@@ -452,12 +454,14 @@ test("nothing goes once the organiser is suspended, their address leaves their m
     ],
   ];
   for (const [name, before, after, reason] of cases) {
-    const { uid } = await as(people.manager).createEvent({
-      data: {
-        calendarId: TEAM,
-        draft: planning({ title: name, people: [outside(OUTSIDE)] }),
-      },
-    });
+    const { uid } = saved(
+      await as(people.manager).createEvent({
+        data: {
+          calendarId: TEAM,
+          draft: planning({ title: name, people: [outside(OUTSIDE)] }),
+        },
+      }),
+    );
     before();
     await objects.settle();
     after();

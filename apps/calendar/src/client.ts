@@ -42,6 +42,7 @@ import type {
   RetryResult,
   UnsentCancellation,
   TimeZone,
+  UpdateResult,
 } from "./types";
 
 export type CalendarClient = {
@@ -61,7 +62,7 @@ export type CalendarClient = {
     scope: ChangeScope,
     draft: EventDraft,
     invitable: Invitee[],
-  ): Promise<ChangeResult>;
+  ): Promise<UpdateResult>;
   remove(target: EventTarget, scope: ChangeScope): Promise<ChangeResult>;
   importEvents(
     organiserName: string,
@@ -113,7 +114,7 @@ export function openCalendar(env: Env, grant: CalendarGrant): CalendarClient {
         scope,
         draft,
         invitable,
-      )) as ChangeResult,
+      )) as UpdateResult,
     remove: async (target, scope) =>
       (await stub.removeEvent(actor, target, scope)) as ChangeResult,
     importEvents: async (organiserName, groups) =>

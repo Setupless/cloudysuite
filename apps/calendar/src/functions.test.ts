@@ -18,6 +18,7 @@ import {
   draft,
   SYDNEY,
   TEAM,
+  saved,
 } from "./test-support";
 import {
   type ChangeScope,
@@ -28,7 +29,6 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   LAST_MANAGER_MESSAGE,
   MAX_IMPORT_BYTES,
-  NEVER_HAPPENS_MESSAGE,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   type OccurrenceId,
@@ -257,15 +257,17 @@ test("removing someone takes their access away on their next request", async () 
 });
 
 test("the delete confirmation counts each event once, however often it repeats", async () => {
-  const { uid } = await as(people.editor).createEvent({
-    data: {
-      calendarId: TEAM,
-      draft: draft(
-        timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
-        { repeat: { frequency: "weekly", end: { kind: "never" } } },
-      ),
-    },
-  });
+  const { uid } = saved(
+    await as(people.editor).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: draft(
+          timed("2026-11-02T09:00:00+11:00", "2026-11-02T09:15:00+11:00"),
+          { repeat: { frequency: "weekly", end: { kind: "never" } } },
+        ),
+      },
+    }),
+  );
   await as(people.editor).updateEvent({
     data: {
       calendarId: TEAM,
@@ -313,27 +315,56 @@ test.each([
     allDay("2026-11-09", "2026-11-10"),
   ],
 ] as const)("%s says when it first happens", async (_, time, repeat, first) => {
-  const created = await as(people.editor).createEvent({
-    data: { calendarId: TEAM, draft: draft(time, { repeat }) },
-  });
+  const created = saved(
+    await as(people.editor).createEvent({
+      data: { calendarId: TEAM, draft: draft(time, { repeat }) },
+    }),
+  );
   expect(created.first).toEqual(first);
 });
 
-test("a repeat that ends before its first date is refused, and nothing is kept", async () => {
+// The dialog writes the answer in the reader's language, so it comes back as the day.
+const NO_DATES_LEFT = {
+  status: "noDatesLeft",
+  needs: { kind: "onDate", date: date("2026-11-09") },
+} as const;
+
+test("a new repeat with no dates isn't kept, and the answer is the earliest last date that gives it one", async () => {
   const before = calendarNow().events;
   expect(
-    await refused(
-      as(people.editor).createEvent({
-        data: {
-          calendarId: TEAM,
-          draft: draft(saturday, {
-            repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
-          }),
-        },
-      }),
-    ),
-  ).toEqual({ status: 400, message: NEVER_HAPPENS_MESSAGE });
+    await as(people.editor).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: draft(saturday, {
+          repeat: weekdays({ kind: "onDate", date: date("2026-11-08") }),
+        }),
+      },
+    }),
+  ).toEqual(NO_DATES_LEFT);
   expect(calendarNow().events).toEqual(before);
+});
+
+test("an edit into a repeat with no dates isn't saved, and the answer is the earliest last date that gives it one", async () => {
+  const { uid } = saved(
+    await as(people.editor).createEvent({
+      data: { calendarId: TEAM, draft: draft(saturday) },
+    }),
+  );
+  const edit = (repeat: Repeat) =>
+    as(people.editor).updateEvent({
+      data: {
+        calendarId: TEAM,
+        target: { uid, occurrenceId: null },
+        scope: "all",
+        draft: draft(saturday, { repeat }),
+      },
+    });
+  expect(
+    await edit(weekdays({ kind: "onDate", date: date("2026-11-08") })),
+  ).toEqual(NO_DATES_LEFT);
+  expect(
+    await edit(weekdays({ kind: "onDate", date: date("2026-11-09") })),
+  ).toEqual({ status: "done" });
 });
 
 test("a personal calendar takes a new colour, but can't be deleted, left, renamed, or shared", async () => {
@@ -459,15 +490,17 @@ test("removing someone hands their calendar to the person chosen, events and all
       ),
     },
   });
-  const { uid: planning } = await as(removed).createEvent({
-    data: {
-      calendarId: TEAM,
-      draft: draft(
-        timed("2026-11-11T09:00:00+11:00", "2026-11-11T10:00:00+11:00"),
-        { title: "Planning" },
-      ),
-    },
-  });
+  const { uid: planning } = saved(
+    await as(removed).createEvent({
+      data: {
+        calendarId: TEAM,
+        draft: draft(
+          timed("2026-11-11T09:00:00+11:00", "2026-11-11T10:00:00+11:00"),
+          { title: "Planning" },
+        ),
+      },
+    }),
+  );
 
   await handOver(kit.database, removed, "Sam Rivera", people.viewer);
   await kit.auth.api.removeUser({

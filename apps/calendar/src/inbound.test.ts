@@ -42,7 +42,7 @@ import {
 } from "./inbound-test-support";
 import { readCalendarFile } from "./outside/ics";
 import { HOSTILE_RULES } from "./outside/test-support";
-import { createCalendarTest, SYDNEY, TEAM } from "./test-support";
+import { createCalendarTest, SYDNEY, saved, TEAM } from "./test-support";
 import type {
   CalendarOccurrence,
   CivilDate,
@@ -583,19 +583,21 @@ const TUESDAY: EventTime = {
 } as EventTime;
 
 async function inviteFrom(calendarId: CalendarId, people: PersonToInvite[]) {
-  const { uid } = await as().createEvent({
-    data: {
-      calendarId,
-      draft: {
-        title: "Weekly planning",
-        location: "",
-        notes: "",
-        time: TUESDAY,
-        repeat: null,
-        people,
+  const { uid } = saved(
+    await as().createEvent({
+      data: {
+        calendarId,
+        draft: {
+          title: "Weekly planning",
+          location: "",
+          notes: "",
+          time: TUESDAY,
+          repeat: null,
+          people,
+        },
       },
-    },
-  });
+    }),
+  );
   await calendars.settle();
   return uid as EventUid;
 }
