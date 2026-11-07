@@ -522,11 +522,29 @@ function AllDayChip({
   );
 }
 
-function Heading({ children }: { children?: ReactNode }) {
+// The lines keep their height before the browser knows the day, so nothing moves when
+// the date and New event arrive. The padding goes inside the container, so its queries
+// see the screen's width, as Schedule's do.
+function Heading({
+  children,
+  action,
+}: {
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 px-4 pt-3.5 pb-2.5">
-      <h1 className="text-[21px] font-semibold">Overview</h1>
-      {children}
+    <div className="@container">
+      <div className="flex flex-wrap items-baseline gap-x-3 px-4 pt-3 pb-3.5 @2xl:pb-2.5">
+        <h1 className="pl-1 text-[21px] leading-[34px] font-semibold">
+          Overview
+        </h1>
+        <div className="order-1 flex min-h-6 min-w-0 grow basis-full flex-wrap items-baseline gap-x-3 gap-y-1.5 @2xl:order-none @2xl:min-h-0 @2xl:basis-0">
+          {children}
+        </div>
+        <div className="ml-auto flex h-[34px] items-center self-start">
+          {action}
+        </div>
+      </div>
     </div>
   );
 }
@@ -596,12 +614,8 @@ function LiveOverview() {
 
   return (
     <>
-      <Heading>
-        <p className="text-secondary">{dayTitle(today, today)}</p>
-        {plan.allDay.map((event) => (
-          <AllDayChip key={event.key} event={event} zone={zone} today={today} />
-        ))}
-        <div className="ml-auto">
+      <Heading
+        action={
           <Button
             ref={newButton}
             variant="toolbarAction"
@@ -610,9 +624,18 @@ function LiveOverview() {
             disabled={!calendars.data}
             onClick={(click) => openNew(click.currentTarget)}
           >
-            New event
+            {/* Only the + where the label won't fit beside the title. In px, since a larger
+                root font widens that line only a little. */}
+            <span className="@max-[280px]:sr-only">New event</span>
           </Button>
-        </div>
+        }
+      >
+        <p className="basis-full pl-1 text-secondary @2xl:basis-auto @2xl:pl-0">
+          {dayTitle(today, today)}
+        </p>
+        {plan.allDay.map((event) => (
+          <AllDayChip key={event.key} event={event} zone={zone} today={today} />
+        ))}
       </Heading>
       <div
         className="flex flex-col gap-5 px-4 pb-6"
