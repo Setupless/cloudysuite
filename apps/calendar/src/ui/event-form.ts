@@ -322,13 +322,15 @@ export function askForEnd(
   }
   const start = parseCivilDate(startDate);
   const day = dayTitle(start && start > needs.date ? start : needs.date, today);
-  return {
-    field: "repeatUntil",
-    message:
-      repeatEnd === "onDate"
-        ? `${told} Set the last date to ${day} or later.`
-        : `${told} It would take more than ${MAX_REPEAT_TIMES} times to reach one, so set it to end on a day, ${day} or later.`,
-  };
+  return repeatEnd === "onDate"
+    ? {
+        field: "repeatUntil",
+        message: `${told} Set the last date to ${day} or later.`,
+      }
+    : {
+        field: "repeatEnd",
+        message: `${told} It would take more than ${MAX_REPEAT_TIMES} times to reach one, so set it to end on a day, ${day} or later.`,
+      };
 }
 
 // Asked again which ones to change, as after a refusal, the one picked before stays if

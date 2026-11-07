@@ -257,14 +257,14 @@ test.each([
     "a last date, when the number of times would be more than a repeat can have,",
     { kind: "onDate", date: date("2029-08-05") },
     { repeatEnd: "afterTimes", startDate: "2029-08-05" },
-    "repeatUntil",
+    "repeatEnd",
     `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-05"), TODAY)} or later.`,
   ],
   [
     "a last date no earlier than the day it starts",
     { kind: "onDate", date: date("2029-08-05") },
     { repeatEnd: "afterTimes", startDate: "2029-08-10" },
-    "repeatUntil",
+    "repeatEnd",
     `It would take more than 999 times to reach one, so set it to end on a day, ${dayTitle(date("2029-08-10"), TODAY)} or later.`,
   ],
 ] as const)(

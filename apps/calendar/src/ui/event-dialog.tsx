@@ -638,6 +638,7 @@ export function EventDialog({
                       repeatEnd: event.target.value as EventForm["repeatEnd"],
                     })
                   }
+                  {...invalid("repeatEnd")}
                 >
                   <option value="never">Never</option>
                   <option value="onDate">On a day</option>
