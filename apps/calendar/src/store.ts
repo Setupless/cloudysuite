@@ -73,6 +73,7 @@ import {
   keyOfPerson,
   MAX_OCCURRENCES,
   MAX_PERSON_NAME_LENGTH,
+  MAX_REPEAT_TIMES,
   type NoDatesLeft,
   type NotSentReason,
   type Occurrence,
@@ -84,7 +85,6 @@ import {
   type PersonToInvite,
   type RangeListing,
   type Repeat,
-  type RepeatEnd,
   type RetryResult,
   type ShownRepeat,
   type Shortfall,
@@ -766,19 +766,20 @@ function carryOwnDates(
   return { exdates: [...exdates].sort(), changes: [...changes.values()] };
 }
 
-type RecurrenceSet = Pick<StoredEvent, "rule" | "time" | "exdates">;
+const NO_OWN_DATES: OwnDates = { exdates: [], changes: [] };
+
 type DateKept = { before: number; time: EventTime };
 
-// A series' first date that wasn't removed on its own, and how many of its dates come
-// before it. Each removed date takes at most one, so the walk ends within one more than
-// there are.
-function firstDateKept({
-  rule,
-  time,
-  exdates,
-}: RecurrenceSet): DateKept | null {
+// The first date a series shows, and how many of its dates come before it. A date removed
+// on its own and changed too still shows, as its change. Each date removed takes at most
+// one step, so the walk ends within one more than there are.
+function firstDateKept(
+  { rule, time }: Pick<StoredEvent, "rule" | "time">,
+  own: OwnDates,
+): DateKept | null {
   if (rule === null) return { before: 0, time };
-  const removed = new Set(exdates);
+  const changed = new Set(own.changes.map(idOfChange));
+  const removed = new Set(own.exdates.filter((id) => !changed.has(id)));
   let before = 0;
   for (const date of datesOf(rule, time, { steps: removed.size + 1 })) {
     if (!removed.has(date.id)) return { before, time: date.time };
@@ -787,19 +788,34 @@ function firstDateKept({
   return null;
 }
 
-const withNoEnd = (repeat: Repeat, time: EventTime) =>
-  ruleOf({ ...repeat, end: { kind: "never" } }, time);
-
-// The nearest end of the kind asked for that gives a repeat a date. Going on with no end,
-// as `endless` does, it always keeps one, and that end is the one that reaches it.
-function noDatesLeft(end: RepeatEnd, endless: RecurrenceSet): NoDatesLeft {
-  const kept = firstDateKept(endless) as DateKept;
+// The edited series' first date, given `own`, the dates removed or changed on their own as
+// carried onto it. When it has none, the nearest end of the kind asked for that gives it
+// one: the end that just reaches the first date of the same repeat with no end, with those
+// dates carried onto that by `carryOnto`. Past the most times a repeat can have, that's the
+// earliest last date instead.
+function firstDateOrEnd(
+  repeat: Repeat | null,
+  edited: Pick<StoredEvent, "rule" | "time">,
+  own: OwnDates,
+  carryOnto: (rule: string) => OwnDates,
+): DateKept | NoDatesLeft {
+  const kept = firstDateKept(edited, own);
+  // A one-off event has its one date, and a repeat with no end goes on past every date
+  // removed, so both always have a first date. So does the repeat below with no end.
+  if (kept || repeat === null || repeat.end.kind === "never") {
+    return kept as DateKept;
+  }
+  const asked: NoDatesLeft["needs"] = repeat.end;
+  const { time } = edited;
+  const rule = ruleOf({ ...repeat, end: { kind: "never" } }, time);
+  const reached = firstDateKept({ rule, time }, carryOnto(rule)) as DateKept;
+  const times = reached.before + 1;
   return {
     status: "noDatesLeft",
     needs:
-      end.kind === "afterTimes"
-        ? { kind: "afterTimes", times: kept.before + 1 }
-        : { kind: "onDate", date: startDateOf(kept.time) },
+      asked.kind === "afterTimes" && times <= MAX_REPEAT_TIMES
+        ? { kind: "afterTimes", times }
+        : { kind: "onDate", date: startDateOf(reached.time) },
   };
 }
 
@@ -1236,15 +1252,13 @@ export class EventStore {
     const { attendees } = planned;
     const { repeat, time } = draft;
     const rule = repeat && ruleOf(repeat, time);
-    const first = firstDateKept({ rule, time, exdates: [] });
-    if (!first) {
-      const repeating = repeat as Repeat;
-      return noDatesLeft(repeating.end, {
-        rule: withNoEnd(repeating, time),
-        time,
-        exdates: [],
-      });
-    }
+    const first = firstDateOrEnd(
+      repeat,
+      { rule, time },
+      NO_OWN_DATES,
+      () => NO_OWN_DATES,
+    );
+    if ("status" in first) return first;
     const uid = crypto.randomUUID() as EventUid;
     this.db.transaction(() => {
       this.#write(
@@ -1406,12 +1420,11 @@ export class EventStore {
         id,
       ).map(parseRow),
     };
-    const own = carryOwnDates(series, later, edited, slot, opened);
-    if (repeat && !firstDateKept({ ...edited, exdates: own.exdates })) {
-      const endless = { ...edited, rule: withNoEnd(repeat, time) };
-      const { exdates } = carryOwnDates(series, later, endless, slot, opened);
-      return noDatesLeft(repeat.end, { ...endless, exdates });
-    }
+    const carryOnto = (rule: string | null) =>
+      carryOwnDates(series, later, { ...edited, rule }, slot, opened);
+    const own = carryOnto(edited.rule);
+    const shown = firstDateOrEnd(repeat, edited, own, carryOnto);
+    if ("status" in shown) return shown;
     const { uid } = edited;
     // The new series is a new invitation, so its copies count answers from the start.
     // Each person keeps what they last said, so nobody who said Yes is asked again.
@@ -1460,18 +1473,11 @@ export class EventStore {
         series.uid,
       ).map(parseRow),
     };
-    const own = carryOwnDates(series, all, edited, series.time, opened);
-    if (repeat && !firstDateKept({ ...edited, exdates: own.exdates })) {
-      const endless = { ...edited, rule: withNoEnd(repeat, time) };
-      const { exdates } = carryOwnDates(
-        series,
-        all,
-        endless,
-        series.time,
-        opened,
-      );
-      return noDatesLeft(repeat.end, { ...endless, exdates });
-    }
+    const carryOnto = (rule: string | null) =>
+      carryOwnDates(series, all, { ...edited, rule }, series.time, opened);
+    const own = carryOnto(edited.rule);
+    const shown = firstDateOrEnd(repeat, edited, own, carryOnto);
+    if ("status" in shown) return shown;
     const held = this.#people(series.uid);
     const before = held?.attendees ?? [];
     this.db.transaction(() => {

@@ -306,22 +306,35 @@ function repeatOf(
 }
 
 // The answer to a repeat with no dates, at the field it's fixed in. It says what saving
-// would do rather than what the form shows, since the two can differ.
+// would do rather than what the form shows, since the two can differ. The form takes no
+// last date before the day it starts, and any later one still gives the repeat a date.
 export function askForEnd(
   needs: NoDatesLeft["needs"],
+  { repeatEnd, startDate }: EventForm,
   today: CivilDate,
 ): { field: FormField; message: string } {
   const told = "The repeat would end up with no dates, so it wasn't saved.";
-  return needs.kind === "onDate"
-    ? {
-        field: "repeatUntil",
-        message: `${told} Set the last date to ${dayTitle(needs.date, today)} or later.`,
-      }
-    : {
-        field: "repeatTimes",
-        message: `${told} Set the number of times to ${needs.times} or more.`,
-      };
+  if (needs.kind === "afterTimes") {
+    return {
+      field: "repeatTimes",
+      message: `${told} Set the number of times to ${needs.times} or more.`,
+    };
+  }
+  const start = parseCivilDate(startDate);
+  const day = dayTitle(start && start > needs.date ? start : needs.date, today);
+  return {
+    field: "repeatUntil",
+    message:
+      repeatEnd === "onDate"
+        ? `${told} Set the last date to ${day} or later.`
+        : `${told} It would take more than ${MAX_REPEAT_TIMES} times to reach one, so set it to end on a day, ${day} or later.`,
+  };
 }
+
+// Asked again which ones to change, as after a refusal, the one picked before stays if
+// it's still offered.
+export const scopeToAsk = (picked: ChangeScope, scopes: ChangeScope[]) =>
+  scopes.includes(picked) ? picked : (scopes[0] as ChangeScope);
 
 // `zone` is the device's, which the fields are on.
 export function draftOf(form: EventForm, zone: TimeZone): CheckedForm {

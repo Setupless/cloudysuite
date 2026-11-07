@@ -220,7 +220,8 @@ export type CreatedEvent = {
 
 // A repeat with no date, because none falls between its start and its end or the ones
 // that do were removed on their own. `needs` is the nearest end of the same kind that
-// gives it one: the earliest last date, where the event is, or the fewest times.
+// gives it one: the earliest last date, where the event is, or the fewest times. When the
+// fewest times is more than a repeat can have, it's the earliest last date.
 export type NoDatesLeft = {
   status: "noDatesLeft";
   needs: Exclude<RepeatEnd, { kind: "never" }>;
