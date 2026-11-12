@@ -4,58 +4,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { dismissMoveNotice } from "../functions";
 import { call, moveNoticesQuery, tasksKeys } from "../queries";
-import type { BoardOfTask, MoveDestination, MoveNotice } from "../types";
-
-const placeOf = (to: MoveDestination) =>
-  to.kind === "personal" ? "your private tasks" : to.name;
-
-const stillOnText = (board: BoardOfTask) =>
-  board.kind === "personal"
-    ? "It's still in your private tasks."
-    : `It's still on ${board.name}.`;
-
-// Why, then what to do next.
-function reasonOf(notice: MoveNotice): { why: string; next: string | null } {
-  const place = placeOf(notice.to);
-  switch (notice.setback) {
-    case "noAccess":
-      return notice.to.kind === "team"
-        ? {
-            why: "because you no longer have Can edit there.",
-            next: `Ask one of ${place}'s managers for Can edit, then move it again.`,
-          }
-        : { why: "because you can no longer add tasks there.", next: null };
-    case "busy":
-    case "dropped":
-      return {
-        why: `because ${place} couldn't take it just then.`,
-        next: "Move it again in a minute.",
-      };
-    case "noAnswer":
-      return {
-        why: "because we couldn't get it there for an hour, so we stopped trying.",
-        next: "Move it again to try once more.",
-      };
-  }
-}
+import type { MoveNotice } from "../types";
+import { noticeWords } from "./move-notice-words";
 
 function Words({ notice }: { notice: MoveNotice }) {
-  if (notice.task === null) {
-    return (
-      <strong className="font-semibold">
-        A task you moved didn't move, and you can no longer open the board it's
-        on.
-      </strong>
-    );
-  }
-  const { why, next } = reasonOf(notice);
+  const { lead, rest, next } = noticeWords(notice);
   return (
     <>
-      <strong className="font-semibold">
-        "{notice.task.title}" didn't move to {placeOf(notice.to)}
-      </strong>
-      , {why} {stillOnText(notice.task.stillOn)}
-      {next && <span className="text-secondary"> {next}</span>}
+      <strong className="font-semibold">{lead}</strong>
+      {rest}
+      <span className="text-secondary"> {next}</span>
     </>
   );
 }

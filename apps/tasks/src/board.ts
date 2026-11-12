@@ -34,6 +34,7 @@ const NOTICE_INDEX_BATCH = 30;
 // store refuses what they may not do in the same call that would do it.
 export class Board extends DurableObject<Env> {
   readonly #store: TaskStore;
+  readonly #boardId: BoardId;
   // Stops the alarm sending a move the person's request is still waiting on, so one
   // can't be refused while the other is accepted.
   readonly #sendingMoves = new Set<string>();
@@ -48,6 +49,10 @@ export class Board extends DurableObject<Env> {
     };
     applyMigrations(db, MIGRATIONS);
     this.#store = new TaskStore(db);
+    // stub.ts reaches every board through idFromName(boardId).
+    const boardId = ctx.id.name;
+    if (!boardId) throw new Error("A board is always reached by its id.");
+    this.#boardId = boardId as BoardId;
   }
 
   listTasks(actor: Actor): Task[] {
@@ -220,31 +225,29 @@ export class Board extends DurableObject<Env> {
     await this.#scheduleNextWakeUp();
   }
 
-  // Only a failure stops it early, and the alarm picks up what's left.
   #writeNoticeIndex(): Promise<void> {
-    const run = this.#noticeWrites.then(async () => {
-      try {
-        for (;;) {
-          const writes = this.#store.noticeIndexWrites(
-            Date.now(),
-            NOTICE_INDEX_BATCH,
-          );
-          if (writes.length === 0) return;
-          await writeNoticeIndex(this.env.DB, writes);
-          this.#store.finishNoticeIndexWrites(writes);
-        }
-      } catch (error) {
-        console.error(
-          "Could not save a note about a move. Trying again.",
-          error,
-        );
-        this.#store.postponeNoticeIndexWrites(
-          Date.now() + NOTICE_INDEX_RETRY_MS,
-        );
-      }
-    });
-    this.#noticeWrites = run;
+    const run = this.#noticeWrites.then(() => this.#writeDueNoticeIndex());
+    // The caller still sees a failure, and the next write runs anyway.
+    this.#noticeWrites = run.catch(() => {});
     return run;
+  }
+
+  // Only a failure stops it early, and the alarm picks up what's left.
+  async #writeDueNoticeIndex(): Promise<void> {
+    try {
+      for (;;) {
+        const writes = this.#store.noticeIndexWrites(
+          Date.now(),
+          NOTICE_INDEX_BATCH,
+        );
+        if (writes.length === 0) return;
+        await writeNoticeIndex(this.env.DB, this.#boardId, writes);
+        this.#store.finishNoticeIndexWrites(writes);
+      }
+    } catch (error) {
+      console.error("Could not save a note about a move. Trying again.", error);
+      this.#store.postponeNoticeIndexWrites(Date.now() + NOTICE_INDEX_RETRY_MS);
+    }
   }
 
   // Call this before any other await, so it commits with the rows that need it.

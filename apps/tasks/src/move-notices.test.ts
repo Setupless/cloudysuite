@@ -7,8 +7,11 @@ import {
   test,
 } from "bun:test";
 import type { BoardId } from "@cloudysuite/access";
+import { applyMigrations } from "@cloudysuite/object-sql";
 import { moveNoticesOn } from "./client";
+import { MIGRATIONS } from "./migrations";
 import { noticesAcrossBoards } from "./move-notices";
+import { TaskStore } from "./store";
 import {
   ALICE,
   BOB,
@@ -210,4 +213,77 @@ test("a deleted board takes its notes with it", async () => {
   kit.directory.run("DELETE FROM boards WHERE id = ?", [MARKETING]);
   expect(await notesFor()).toEqual([]);
   expect(asked).toEqual([]);
+});
+
+// Marketing's storage as the release before notes left it, with a move still on its way.
+function movingBeforeNotes() {
+  const id = newTaskId();
+  kit.seedStorage(MARKETING, (db) => {
+    applyMigrations(db, MIGRATIONS.slice(0, -1));
+    const store = new TaskStore(db);
+    const actor = {
+      userId: ALICE.id,
+      boardId: MARKETING,
+      role: "manager",
+      kind: "team",
+    } as const;
+    store.change(actor, create(id, { title: "Plan the launch party" }), START);
+    store.beginMoveOut(actor, {
+      moveId: crypto.randomUUID(),
+      id,
+      toBoardId: PRODUCT,
+      to: { kind: "team", name: "Product" },
+      keepAssigneeId: null,
+      tryAt: START + MINUTE,
+      giveUpAt: START + 60 * MINUTE,
+    });
+  });
+  return id;
+}
+
+test("a move already on its way when notes began leaves one note when it's refused", async () => {
+  movingBeforeNotes();
+  loseCanEditOnProduct();
+  await laterAlarm();
+  await laterAlarm();
+  expect(await notesFor()).toEqual([
+    {
+      boardId: MARKETING,
+      moveId: expect.any(String),
+      task: { title: "Plan the launch party", stillOn: MARKETING_BOARD },
+      to: { kind: "team", name: "Product" },
+      setback: "noAccess",
+      notedAt: START + MINUTE,
+    },
+  ]);
+});
+
+test("a move already on its way when notes began leaves one note when it's given up", async () => {
+  const id = movingBeforeNotes();
+  kit.fail(PRODUCT, "receiveMove", "silent");
+  kit.fail(PRODUCT, "dropMoveIn", "silent");
+  await laterAlarm(MARKETING, 60 * MINUTE);
+  await laterAlarm();
+  expect(await notesFor()).toMatchObject([
+    { task: { title: "Plan the launch party" }, setback: "noAnswer" },
+  ]);
+  expect(await (await kit.as(ALICE)).findTask(id)).toMatchObject({
+    moving: null,
+  });
+});
+
+test("a note D1 couldn't be told about still arrives after a save that failed outright", async () => {
+  kit.d1Failures.moveNotices = true;
+  const postpone = spyOn(
+    TaskStore.prototype,
+    "postponeNoticeIndexWrites",
+  ).mockImplementationOnce(() => {
+    throw new Error("The object's storage is unavailable");
+  });
+  await refusedLater().catch(() => {});
+  postpone.mockRestore();
+
+  kit.d1Failures.moveNotices = false;
+  await laterAlarm();
+  expect(await notesFor()).toMatchObject([{ setback: "noAccess" }]);
 });

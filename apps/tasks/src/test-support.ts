@@ -6,6 +6,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import { createFakeEmail } from "@cloudysuite/app-email/test-support";
+import type { SqlDriver } from "@cloudysuite/object-sql";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
 import {
   createTestDatabase,
@@ -80,6 +81,7 @@ export function createBoardTest() {
     string,
     { object: InstanceType<typeof Board>; alarm: number | null }
   >();
+  const storages = new Map<string, SqlDriver>();
   const faults = new Map<string, Map<string, Fault>>();
   const calls = new Map<string, BoardCall[]>();
   const email = createFakeEmail();
@@ -132,15 +134,22 @@ export function createBoardTest() {
     },
   } as unknown as Env;
 
+  function storageOf(name: string) {
+    const db = storages.get(name) ?? createSqlDriver().db;
+    storages.set(name, db);
+    return db;
+  }
+
   function instanceOf(name: string) {
     const existing = objects.get(name);
     if (existing) return existing;
-    const { db } = createSqlDriver();
+    const db = storageOf(name);
     const instance = { alarm: null } as {
       object: InstanceType<typeof Board>;
       alarm: number | null;
     };
     const ctx = {
+      id: { name, toString: () => name },
       storage: {
         sql: { exec: db.exec },
         transactionSync: db.transaction,
@@ -203,6 +212,13 @@ export function createBoardTest() {
     as,
     personalBoardOf: (person: Person) => ensurePersonalBoard(d1, person.id),
     alarmOf: (boardId: BoardId) => instanceOf(boardId).alarm,
+    // Fills a board's storage before its object first starts, as an earlier release
+    // would have left it.
+    seedStorage(boardId: BoardId, seed: (db: SqlDriver) => void) {
+      if (objects.has(boardId))
+        throw new Error(`${boardId} has already started`);
+      seed(storageOf(boardId));
+    },
     // The object itself, for calls only another board's object makes.
     objectOf: (boardId: BoardId) => instanceOf(boardId).object,
     fail(boardId: BoardId, method: string, fault: Fault | null) {

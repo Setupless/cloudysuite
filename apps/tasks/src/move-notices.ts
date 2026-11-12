@@ -11,10 +11,11 @@ import type { BoardMoveNotice, MoveNotice, Person } from "./types";
 // can't bring back what a deletion took away.
 export async function writeNoticeIndex(
   database: D1Database,
+  boardId: BoardId,
   writes: readonly NoticeIndexWrite[],
 ): Promise<void> {
   const db = drizzle(database);
-  const [first, ...rest] = writes.map(({ moveId, boardId, userId, present }) =>
+  const [first, ...rest] = writes.map(({ moveId, userId, present }) =>
     present
       ? db.run(
           sql`INSERT INTO board_move_notices (user_id, board_id, move_id)

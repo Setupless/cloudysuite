@@ -114,15 +114,11 @@ export const MIGRATIONS: Migrations = [
      WHERE deleted_at IS NULL`,
   ],
   [
-    // Which board a note is kept on, for D1's board_move_notices. Null for a move begun
-    // before this, which leaves no note.
-    `ALTER TABLE moves_out ADD COLUMN from_board_id TEXT`,
     // Written in the transaction that unlocks the task, so a retry can't lose or repeat
     // it. index_due_at says D1 still needs telling, and what to write is read from
     // dismissed when the write runs. A dismissed row goes once D1 has dropped it.
     `CREATE TABLE move_notices (
       move_id TEXT PRIMARY KEY,
-      board_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       title TEXT NOT NULL,
       to_kind TEXT NOT NULL,

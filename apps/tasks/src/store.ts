@@ -67,7 +67,6 @@ type EmailRow = {
 // What D1's board_move_notices is still to be told about one note.
 export type NoticeIndexWrite = {
   moveId: string;
-  boardId: BoardId;
   userId: UserId;
   present: boolean;
 };
@@ -693,12 +692,11 @@ export class TaskStore {
           task.assignee?.id === input.keepAssigneeId ? task.assignee : null,
       };
       this.#db.exec(
-        `INSERT INTO moves_out (id, task_id, from_board_id, to_board_id, to_kind,
-           to_name, moved_by, phase, task, try_at, give_up_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'locked', ?, ?, ?)`,
+        `INSERT INTO moves_out (id, task_id, to_board_id, to_kind, to_name, moved_by,
+           phase, task, try_at, give_up_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'locked', ?, ?, ?)`,
         input.moveId,
         input.id,
-        actor.boardId,
         input.toBoardId,
         input.to.kind,
         input.to.name,
@@ -770,11 +768,10 @@ export class TaskStore {
 
   #noteSetback(moveId: string, setback: MoveSetback, now: number): void {
     this.#db.exec(
-      `INSERT INTO move_notices (move_id, board_id, user_id, title, to_kind, to_name,
-         setback, noted_at, index_due_at)
-       SELECT id, from_board_id, moved_by, json_extract(task, '$.title'), to_kind,
-         to_name, ?, ?, ?
-       FROM moves_out WHERE id = ? AND from_board_id IS NOT NULL
+      `INSERT INTO move_notices (move_id, user_id, title, to_kind, to_name, setback,
+         noted_at, index_due_at)
+       SELECT id, moved_by, json_extract(task, '$.title'), to_kind, to_name, ?, ?, ?
+       FROM moves_out WHERE id = ?
        ON CONFLICT (move_id) DO NOTHING`,
       setback,
       now,
@@ -818,17 +815,15 @@ export class TaskStore {
   noticeIndexWrites(now: number, limit: number): NoticeIndexWrite[] {
     return this.#rows<{
       move_id: string;
-      board_id: string;
       user_id: string;
       dismissed: number;
     }>(
-      `SELECT move_id, board_id, user_id, dismissed FROM move_notices
+      `SELECT move_id, user_id, dismissed FROM move_notices
        WHERE index_due_at <= ? ORDER BY index_due_at LIMIT ?`,
       now,
       limit,
     ).map((row) => ({
       moveId: row.move_id,
-      boardId: row.board_id as BoardId,
       userId: row.user_id as UserId,
       present: row.dismissed === 0,
     }));
