@@ -107,4 +107,10 @@ export const MIGRATIONS: Migrations = [
       DELETE FROM assignment_emails WHERE task_id = old.id;
     END`,
   ],
+  [
+    // For the reads of one person's tasks: My tasks, Calendar's due tasks, and a person's
+    // open tasks in search. done_at is null exactly while a task is open.
+    `CREATE INDEX tasks_mine ON tasks(assignee_id, done_at, due)
+     WHERE deleted_at IS NULL`,
+  ],
 ];
