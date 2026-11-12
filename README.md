@@ -2,9 +2,9 @@
 
 As close as you can get to Google, on Cloudflare, with your own domains.
 
-CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, and storage.
+CloudySuite is an open source workspace for small organisations. One technical person deploys it to the organisation's Cloudflare account. Everyone else signs in and uses clean, fast apps for mail, calendar, storage, and tasks.
 
-**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. Calendar has personal and team calendars, Overview, and Schedule, where people make, change, and delete events, including repeating ones. It also has `.ics` import, search, invitations between colleagues and their answers, and Join buttons for online meetings. Invitations go out by email, invitations and replies that arrive in Mail reach Calendar, and Mail shows each one as a card with answers, Join, and Add to my calendar. The first release isn't finished until a real deployment has proved all four apps, including sending and receiving real mail and invitations. This README describes the intended product and says where something is not built yet.
+**Status:** built, not yet proven. Auth, the setup wizard, and Mail, including sending, search, labels, rules, spam filtering, import, the installable app, and the optional Jev check, are in the code and tested locally. Storage has team folders with members, My files, uploading, downloading, rename, move, Trash, sharing, search, Starred, and handing over a removed person's files. Calendar has personal and team calendars, Overview, and Schedule, where people make, change, and delete events, including repeating ones. It also has `.ics` import, search, invitations between colleagues and their answers, and Join buttons for online meetings. Invitations go out by email, invitations and replies that arrive in Mail reach Calendar, and Mail shows each one as a card with answers, Join, and Add to my calendar. Tasks is designed and not built yet. The first release isn't finished until a real deployment has proved all five apps, including sending and receiving real mail and invitations. This README describes the intended product and says where something is not built yet.
 
 ## Who it is for
 
@@ -22,6 +22,7 @@ Each app has its own subdomain on the organisation's primary domain.
 | `mail.example.com`     | Mailboxes                                   | Gmail                    | First   |
 | `storage.example.com`  | Files                                       | Google Drive             | First   |
 | `calendar.example.com` | Calendars and invitations                   | Google Calendar          | First   |
+| `tasks.example.com`    | Team boards and private tasks               | Google Tasks             | First   |
 
 Later ideas include a password manager, docs, and sheets.
 
@@ -41,15 +42,15 @@ Every deployment contains every released app. An admin can turn each app off for
 D1 stores the setting as one row for each app that can be turned off, and a missing row means the app is on:
 
 ```ts
-type ToggleableApp = "mail" | "storage";
+type ToggleableApp = "mail" | "storage" | "calendar";
 type AppSetting = { app: ToggleableApp; enabled: boolean };
 ```
 
-The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type grows when Calendar ships.
+The `APPS` registry in `src/routing.ts` defines `ToggleableApp`, so the type grows when Tasks ships.
 
 ## First release
 
-The first release contains Auth, Mail, Storage, and Calendar, and it waits for all four. Mail was built first, because it had to be good enough to replace Gmail for daily use before work on another app started. Calendar joined the first release after Storage, and is built last.
+The first release contains Auth, Mail, Storage, Calendar, and Tasks, and it waits for all five. Mail was built first, because it had to be good enough to replace Gmail for daily use before work on another app started. Calendar joined the first release after Storage. Tasks joined after Calendar, and is built last.
 
 ### Deployment
 
@@ -59,7 +60,7 @@ You need a domain on Cloudflare DNS and the Workers Paid plan. The wizard links 
 2. Open the Worker's URL to start the first-run wizard.
 3. Create an API token from the wizard's link, which pre-fills the token form, and paste the token into the wizard.
 4. Choose your domain and where your apps should live. The wizard checks the domain's DNS and explains its recommendation.
-5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches the `auth`, `mail`, and `storage` hostnames, and generates the sign-in secret. Turning on Email Sending makes Cloudflare add DNS records to your domain itself: `cf-bounce` MX and SPF, a DKIM key, and `_dmarc` with `v=DMARC1; p=reject;`. That last record tells other mail systems to refuse mail that claims to be from your domain but cannot prove it, so check that any other service sending as your domain signs its mail. The wizard never changes a DMARC record you already have.
+5. The wizard enables Email Routing and Email Sending, points the catch-all rule at the Worker, attaches a hostname for each app, such as `auth` and `mail`, and generates the sign-in secret. Turning on Email Sending makes Cloudflare add DNS records to your domain itself: `cf-bounce` MX and SPF, a DKIM key, and `_dmarc` with `v=DMARC1; p=reject;`. That last record tells other mail systems to refuse mail that claims to be from your domain but cannot prove it, so check that any other service sending as your domain signs its mail. The wizard never changes a DMARC record you already have.
 6. Create the first admin account, which also gets a personal mailbox. The wizard then sends you to `auth.<app domain>`.
 
 The wizard calls the Cloudflare API from the Worker. It does not store the token: the token stays in the browser tab, and each call sends it again.
@@ -518,6 +519,80 @@ A `.ics` file can be imported into a calendar the person can edit. An event alre
 
 A deployment set up before Calendar existed has no `calendar.` address, because the wizard runs only once. Add it as a custom domain on the Worker in Cloudflare.
 
+### Tasks
+
+Tasks replaces Google Tasks and simple team to-do boards. It should feel like Reminders made for a team. A person lands on My tasks, the way Storage opens on Home and Calendar on Overview. A team board lists its tasks in three sections, and a task opens in a panel beside the list.
+
+**Built so far:** nothing. The layout was chosen from a throwaway concept with three layouts, compared by three reviewers on different models and a judge.
+
+#### My tasks and boards
+
+- **My tasks lists a person's open work across every board.** That's the open tasks assigned to them on team boards, plus their private tasks. It groups them as Overdue, Today, Tomorrow, Later this week, Later, and No date, soonest first. Later this week runs through Sunday, the week Calendar's Overview uses. A task in progress says Doing. Tasks done today fold into "N done today", with Show.
+- **A board lists its tasks in three sections, Doing, then To do, then Done.** Doing comes first so a long To do list never pushes work in progress out of sight. Each section shows the soonest due first, and tasks with no date last. Done is folded into "N done", with Show, and lists the most recently done first. A board has no columns, because no other app in the suite uses them, and a list reads the same on a phone.
+- **A done task stays.** It never clears itself. It's folded away and search still finds it. Only Delete removes a task.
+- **The circle beside a task marks it done,** and choosing it again sets the task back to To do. The panel's To do, Doing, and Done control changes the status. Nothing shows only on hover, because a phone has no hover.
+- **New task, or N, starts a row at the top of the list.** It offers Today, Tomorrow, or a date, and on a team board someone to assign. On My tasks the new task is private. On a team board it starts with nobody assigned, shown as "Nobody yet", so adding a task for the team doesn't quietly make it yours. There is one way to add a task, like Calendar's one New event. No text in a title is read as a date, so a title is never cut short.
+- **The panel is 300 pixels wide, like Calendar's, and fills the screen on a phone.** It holds the title, the status, who it's assigned to, the due date, which can be cleared, the board, the notes, and a checklist edited in place. While the panel is open, My tasks drops everything beside its list, so the list keeps its width.
+- **The sidebar holds My tasks, then Team boards, then New team board.** On a phone it's the shell's usual menu, as in the other apps.
+- **Keys.** N starts a new task, / goes to search, and Esc closes the panel or a dialog. They use TanStack Hotkeys.
+- **An empty page says what to do next,** such as "Ben has no tasks on Marketing", or on a new board, "Add the first task with New task".
+
+#### A task
+
+- **A task has a title, a status, one assignee or nobody, a due date or none, notes, and a checklist.** The status is To do, Doing, or Done, on every board. A board can't add or rename them, so no board needs setting up.
+- **A due date is a date, not a time,** like an all-day event, so it's the same day in every time zone. Overdue and Today follow the viewer's device date.
+- **A task doesn't repeat.** Calendar handles things that happen on a schedule.
+- **Notes are plain text.** Only `https` links in them are clickable, and each opens in a new tab with no referrer, as in Calendar.
+- **A title holds up to 200 characters, notes up to 10,000, and a checklist up to 50 items of up to 200 characters each.** The server refuses more in plain words.
+- **Each task keeps the names of the person who added it and the person it's assigned to,** so both still show after either is removed.
+- **Delete has Undo for 10 seconds,** the same as Mail's undo send. The board's alarm then deletes the task for good.
+- **A task holds no files yet.** See [Open questions](#open-questions).
+
+#### Private tasks and team boards
+
+- **Each person has private tasks, which only they see.** They live on the person's own board, which is made on first use, like My files. Viewing Tasks changes nothing, because no `GET` request changes a person's data. The database allows one for each person, so two tabs can't make two. A private task has no assignee. Its Board row moves it onto a team board.
+- **A team board is its own member list,** like a team folder or a team calendar, with the same choices. There are no teams across the organisation to keep in step. Anyone signed in can make a team board and becomes its manager. A manager adds and removes people, and sets each one to Can view, Can edit, or Manager. A team board always has a manager, so the last one can't leave or step down. Anyone else can leave. A manager can rename the board, change its colour, and delete it, and the confirmation says how many tasks go with it. Its settings work like a calendar's.
+- **A board's colour is one of the six team colours,** the `avatar-1` to `avatar-6` roles that team folders and calendars use.
+- **Can view is read-only, on the server, with one exception.** It can see every task on the board. It can't add, change, move, or delete one, except that someone with Can view can change the status of a task assigned to them, so they can tick off their own work. The board object makes this check itself, in the same call that would do the work, so hiding a button is only a courtesy.
+- **Anyone with Can edit can assign a task to anyone on the board, Can view included.** The picker, search, and filters list the board's members first, then everyone else in the organisation in a section of its own.
+- **Only a manager adds someone to a board while assigning,** because only a manager adds members anywhere in the suite. A manager who picks someone from the second section is asked "Add Ben Hart to Marketing?". Choosing Add and assign adds them with Can edit, the team folder default, then assigns them. Anyone else who picks them is told "Ask a Marketing manager to add Ben."
+- **Someone taken off a board, or who leaves it, keeps their tasks there.** Each shows their name and "No longer on Marketing", so the team sees who had it, and anyone with Can edit can reassign it. It leaves that person's My tasks, because they can no longer open the board.
+- **Moving a task to another board needs Can edit on both, and works like [Storage's move between drives](#storage).** Two board objects can't share a transaction, so both copies stay locked through the moment both boards hold the task. The sender locks its task, the receiver adds a locked copy, the sender deletes its own, and only then does the receiver unlock. A locked task can't be changed, moved, or deleted, so neither copy can change while both exist. Each move has its own id, and the receiver remembers it, so repeating a step of a move it has finished or dropped changes nothing, and a late repeat can't bring back a task that has since moved on. If an answer never arrives, the sender's alarm asks again. A refusal, such as a deleted board or lost Can edit, unlocks the sender at once. If the receiver still hasn't confirmed its locked copy after an hour, the sender unlocks and keeps the task, and its alarm keeps telling the receiver to drop its locked copy for that move. Once the receiver has confirmed and the sender has deleted its own copy, the sender never gives up. Its alarm keeps asking the receiver to unlock until it does, because only that copy is left. A task whose assignee isn't on the new board arrives with nobody assigned, and the move dialog says so first.
+- **A task on its way to another board never shows twice.** It shows on the board it's leaving, marked "Moving to …", until that board lets it go, and on the new board once its copy unlocks there. The locked copy shows nowhere, so for the moment between those two steps the task shows on neither, as in Storage. My tasks and search follow the same rule. The alarm finishes a move or a delete that was already approved, without asking the access check again, as Storage's alarm does.
+- **One access check.** `checkBoardAccess` is the only thing that issues a board's grant, and says who someone is to the board. Every read and write goes through it.
+- **Each board is one SQLite-backed Durable Object.** A board is a team board or a person's private tasks. The object holds the tasks and their checklists. D1 holds `boards` and `board_access`, and nothing about tasks, so a task's title, notes, and people live in one place.
+- **My tasks asks each board the person is on,** five at a time, and stops asking 5 seconds after it starts, the same as Calendar's search. If a board couldn't be read, a note says so.
+- **Removing a person hands over their private tasks, and deletes nothing.** Their own board becomes a team board named after them, such as "Sam Rivera's tasks", managed by the person the admin chose to receive their files. A team board they managed alone is handed over like a team calendar. Both happen in the same D1 transaction as the files, so choosing Remove again after a failure finishes the job.
+
+#### Search
+
+- **Search finds tasks by title and notes,** across every board the person can reach, done tasks included. Matching works like [Storage's](#storage), so each word must start a word, in any order, whatever the case or accents. Open tasks come first, soonest due first, then done tasks, most recently done first. Each result shows its board. Boards are asked five at a time, and asking stops 5 seconds after it starts. Search text is parsed into words, so no text can cause an error.
+- **People show in their own sections,** the board's members first. Choosing a person on a board shows only their tasks there. From My tasks it lists their open tasks on the boards the searcher shares with them. A person's result never says how many tasks they have, because that would show a colleague's workload.
+
+#### The assignment email
+
+- **Someone assigned a task by someone else gets an email.** It goes from the primary address of the assigner's personal mailbox, the address people know them by. It names the task, the board, and the due date, with Open task, and leaves out the notes. Someone with no personal mailbox has no address to send to, so the assignment stands and the panel says they weren't emailed.
+- **It waits in the board object's own queue until Undo has passed,** then goes through the same Cloudflare sending that Calendar uses. Before each attempt, the queue checks that Tasks and Mail are on, that the task is still assigned to that person, that the person can still open the board, that the assigner can still edit the board and isn't banned, and that the primary address still belongs to the assigner's personal mailbox. If the directory can't answer, the email waits and is checked again, and never goes without an answer, as [Mail's sending rules](#mail) say. So a task reassigned within those 10 seconds sends nothing to the first person. A task moved to another board within those 10 seconds sends nothing, because the board it left no longer holds it.
+- **Nobody gets an email about a task they assigned themselves,** and there is no daily summary.
+- **Only a rate limit retries by itself,** as with Calendar's emails, so an email is never sent twice. A refused email leaves the assignment as it is, and the panel says "Ben wasn't emailed", with Try again.
+- **These emails leave no draft and no Sent copy** in the assigner's mailbox. A copy to someone inside the organisation arrives like any other inbound mail, through `ingest`.
+
+#### Tasks in Calendar
+
+- **Calendar's Overview gets a Tasks due section.** It lists the person's own open tasks that are overdue, due today, or due tomorrow, in that order, with Open in Tasks. Ticking one there marks it done in Tasks. The section is hidden while Tasks is off, and ticking checks that both apps are on, because a server function answers on every app's hostname.
+- **Schedule shows the person's own open tasks in the all-day row** of their due day. Like the Overview section, they're hidden while Tasks is off.
+- **A task is never stored as an event.** Calendar reads it from its board each time, so a task lives in one place.
+- **Only the person's own tasks show,** never a colleague's, because showing when someone is busy is an [open question](#open-questions).
+
+#### Not in the first release
+
+- **Files from Storage on a task.** See [Open questions](#open-questions).
+- **Repeating tasks.**
+- **Reminders,** and any email other than the assignment email.
+- **Custom statuses or columns.**
+
+A deployment set up before Tasks existed has no `tasks.` address, because the wizard runs only once. Add it as a custom domain on the Worker in Cloudflare.
+
 ## Design
 
 CloudySuite uses the Daylight direction, which is calm, neutral, and familiar, with blue for the next action. A left sidebar holds the app switcher and folders, and Mail has a message list beside a reading pane. [The design trial](https://github.com/Setupless/cloudysuite/blob/17574a1/prototypes/look-and-feel/index.html) shows Daylight and the three rejected directions on each screen, in light and dark. It is no longer in the repository, so open that revision for visual reference only.
@@ -564,8 +639,8 @@ These limits come from the Cloudflare docs and shape the product:
 ## Technical direction
 
 - One Worker serves every app and routes by hostname, because the Deploy button does not deploy several Workers from one repository together.
-- Each mailbox, each drive, and each calendar is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, drive access, calendars, and calendar access.
-- The rule that every mailbox, drive, or calendar query checks the signed-in user's access lives in one place, because several people can share one.
+- Each mailbox, each drive, each calendar, and each board is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, drive access, calendars, calendar access, boards, and board access.
+- The rule that every mailbox, drive, calendar, or board query checks the signed-in user's access lives in one place, because several people can share one.
 - The Worker uses Smart Placement, because one page load makes several D1 queries one after another, and running the Worker near the database saves a long trip on each.
 
 ### Repository layout
@@ -640,6 +715,7 @@ Bun is a development tool here. Production code runs on the Workers runtime, so 
 - Should an admin also be able to turn an app off for one person or group? The first release turns an app off for the whole organisation.
 - Should calendars sync to phones? CalDAV clients sign in with a plain password, so phone sync needs app passwords, which [the sign-in features](#auth) don't allow yet. Calendar has no "Add to your phone" until this is decided.
 - Should people see when a colleague is free? Showing someone's busy times to others is a privacy decision the owner hasn't made, so Calendar has no "who's free" view.
+- Should a task be able to hold a Storage file? Attaching one would let a task open a file that Storage hasn't shared with everyone on the board, which goes around Storage's one access check. Tasks holds no files until this is decided.
 
 ## License
 
