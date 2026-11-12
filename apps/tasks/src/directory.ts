@@ -87,6 +87,22 @@ export async function findMember(
   return row && !isBanned(row) ? personOf(row) : null;
 }
 
+// Anyone with a place on the board, suspended or not, as its settings list them. A task
+// moving there keeps them as its assignee.
+export async function isOnBoard(
+  database: D1Database,
+  boardId: BoardId,
+  userId: UserId,
+): Promise<boolean> {
+  const [row] = await drizzle(database)
+    .select({ userId: boardAccess.userId })
+    .from(boardAccess)
+    .where(
+      and(eq(boardAccess.boardId, boardId), eq(boardAccess.userId, userId)),
+    );
+  return row !== undefined;
+}
+
 export async function createTeam(
   database: D1Database,
   me: UserId,

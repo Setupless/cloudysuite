@@ -1,10 +1,18 @@
 import type { BoardId, UserId } from "@cloudysuite/access";
 import { useToast } from "@cloudysuite/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { addAndAssign, changeTask, createPrivateTask } from "../functions";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  addAndAssign,
+  changeTask,
+  createPrivateTask,
+  moveTask,
+} from "../functions";
 import { call, tasksKeys } from "../queries";
 import type {
+  BoardOfTask,
   BoardTasks,
+  MoveTarget,
   MyTask,
   MyTasks,
   NewPrivateTask,
@@ -24,6 +32,7 @@ const withTask = (tasks: Task[], task: Task) =>
 export function useTaskChanges() {
   const client = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
 
   function put(boardId: BoardId, task: Task) {
     client.setQueryData<BoardTasks>(tasksKeys.board(boardId), (shown) =>
@@ -162,5 +171,49 @@ export function useTaskChanges() {
     await client.invalidateQueries({ queryKey: tasksKeys.settings(boardId) });
   }
 
-  return { send, setStatus, tick, remove, addPrivate, addAndAssignTo };
+  // Throws with the words to show, so the move dialog can say why the task stayed.
+  async function move(
+    boardId: BoardId,
+    task: Task,
+    target: MoveTarget,
+  ): Promise<void> {
+    const answer = await call(() =>
+      moveTask({ data: { boardId, taskId: task.id, to: target } }),
+    );
+    const name = placeName(answer.to);
+    if (answer.status === "moving") {
+      await client.invalidateQueries({ queryKey: tasksKeys.board(boardId) });
+      await client.invalidateQueries({ queryKey: tasksKeys.mine });
+      toast({
+        message: `The task is on its way to ${name}. It will finish moving by itself.`,
+      });
+      return;
+    }
+    client.setQueryData<BoardTasks>(tasksKeys.board(boardId), (shown) =>
+      shown
+        ? { ...shown, tasks: shown.tasks.filter((t) => t.id !== task.id) }
+        : shown,
+    );
+    void client.invalidateQueries({ queryKey: tasksKeys.mine });
+    void client.invalidateQueries({ queryKey: tasksKeys.board(answer.to.id) });
+    toast({
+      message: `Moved to ${name}`,
+      action: {
+        label: "Show",
+        run: () =>
+          void (answer.to.kind === "personal"
+            ? navigate({ to: "/tasks", search: { task: task.id } })
+            : navigate({
+                to: "/tasks/boards/$boardId",
+                params: { boardId: answer.to.id },
+                search: { task: task.id },
+              })),
+      },
+    });
+  }
+
+  return { send, setStatus, tick, remove, addPrivate, addAndAssignTo, move };
 }
+
+const placeName = (board: BoardOfTask) =>
+  board.kind === "personal" ? "your private tasks" : board.name;

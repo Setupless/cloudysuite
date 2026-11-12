@@ -1,6 +1,12 @@
 import type { BoardId, BoardRole, UserId } from "@cloudysuite/access";
 import { Button, linkify } from "@cloudysuite/ui";
-import { IconPencil, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
+import {
+  IconChevronRight,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -22,12 +28,10 @@ import {
 } from "../types";
 import { type Editing, isEditing, type ListState } from "./list-state";
 import { AssigneePicker, type AssigneePick } from "./assignee-picker";
+import { MoveDialog } from "./move-dialog";
 import { FIELD } from "./new-task-row";
-import { BoardName, FOCUS, TickButton } from "./parts";
+import { BoardName, canEditWith, FOCUS, movingText, TickButton } from "./parts";
 import type { useTaskChanges } from "./use-task-changes";
-
-export const canEditWith = (role: BoardRole) =>
-  role === "manager" || role === "editor";
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "To do",
@@ -340,9 +344,11 @@ export function TaskPanel({
 }) {
   const titleId = useId();
   const panel = useRef<HTMLElement>(null);
-  const canEdit = canEditWith(role);
+  const [moving, setMoving] = useState(false);
+  // A task on its way to another board can't change until it gets there.
+  const canEdit = canEditWith(role) && !task.moving;
   // Can view may still tick off their own work.
-  const canSetStatus = canEdit || task.assignee?.id === me;
+  const canSetStatus = canEdit || (task.assignee?.id === me && !task.moving);
   const send = (change: Parameters<Changes["send"]>[1]) =>
     void changes.send(board.id, change);
   // On a phone the panel covers the list, so focus moves here from the row.
@@ -490,9 +496,30 @@ export function TaskPanel({
             )}
           </Fact>
           <Fact label="Board">
-            <span className="pt-1">
-              <BoardName board={board} />
-            </span>
+            {task.moving ? (
+              <span className="pt-1 text-secondary" dir="auto">
+                {movingText(task.moving, me)}
+              </span>
+            ) : canEdit ? (
+              <button
+                type="button"
+                aria-label={`Board: ${board.kind === "personal" ? "only you" : board.name}. Move to another board`}
+                className={`-ml-1 flex min-h-7 min-w-0 cursor-pointer items-center gap-1 rounded px-1 hover:bg-field ${FOCUS}`}
+                onClick={() => setMoving(true)}
+              >
+                <BoardName board={board} />
+                <IconChevronRight
+                  size={14}
+                  stroke={1.75}
+                  className="flex-none text-secondary"
+                  aria-hidden
+                />
+              </button>
+            ) : (
+              <span className="pt-1">
+                <BoardName board={board} />
+              </span>
+            )}
           </Fact>
         </div>
 
@@ -554,6 +581,18 @@ export function TaskPanel({
           <p className="text-xs text-secondary">
             Added by {task.createdBy.id === me ? "you" : task.createdBy.name}
           </p>
+          {moving && (
+            <MoveDialog
+              task={task}
+              board={board}
+              me={me}
+              onMove={async (target) => {
+                await changes.move(board.id, task, target);
+                onClose();
+              }}
+              onClose={() => setMoving(false)}
+            />
+          )}
           {canEdit && (
             <div>
               <Button

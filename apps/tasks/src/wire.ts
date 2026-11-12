@@ -11,6 +11,7 @@ import {
   type ChecklistItemId,
   LIMITS,
   MAX_BOARD_NAME_LENGTH,
+  type MoveTarget,
   type NewPrivateTask,
   type PlainDate,
   parsePlainDate,
@@ -231,5 +232,16 @@ export const parseAddAndAssignInput = (raw: unknown) => {
     boardId: requireBoardId(input.boardId),
     taskId: uuid<TaskId>(input.taskId),
     userId: requireUserId(input.userId),
+  };
+};
+
+export const parseMoveInput = (raw: unknown) => {
+  const input = record(raw);
+  const to: MoveTarget =
+    input.to === "private" ? "private" : requireBoardId(input.to);
+  return {
+    boardId: requireBoardId(input.boardId),
+    taskId: uuid<TaskId>(input.taskId),
+    to,
   };
 };

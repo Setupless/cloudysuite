@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   type BoardId,
   ensurePersonalBoard,
+  levelOfRole,
   PERSONAL_BOARD_COLOUR,
   readOthers,
   type UserId,
@@ -17,6 +18,7 @@ import {
   deleteTeam,
   findMember,
   isAddable,
+  isOnBoard,
   personOf,
   readMyBoards,
   readSettings,
@@ -28,6 +30,7 @@ import {
 } from "./directory";
 import {
   ADDED_WHILE_ASSIGNING_ROLE,
+  ALREADY_THERE_MESSAGE,
   type BoardEntry,
   type BoardSettings,
   type BoardTasks,
@@ -36,6 +39,7 @@ import {
   type Colleague,
   DONE_TODAY_LOOKBACK_MS,
   LAST_MANAGER_MESSAGE,
+  type MoveAnswer,
   type MyTask,
   type MyTasks,
   mayChangeSettings,
@@ -47,15 +51,19 @@ import {
   type Person,
   PRIVATE_BOARD_MESSAGE,
   REFUSAL_MESSAGES,
+  type Refusal,
   type RefusalReason,
+  refusedThereMessage,
   type SettingsChange,
   type TaskChange,
   type TaskChangeInput,
+  viewOnlyThereMessage,
 } from "./types";
 import {
   parseAddAndAssignInput,
   parseBoardInput,
   parseChangeInput,
+  parseMoveInput,
   parseNewBoardInput,
   parseNewPrivateTaskInput,
   parseSettingsChangeInput,
@@ -69,11 +77,15 @@ const REFUSAL_STATUS: Partial<Record<RefusalReason, number>> = {
   gone: 404,
   itemGone: 404,
   tooLateToUndo: 409,
+  moving: 409,
 };
+
+const refused = (result: Refusal) =>
+  refusal(REFUSAL_STATUS[result.reason] ?? 400, result.message);
 
 function answer(result: ChangeResult): ChangeAnswer {
   if (result.status !== "refused") return result;
-  throw refusal(REFUSAL_STATUS[result.reason] ?? 400, result.message);
+  throw refused(result);
 }
 
 // The name comes from the directory, never from the page.
@@ -310,3 +322,51 @@ export const createTeamBoard = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<BoardId> =>
     createTeam(env.DB, (await me()).id, data.name),
   );
+
+const canEdit = (board: BoardClient) => levelOfRole(board.role) === "edit";
+
+// Moving needs Can edit on both boards. The assignee goes along only if they're on the
+// other board, which the dialog has said first.
+export const moveTask = createServerFn({ method: "POST" })
+  .validator(parseMoveInput)
+  .handler(async ({ data }): Promise<MoveAnswer> => {
+    const person = await me();
+    const from = await openBoardFor(person.id, data.boardId);
+    if (!canEdit(from)) throw refusal(403, REFUSAL_MESSAGES.noAccess);
+    const toBoardId =
+      data.to === "private"
+        ? await ensurePersonalBoard(env.DB, person.id)
+        : data.to;
+    if (toBoardId === data.boardId) throw refusal(409, ALREADY_THERE_MESSAGE);
+    const to = await openBoardFor(person.id, toBoardId);
+    const entry = (await readMyBoards(env.DB, person)).find(
+      (board) => board.id === toBoardId,
+    );
+    if (!entry) throw refusal(403, NO_ACCESS_MESSAGE);
+    const { role: _role, ...destination } = entry;
+    const named =
+      destination.kind === "personal" ? "your private tasks" : destination.name;
+    if (!canEdit(to)) throw refusal(403, viewOnlyThereMessage(named));
+    const task = await from.findTask(data.taskId);
+    if (!task) throw refusal(404, REFUSAL_MESSAGES.gone);
+    const keepAssigneeId =
+      task.assignee &&
+      to.kind === "team" &&
+      (await isOnBoard(env.DB, toBoardId, task.assignee.id))
+        ? task.assignee.id
+        : null;
+    const outcome = await from.moveTo(data.taskId, to, {
+      to: { kind: destination.kind, name: destination.name },
+      keepAssigneeId,
+    });
+    switch (outcome.status) {
+      case "moved":
+        return { status: "moved", to: destination };
+      case "pending":
+        return { status: "moving", to: destination };
+      case "refusedThere":
+        throw refusal(409, refusedThereMessage(outcome.reason, named));
+      case "refused":
+        throw refused(outcome);
+    }
+  });

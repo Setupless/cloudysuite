@@ -2,7 +2,14 @@ import type { UserId } from "@cloudysuite/access";
 import { IconListCheck } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { BoardOfTask, PlainDate, Task } from "../types";
-import { BoardName, DueLabel, FOCUS, PersonAvatar, TickButton } from "./parts";
+import {
+  BoardName,
+  DueLabel,
+  FOCUS,
+  movingText,
+  PersonAvatar,
+  TickButton,
+} from "./parts";
 
 // Where the row is: My tasks names each task's board, and a board names who has it.
 export type RowPlace =
@@ -44,12 +51,14 @@ export function TaskRow({
   task,
   place,
   today,
+  me,
   open,
   canTick,
   onOpen,
   onTick,
 }: {
   task: Task;
+  me: UserId;
   place: RowPlace;
   today: PlainDate;
   open: boolean;
@@ -66,21 +75,24 @@ export function TaskRow({
     place.emails !== null &&
     task.assignee !== null &&
     !place.emails.has(task.assignee.id);
+  // Nothing on a task on its way to another board can be chosen until it arrives.
+  const locked = task.moving !== null;
   return (
     <li
       data-task-id={task.id}
-      className={`flex items-center gap-1.5 border-b border-line pl-1.5 ${open ? "bg-selected" : "hover:bg-field"}`}
+      className={`flex items-center gap-1.5 border-b border-line pl-1.5 ${open ? "bg-selected" : locked ? "" : "hover:bg-field"}`}
     >
       <TickButton
         done={done}
         title={task.title}
-        disabled={!canTick}
+        disabled={!canTick || locked}
         onTick={onTick}
       />
       <button
         type="button"
         aria-expanded={open}
-        className={`flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3 py-2 pr-2 pl-1 text-left text-sm ${FOCUS}`}
+        disabled={locked}
+        className={`flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3 py-2 pr-2 pl-1 text-left text-sm disabled:cursor-default ${FOCUS}`}
         onClick={onOpen}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -92,6 +104,11 @@ export function TaskRow({
           </span>
           <Meta>
             {[
+              task.moving && (
+                <span key="moving" className="truncate" dir="auto">
+                  {movingText(task.moving, me)}
+                </span>
+              ),
               place.kind === "mine" && task.status === "doing" && (
                 <span key="doing" className="font-medium text-accent">
                   Doing

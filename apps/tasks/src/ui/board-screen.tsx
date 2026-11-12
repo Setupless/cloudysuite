@@ -5,13 +5,13 @@ import {
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
-import { useMemo, useReducer } from "react";
+import { useEffect, useMemo, useReducer } from "react";
 import { boardsQuery, boardTasksQuery, settingsQuery } from "../queries";
 import type { BoardOfTask, Task, TaskId } from "../types";
-import { BROWSING, listReducer } from "./list-state";
+import { listReducer, openingWith } from "./list-state";
 import { NewTaskRow } from "./new-task-row";
-import { BoardSwatch } from "./parts";
-import { canEditWith, TaskPanel } from "./task-panel";
+import { BoardSwatch, canEditWith } from "./parts";
+import { TaskPanel } from "./task-panel";
 import {
   DoneFold,
   Empty,
@@ -27,7 +27,13 @@ import { boardSections } from "./task-order";
 import { TaskRow } from "./task-row";
 import { useTaskChanges } from "./use-task-changes";
 
-function Board({ boardId }: { boardId: BoardId }) {
+function Board({
+  boardId,
+  taskToOpen,
+}: {
+  boardId: BoardId;
+  taskToOpen: string | undefined;
+}) {
   const me = useMe();
   const today = useToday();
   const listing = useQuery(boardTasksQuery(boardId));
@@ -49,7 +55,10 @@ function Board({ boardId }: { boardId: BoardId }) {
   const toast = useToast();
   const role = listing.data?.role;
   const canEdit = role ? canEditWith(role) : false;
-  const [state, dispatch] = useReducer(listReducer, BROWSING);
+  const [state, dispatch] = useReducer(listReducer, taskToOpen, openingWith);
+  useEffect(() => {
+    if (taskToOpen) dispatch({ type: "open", taskId: taskToOpen as TaskId });
+  }, [taskToOpen]);
   useListKeys(state, dispatch, canEdit);
 
   const board: BoardOfTask = {
@@ -70,6 +79,7 @@ function Board({ boardId }: { boardId: BoardId }) {
       task={task}
       place={{ kind: "board", teamBoard, boardName: board.name, emails }}
       today={today}
+      me={me}
       open={state.kind === "open" && state.taskId === task.id}
       canTick={canEdit || task.assignee?.id === me}
       onOpen={() =>
@@ -213,9 +223,12 @@ function Heading({ boardId }: { boardId: BoardId }) {
 // The server checks the id, and says so in plain words when it isn't a board.
 export function BoardScreen({
   boardId: raw,
+  task,
   prefetched,
 }: {
   boardId: string;
+  // A task to open, such as one just moved here.
+  task?: string;
   prefetched: DehydratedState | undefined;
 }) {
   const boardId = raw as BoardId;
@@ -224,7 +237,7 @@ export function BoardScreen({
     <HydrationBoundary state={prefetched}>
       {/* A new board starts with nothing open. */}
       {hydrated ? (
-        <Board key={boardId} boardId={boardId} />
+        <Board key={boardId} boardId={boardId} taskToOpen={task} />
       ) : (
         <Heading boardId={boardId} />
       )}

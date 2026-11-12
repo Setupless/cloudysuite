@@ -25,6 +25,7 @@ function task(more: Partial<Task> = {}): Task {
     createdBy: { id: ME, name: "Me" },
     createdAt: made,
     doneAt: null,
+    moving: null,
     ...more,
   };
 }

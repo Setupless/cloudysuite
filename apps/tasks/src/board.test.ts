@@ -65,6 +65,7 @@ test("a new task starts as To do with nobody assigned, and keeps who added it", 
     createdBy: ALICE,
     createdAt: START,
     doneAt: null,
+    moving: null,
   });
   expect(await board.listTasks()).toEqual([task]);
 });
