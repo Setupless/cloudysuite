@@ -533,10 +533,8 @@ export class TaskStore {
         return;
       }
       this.#db.exec(
-        `UPDATE assignment_emails SET email_id = ?, assigned_by = ?, tries = 0
-         WHERE task_id = ?`,
+        `UPDATE assignment_emails SET email_id = ?, tries = 0 WHERE task_id = ?`,
         crypto.randomUUID(),
-        actor.userId,
         id,
       );
     });

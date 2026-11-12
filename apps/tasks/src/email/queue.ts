@@ -63,7 +63,8 @@ export type QueuedEmail = {
   taskId: TaskId;
   boardId: BoardId;
   assigneeId: UserId;
-  // Who assigned the task, or chose Try again. It goes from their address.
+  // Who assigned the task. It goes from their address, even when someone else chose Try
+  // again, because the email says they assigned it.
   assignedBy: UserId;
   state: "waiting" | "sending";
   // Rate limits and unanswered checks met so far.

@@ -304,8 +304,8 @@ test("Try again sends once, however often it's chosen", async () => {
   await kit.at(60 * 60_000);
 
   expect(kit.email.sent).toHaveLength(1);
-  // It goes from whoever chose Try again.
-  expect(kit.email.sent[0]!.from).toBe(addressOf(CAROL));
+  // It still goes from the person who assigned it, because the email says they did.
+  expect(kit.email.sent[0]!.from).toBe(addressOf(ALICE));
   expect(await board.assignmentEmail(id)).toEqual({ state: "sent" });
 });
 
