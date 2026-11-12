@@ -240,6 +240,7 @@ test("every step checks, applies, checks again, and a repeat run writes nothing"
     ["mail.example.com", "cloudysuite"],
     ["storage.example.com", "cloudysuite"],
     ["calendar.example.com", "cloudysuite"],
+    ["tasks.example.com", "cloudysuite"],
   ]);
 
   const writesAfterFirstRun = fake.writes().length;
@@ -285,12 +286,13 @@ test("a step that fails partway reports it, and a repeat finishes only what's le
     "mail.example.com",
     "storage.example.com",
     "calendar.example.com",
+    "tasks.example.com",
   ]);
   const attempts = fake.calls.filter(
     (call) => call.method === "PUT" && call.path.endsWith("workers/domains"),
   );
-  // auth, the failed mail, then mail, storage, and calendar.
-  expect(attempts.length).toBe(5);
+  // auth, the failed mail, then mail, storage, calendar, and tasks.
+  expect(attempts.length).toBe(6);
 });
 
 test("a step Cloudflare accepted but did not make becomes a job for the person", async () => {
@@ -652,6 +654,7 @@ test("with a parent domain, apps sit under it while email stays on the apex", as
     "mail.suite.example.com",
     "storage.suite.example.com",
     "calendar.suite.example.com",
+    "tasks.suite.example.com",
   ]);
   expect(fake.state.zones.get(ZONE)?.sending.map((row) => row.name)).toEqual([
     "example.com",
@@ -1305,6 +1308,7 @@ test("a repeat run's own app names don't count as hosted", async () => {
     "mail.example.com",
     "storage.example.com",
     "calendar.example.com",
+    "tasks.example.com",
   ])
     zone?.dns.push({ type: "AAAA", name, content: "100::" });
 
