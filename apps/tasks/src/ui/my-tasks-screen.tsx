@@ -5,7 +5,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { useReducer } from "react";
-import { boardsQuery, membersQuery, myTasksQuery } from "../queries";
+import { boardsQuery, myTasksQuery, settingsQuery } from "../queries";
 import type { BoardRole } from "@cloudysuite/access";
 import type { MyTask, TaskId } from "../types";
 import { dayOnDevice, longDayText } from "./dates";
@@ -37,15 +37,15 @@ function MinePanel({
 }: Omit<Parameters<typeof TaskPanel>[0], "members" | "board"> & {
   task: MyTask;
 }) {
-  const members = useQuery({
-    ...membersQuery(task.board.id),
+  const settings = useQuery({
+    ...settingsQuery(task.board.id),
     enabled: task.board.kind === "team",
   });
   return (
     <TaskPanel
       task={task}
       board={task.board}
-      members={members.data}
+      members={settings.data?.members}
       {...rest}
     />
   );
@@ -116,7 +116,7 @@ function MyTasks() {
             <ul className="border-t border-line">
               <NewTaskRow
                 today={today}
-                members={null}
+                assigning={null}
                 onAdd={(draft) =>
                   changes.addPrivate({
                     id: crypto.randomUUID() as TaskId,

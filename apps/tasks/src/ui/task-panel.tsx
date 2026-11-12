@@ -21,8 +21,9 @@ import {
   type TaskStatus,
 } from "../types";
 import { type Editing, isEditing, type ListState } from "./list-state";
+import { AssigneePicker, type AssigneePick } from "./assignee-picker";
 import { FIELD } from "./new-task-row";
-import { BoardName, FOCUS, PersonAvatar, TickButton } from "./parts";
+import { BoardName, FOCUS, TickButton } from "./parts";
 import type { useTaskChanges } from "./use-task-changes";
 
 export const canEditWith = (role: BoardRole) =>
@@ -329,7 +330,7 @@ export function TaskPanel({
   board: BoardOfTask;
   role: BoardRole;
   me: UserId;
-  // On a team board, the people a task can be given to.
+  // On a team board, who's on it, once they've arrived.
   members: Member[] | undefined;
   state: ListState;
   changes: Changes;
@@ -349,10 +350,22 @@ export function TaskPanel({
     panel.current?.focus({ preventScroll: true });
   }, [task.id]);
 
-  const assignees = members ?? [];
+  // Worked out from who's on the board now, so it needs nothing stored.
   const assigneeGone =
+    members !== undefined &&
     task.assignee !== null &&
-    !assignees.some((member) => member.id === task.assignee?.id);
+    !members.some((member) => member.id === task.assignee?.id);
+  const assign = async (pick: AssigneePick) => {
+    if (pick.kind === "addAndAssign") {
+      await changes.addAndAssignTo(board.id, task.id, pick.person.id);
+      return;
+    }
+    send({
+      kind: "assign",
+      id: task.id,
+      assigneeId: pick.kind === "member" ? pick.person.id : null,
+    });
+  };
 
   return (
     <aside
@@ -420,47 +433,24 @@ export function TaskPanel({
         <div className="flex flex-col gap-3">
           {board.kind === "team" && (
             <Fact label="Assigned to">
-              {task.assignee && (
-                <PersonAvatar
-                  person={task.assignee}
-                  email={
-                    assignees.find((member) => member.id === task.assignee?.id)
-                      ?.email
-                  }
+              {canEdit && members ? (
+                <AssigneePicker
+                  boardName={board.name}
+                  canAdd={role === "manager"}
+                  members={members}
+                  me={me}
+                  assignee={task.assignee}
+                  gone={assigneeGone}
+                  onPick={(pick) => assign(pick)}
                 />
-              )}
-              {canEdit ? (
-                <select
-                  aria-label="Assigned to"
-                  className={`${FIELD} min-w-0 flex-1`}
-                  value={task.assignee?.id ?? ""}
-                  onChange={(event) =>
-                    send({
-                      kind: "assign",
-                      id: task.id,
-                      assigneeId: (event.target.value || null) as UserId | null,
-                    })
-                  }
-                >
-                  <option value="">Nobody yet</option>
-                  {assigneeGone && task.assignee && (
-                    <option value={task.assignee.id} disabled>
-                      {task.assignee.name}
-                    </option>
-                  )}
-                  <optgroup label={`On ${board.name}`}>
-                    {assignees.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        {member.id === me
-                          ? `${member.name} (you)`
-                          : member.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
               ) : (
-                <span className="pt-1">
-                  {task.assignee?.name ?? "Nobody yet"}
+                <span className="flex flex-col pt-1">
+                  <span dir="auto">{task.assignee?.name ?? "Nobody yet"}</span>
+                  {assigneeGone && (
+                    <span className="text-xs text-secondary">
+                      No longer on {board.name}
+                    </span>
+                  )}
                 </span>
               )}
             </Fact>

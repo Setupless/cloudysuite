@@ -1,8 +1,10 @@
 import type { BoardId } from "@cloudysuite/access";
 import { dehydrate, QueryClient, queryOptions } from "@tanstack/react-query";
 import {
-  boardMembers,
+  boardSettings,
+  countBoardTasks,
   listBoardTasks,
+  listColleagues,
   listMyBoards,
   listMyTasks,
 } from "./functions";
@@ -56,7 +58,9 @@ export const tasksKeys = {
   boards: ["tasks", "boards"] as const,
   mine: ["tasks", "mine"] as const,
   board: (boardId: BoardId) => ["tasks", "board", boardId] as const,
-  members: (boardId: BoardId) => ["tasks", "members", boardId] as const,
+  settings: (boardId: BoardId) => ["tasks", "settings", boardId] as const,
+  taskCount: (boardId: BoardId) => ["tasks", "taskCount", boardId] as const,
+  colleagues: ["tasks", "colleagues"] as const,
 };
 
 export const boardsQuery = () =>
@@ -77,10 +81,25 @@ export const boardTasksQuery = (boardId: BoardId) =>
     queryFn: () => call(() => listBoardTasks({ data: { boardId } })),
   });
 
-export const membersQuery = (boardId: BoardId) =>
+export const settingsQuery = (boardId: BoardId) =>
   queryOptions({
-    queryKey: tasksKeys.members(boardId),
-    queryFn: () => call(() => boardMembers({ data: { boardId } })),
+    queryKey: tasksKeys.settings(boardId),
+    queryFn: () => call(() => boardSettings({ data: { boardId } })),
+  });
+
+// Asked fresh each time, because it's what the delete confirmation promises.
+export const taskCountQuery = (boardId: BoardId) =>
+  queryOptions({
+    queryKey: tasksKeys.taskCount(boardId),
+    queryFn: () => call(() => countBoardTasks({ data: { boardId } })),
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+export const colleaguesQuery = () =>
+  queryOptions({
+    queryKey: tasksKeys.colleagues,
+    queryFn: () => call(() => listColleagues()),
   });
 
 // The first HTML holds the data, so the page draws it as soon as the browser knows what

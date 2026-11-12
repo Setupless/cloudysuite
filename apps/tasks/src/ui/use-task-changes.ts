@@ -1,7 +1,7 @@
-import type { BoardId } from "@cloudysuite/access";
+import type { BoardId, UserId } from "@cloudysuite/access";
 import { useToast } from "@cloudysuite/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { changeTask, createPrivateTask } from "../functions";
+import { addAndAssign, changeTask, createPrivateTask } from "../functions";
 import { call, tasksKeys } from "../queries";
 import type {
   BoardTasks,
@@ -149,5 +149,18 @@ export function useTaskChanges() {
     }
   }
 
-  return { send, setStatus, tick, remove, addPrivate };
+  // Throws with the words to show, so the dialog that asked can say what went wrong.
+  async function addAndAssignTo(
+    boardId: BoardId,
+    taskId: TaskId,
+    userId: UserId,
+  ): Promise<void> {
+    const answer = await call(() =>
+      addAndAssign({ data: { boardId, taskId, userId } }),
+    );
+    if (answer.status === "done") put(boardId, answer.task);
+    await client.invalidateQueries({ queryKey: tasksKeys.settings(boardId) });
+  }
+
+  return { send, setStatus, tick, remove, addPrivate, addAndAssignTo };
 }

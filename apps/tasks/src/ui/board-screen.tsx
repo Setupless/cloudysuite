@@ -1,12 +1,12 @@
 import type { BoardId } from "@cloudysuite/access";
-import { Notice, useHydrated } from "@cloudysuite/ui";
+import { Notice, useHydrated, useToast } from "@cloudysuite/ui";
 import {
   type DehydratedState,
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
 import { useMemo, useReducer } from "react";
-import { boardsQuery, boardTasksQuery, membersQuery } from "../queries";
+import { boardsQuery, boardTasksQuery, settingsQuery } from "../queries";
 import type { BoardOfTask, Task, TaskId } from "../types";
 import { BROWSING, listReducer } from "./list-state";
 import { NewTaskRow } from "./new-task-row";
@@ -35,12 +35,18 @@ function Board({ boardId }: { boardId: BoardId }) {
     (board) => board.id === boardId,
   );
   const teamBoard = listing.data?.kind === "team";
-  const members = useQuery({ ...membersQuery(boardId), enabled: teamBoard });
+  const settings = useQuery({ ...settingsQuery(boardId), enabled: teamBoard });
+  const members = settings.data?.members;
+  // Null until the members arrive, so nobody looks as if they've left meanwhile.
   const emails = useMemo(
-    () => new Map(members.data?.map((member) => [member.id, member.email])),
-    [members.data],
+    () =>
+      members
+        ? new Map(members.map((member) => [member.id, member.email]))
+        : null,
+    [members],
   );
   const changes = useTaskChanges();
+  const toast = useToast();
   const role = listing.data?.role;
   const canEdit = role ? canEditWith(role) : false;
   const [state, dispatch] = useReducer(listReducer, BROWSING);
@@ -62,7 +68,7 @@ function Board({ boardId }: { boardId: BoardId }) {
     <TaskRow
       key={task.id}
       task={task}
-      place={{ kind: "board", teamBoard, emails }}
+      place={{ kind: "board", teamBoard, boardName: board.name, emails }}
       today={today}
       open={state.kind === "open" && state.taskId === task.id}
       canTick={canEdit || task.assignee?.id === me}
@@ -106,14 +112,36 @@ function Board({ boardId }: { boardId: BoardId }) {
             <ul className="border-t border-line">
               <NewTaskRow
                 today={today}
-                members={teamBoard ? (members.data ?? []) : null}
-                onAdd={async (draft) =>
-                  (await changes.send(boardId, {
-                    kind: "create",
-                    id: crypto.randomUUID() as TaskId,
-                    ...draft,
-                  })) !== null
+                assigning={
+                  teamBoard
+                    ? {
+                        boardName: board.name,
+                        canAdd: role === "manager",
+                        members: members ?? [],
+                        me,
+                      }
+                    : null
                 }
+                onAdd={async ({ assignee, ...draft }) => {
+                  const id = crypto.randomUUID() as TaskId;
+                  const made = await changes.send(boardId, {
+                    kind: "create",
+                    id,
+                    ...draft,
+                    assigneeId:
+                      assignee && !assignee.adding ? assignee.id : null,
+                  });
+                  if (!made || !assignee?.adding) return made !== null;
+                  try {
+                    await changes.addAndAssignTo(boardId, id, assignee.id);
+                  } catch (failure) {
+                    toast({
+                      tone: "danger",
+                      message: (failure as Error).message,
+                    });
+                  }
+                  return true;
+                }}
                 onCancel={() => dispatch({ type: "close" })}
               />
             </ul>
@@ -153,7 +181,7 @@ function Board({ boardId }: { boardId: BoardId }) {
           board={board}
           role={role}
           me={me}
-          members={members.data}
+          members={members}
           state={state}
           changes={changes}
           onEdit={(field) => dispatch({ type: "edit", field })}

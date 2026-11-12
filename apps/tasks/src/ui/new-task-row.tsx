@@ -2,13 +2,26 @@ import type { UserId } from "@cloudysuite/access";
 import { Button } from "@cloudysuite/ui";
 import { type FormEvent, useRef, useState } from "react";
 import { type Member, type PlainDate, parsePlainDate } from "../types";
+import { AssigneePicker } from "./assignee-picker";
 import { addDays } from "./dates";
 import { FOCUS } from "./parts";
+
+// `adding` is someone from the rest of the organisation, whom a manager chose to add to
+// the board as they assign the task.
+export type DraftAssignee = { id: UserId; name: string; adding: boolean };
 
 export type NewTaskDraft = {
   title: string;
   due: PlainDate | null;
-  assigneeId: UserId | null;
+  assignee: DraftAssignee | null;
+};
+
+// On a team board, who the task can go to.
+export type Assigning = {
+  boardName: string;
+  canAdd: boolean;
+  members: readonly Member[];
+  me: UserId;
 };
 
 const CHIP = `h-7 cursor-pointer rounded-full border px-2.5 text-xs ${FOCUS}`;
@@ -17,23 +30,23 @@ const chipClass = (pressed: boolean) =>
 
 export const FIELD = `h-7 rounded border border-line bg-field px-2 text-xs text-text disabled:opacity-60 ${FOCUS}`;
 
-// The one way to add a task. On a team board `members` offers someone to assign, and the
-// task starts with nobody.
+// The one way to add a task. On a team board it offers someone to assign, and the task
+// starts with nobody.
 export function NewTaskRow({
   today,
-  members,
+  assigning,
   onAdd,
   onCancel,
 }: {
   today: PlainDate;
-  members: Member[] | null;
+  assigning: Assigning | null;
   // Resolves true once saved, so the row empties for the next one.
   onAdd: (draft: NewTaskDraft) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState<PlainDate | null>(null);
-  const [assigneeId, setAssigneeId] = useState<UserId | null>(null);
+  const [assignee, setAssignee] = useState<DraftAssignee | null>(null);
   const [saving, setSaving] = useState(false);
   const field = useRef<HTMLInputElement>(null);
   const tomorrow = addDays(today, 1);
@@ -42,12 +55,12 @@ export function NewTaskRow({
     event.preventDefault();
     if (title.trim() === "" || saving) return;
     setSaving(true);
-    const saved = await onAdd({ title, due, assigneeId });
+    const saved = await onAdd({ title, due, assignee });
     setSaving(false);
     if (saved) {
       setTitle("");
       setDue(null);
-      setAssigneeId(null);
+      setAssignee(null);
     }
     field.current?.focus();
   }
@@ -97,24 +110,24 @@ export function NewTaskRow({
             value={due ?? ""}
             onChange={(event) => setDue(parsePlainDate(event.target.value))}
           />
-          {members && (
-            <select
-              aria-label="Assigned to"
-              className={FIELD}
-              value={assigneeId ?? ""}
-              onChange={(event) =>
-                setAssigneeId((event.target.value || null) as UserId | null)
+          {assigning && (
+            <AssigneePicker
+              {...assigning}
+              assignee={assignee}
+              gone={false}
+              compact
+              onPick={async (pick) =>
+                setAssignee(
+                  pick.kind === "nobody"
+                    ? null
+                    : {
+                        id: pick.person.id,
+                        name: pick.person.name,
+                        adding: pick.kind === "addAndAssign",
+                      },
+                )
               }
-            >
-              <option value="">Nobody yet</option>
-              <optgroup label="On this board">
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.name}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
+            />
           )}
           <span className="ml-auto flex gap-1.5">
             <Button variant="toolbar" disabled={saving} onClick={onCancel}>

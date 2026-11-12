@@ -10,8 +10,10 @@ export type RowPlace =
   | {
       kind: "board";
       teamBoard: boolean;
-      // Each member's email, which picks their avatar's colour as everywhere else.
-      emails: ReadonlyMap<UserId, string>;
+      boardName: string;
+      // Each member's email, which picks their avatar's colour as everywhere else. Null
+      // until the members arrive.
+      emails: ReadonlyMap<UserId, string> | null;
     };
 
 function ChecklistCount({ task }: { task: Task }) {
@@ -57,6 +59,13 @@ export function TaskRow({
 }) {
   const done = task.status === "done";
   const showsAssignee = place.kind === "board" && place.teamBoard;
+  // Their name stays, so the team sees who had it and can give it to someone else.
+  const assigneeGone =
+    place.kind === "board" &&
+    place.teamBoard &&
+    place.emails !== null &&
+    task.assignee !== null &&
+    !place.emails.has(task.assignee.id);
   return (
     <li
       data-task-id={task.id}
@@ -88,6 +97,11 @@ export function TaskRow({
                   Doing
                 </span>
               ),
+              assigneeGone && (
+                <span key="gone" className="truncate">
+                  No longer on {place.boardName}
+                </span>
+              ),
               <ChecklistCount key="checklist" task={task} />,
               place.kind === "mine" && (
                 <span key="board" className="min-w-0 sm:hidden">
@@ -108,7 +122,7 @@ export function TaskRow({
               <>
                 <PersonAvatar
                   person={task.assignee}
-                  email={place.emails.get(task.assignee.id)}
+                  email={place.emails?.get(task.assignee.id)}
                 />
                 <span className="truncate max-sm:hidden">
                   {task.assignee.name}

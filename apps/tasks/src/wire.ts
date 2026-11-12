@@ -1,4 +1,10 @@
-import { type BoardId, parseBoardId, type UserId } from "@cloudysuite/access";
+import {
+  type BoardId,
+  type BoardRole,
+  parseBoardId,
+  type UserId,
+} from "@cloudysuite/access";
+import { BOARD_ROLES } from "../../../src/db/schema";
 import {
   BOARD_NAME_EMPTY_MESSAGE,
   BOARD_NAME_TOO_LONG_MESSAGE,
@@ -10,6 +16,7 @@ import {
   parsePlainDate,
   REFUSAL_MESSAGES,
   type RefusalReason,
+  type SettingsChange,
   TASK_STATUSES,
   type TaskChangeInput,
   type TaskId,
@@ -44,11 +51,24 @@ function requireBoardId(raw: unknown): BoardId {
   return id;
 }
 
-function requireUserIdOrNull(raw: unknown): UserId | null {
-  if (raw === null) return null;
+function requireUserId(raw: unknown): UserId {
   if (typeof raw !== "string" || raw === "" || raw.length > MAX_USER_ID_LENGTH)
     throw badRequest();
   return raw as UserId;
+}
+
+const requireUserIdOrNull = (raw: unknown): UserId | null =>
+  raw === null ? null : requireUserId(raw);
+
+function requireRole(raw: unknown): BoardRole {
+  if (!BOARD_ROLES.includes(raw as BoardRole)) throw badRequest();
+  return raw as BoardRole;
+}
+
+function requireColour(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > 6)
+    throw badRequest();
+  return raw;
 }
 
 function requireDueOrNull(raw: unknown): PlainDate | null {
@@ -155,16 +175,61 @@ export const parseNewPrivateTaskInput = (raw: unknown): NewPrivateTask => {
   };
 };
 
-export const parseNewBoardInput = (raw: unknown) => {
-  const name = record(raw).name;
-  if (typeof name !== "string") throw badRequest();
-  const trimmed = name.trim();
+function boardName(raw: unknown): string {
+  if (typeof raw !== "string") throw badRequest();
+  const trimmed = raw.trim();
   if (trimmed === "") throw refusal(400, BOARD_NAME_EMPTY_MESSAGE);
   if (
-    name.length > MAX_BOARD_NAME_LENGTH * 4 ||
+    raw.length > MAX_BOARD_NAME_LENGTH * 4 ||
     [...trimmed].length > MAX_BOARD_NAME_LENGTH
   ) {
     throw refusal(400, BOARD_NAME_TOO_LONG_MESSAGE);
   }
-  return { name: trimmed };
+  return trimmed;
+}
+
+export const parseNewBoardInput = (raw: unknown) => ({
+  name: boardName(record(raw).name),
+});
+
+function parseSettingsChange(raw: unknown): SettingsChange {
+  const input = record(raw);
+  switch (input.kind) {
+    case "add":
+    case "setRole":
+      return {
+        kind: input.kind,
+        userId: requireUserId(input.userId),
+        role: requireRole(input.role),
+      };
+    case "remove":
+      return { kind: "remove", userId: requireUserId(input.userId) };
+    case "leave":
+      return { kind: "leave" };
+    case "rename":
+      return { kind: "rename", name: boardName(input.name) };
+    case "setColour":
+      return { kind: "setColour", colour: requireColour(input.colour) };
+    case "delete":
+      return { kind: "delete" };
+    default:
+      throw badRequest();
+  }
+}
+
+export const parseSettingsChangeInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    boardId: requireBoardId(input.boardId),
+    change: parseSettingsChange(input.change),
+  };
+};
+
+export const parseAddAndAssignInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    boardId: requireBoardId(input.boardId),
+    taskId: uuid<TaskId>(input.taskId),
+    userId: requireUserId(input.userId),
+  };
 };

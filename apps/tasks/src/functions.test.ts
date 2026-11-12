@@ -11,9 +11,13 @@ import {
 } from "../../auth/src/admin/test-kit";
 import { createBoardTest, date, MARKETING, newTaskId } from "./test-support";
 import {
+  LAST_MANAGER_MESSAGE,
   NO_ACCESS_MESSAGE,
   NOT_ON_BOARD_MESSAGE,
+  ONLY_MANAGERS_MESSAGE,
+  PRIVATE_BOARD_MESSAGE,
   REFUSAL_MESSAGES,
+  type SettingsChange,
   type TaskChangeInput,
 } from "./types";
 
@@ -134,7 +138,16 @@ test("someone not on a board is refused everything about it", async () => {
   const task = await taskOf(create(people.editor));
   for (const attempt of [
     () => as(people.outsider).listBoardTasks({ data: { boardId: MARKETING } }),
-    () => as(people.outsider).boardMembers({ data: { boardId: MARKETING } }),
+    () => as(people.outsider).boardSettings({ data: { boardId: MARKETING } }),
+    () => as(people.outsider).countBoardTasks({ data: { boardId: MARKETING } }),
+    () =>
+      as(people.outsider).changeBoardSettings({
+        data: { boardId: MARKETING, change: { kind: "leave" } },
+      }),
+    () =>
+      as(people.outsider).addAndAssign({
+        data: { boardId: MARKETING, taskId: task.id, userId: people.outsider },
+      }),
     () =>
       change(people.outsider, { kind: "rename", id: task.id, title: "Mine" }),
   ]) {
@@ -330,11 +343,17 @@ test("a new team board takes the next team colour and makes its creator the mana
   ).toEqual({ status: 400, message: "Give the board a name." });
 });
 
-test("the members list holds everyone on the board, for the picker", async () => {
-  const members = await as(people.viewer).boardMembers({
+test("everyone on a board sees who else is on it, in the order they joined", async () => {
+  const settings = await as(people.viewer).boardSettings({
     data: { boardId: MARKETING },
   });
-  expect(members.map((member) => [member.name, member.role])).toEqual([
+  expect(settings.board).toEqual({
+    id: MARKETING,
+    name: "Marketing",
+    colour: 2,
+  });
+  expect(settings.myRole).toBe("viewer");
+  expect(settings.members.map((member) => [member.name, member.role])).toEqual([
     ["Boss", "manager"],
     ["editor", "editor"],
     ["viewer", "viewer"],
@@ -373,7 +392,17 @@ test("with Tasks off, every function refuses in plain words", async () => {
     () => as(people.editor).listMyBoards(),
     () => as(people.editor).listMyTasks(),
     () => as(people.editor).listBoardTasks({ data: { boardId: MARKETING } }),
-    () => as(people.editor).boardMembers({ data: { boardId: MARKETING } }),
+    () => as(people.editor).boardSettings({ data: { boardId: MARKETING } }),
+    () => as(people.editor).listColleagues(),
+    () => as(people.editor).countBoardTasks({ data: { boardId: MARKETING } }),
+    () =>
+      as(people.editor).changeBoardSettings({
+        data: { boardId: MARKETING, change: { kind: "leave" } },
+      }),
+    () =>
+      as(people.editor).addAndAssign({
+        data: { boardId: MARKETING, taskId: task.id, userId: people.editor },
+      }),
     () => change(people.editor, { kind: "delete", id: task.id }),
     () =>
       as(people.editor).createPrivateTask({
@@ -387,12 +416,278 @@ test("with Tasks off, every function refuses in plain words", async () => {
     expect(refusal.message).toContain("An admin turned Tasks off.");
   }
   expect(Object.keys(functions).sort()).toEqual([
-    "boardMembers",
+    "addAndAssign",
+    "boardSettings",
+    "changeBoardSettings",
     "changeTask",
+    "countBoardTasks",
     "createPrivateTask",
     "createTeamBoard",
     "listBoardTasks",
+    "listColleagues",
     "listMyBoards",
     "listMyTasks",
   ]);
+});
+
+const settle = (
+  userId: UserId,
+  settingsChange: SettingsChange,
+  boardId: BoardId = MARKETING,
+) =>
+  as(userId).changeBoardSettings({
+    data: { boardId, change: settingsChange },
+  });
+
+const rolesOn = (): Record<string, string> =>
+  Object.fromEntries(
+    (
+      kit.rows(
+        `SELECT user_id, role FROM board_access WHERE board_id = '${MARKETING}'`,
+      ) as { user_id: string; role: string }[]
+    ).map((row) => [row.user_id, row.role]),
+  );
+
+const managers = () =>
+  Object.entries(rolesOn()).flatMap(([userId, role]) =>
+    role === "manager" ? [userId as UserId] : [],
+  );
+
+test("only a manager adds people, takes them off, changes what they can do, or changes the board", async () => {
+  const before = rolesOn();
+  for (const who of [people.editor, people.viewer]) {
+    for (const attempt of [
+      { kind: "add", userId: people.outsider, role: "editor" },
+      { kind: "setRole", userId: people.viewer, role: "manager" },
+      { kind: "remove", userId: people.manager },
+      { kind: "rename", name: "Mine now" },
+      { kind: "setColour", colour: 5 },
+      { kind: "delete" },
+    ] satisfies SettingsChange[]) {
+      expect(await refused(settle(who, attempt))).toEqual({
+        status: 403,
+        message: ONLY_MANAGERS_MESSAGE,
+      });
+    }
+  }
+  expect(rolesOn()).toEqual(before);
+  expect((await as(people.editor).listMyBoards())[0]).toMatchObject({
+    name: "Marketing",
+    colour: 2,
+  });
+
+  await settle(people.manager, {
+    kind: "add",
+    userId: people.outsider,
+    role: "viewer",
+  });
+  await settle(people.manager, {
+    kind: "add",
+    userId: people.outsider,
+    role: "manager",
+  });
+  expect(rolesOn()[people.outsider]).toBe("viewer");
+  await settle(people.manager, {
+    kind: "setRole",
+    userId: people.outsider,
+    role: "editor",
+  });
+  expect(rolesOn()[people.outsider]).toBe("editor");
+  await settle(people.manager, { kind: "remove", userId: people.outsider });
+  expect(rolesOn()[people.outsider]).toBeUndefined();
+
+  await settle(people.manager, { kind: "rename", name: "  Launch  " });
+  await settle(people.manager, { kind: "setColour", colour: 5 });
+  expect((await as(people.viewer).listMyBoards())[0]).toMatchObject({
+    name: "Launch",
+    colour: 5,
+  });
+});
+
+test("the last manager can't leave or step down, even when two managers step down at once", async () => {
+  for (const attempt of [
+    settle(people.manager, { kind: "leave" }),
+    settle(people.manager, {
+      kind: "setRole",
+      userId: people.manager,
+      role: "editor",
+    }),
+  ]) {
+    expect(await refused(attempt)).toEqual({
+      status: 409,
+      message: LAST_MANAGER_MESSAGE,
+    });
+  }
+
+  await settle(people.manager, {
+    kind: "setRole",
+    userId: people.editor,
+    role: "manager",
+  });
+  const stepDowns = await Promise.allSettled(
+    [people.manager, people.editor].map((userId) =>
+      settle(userId, { kind: "setRole", userId, role: "viewer" }),
+    ),
+  );
+  expect(stepDowns.map((result) => result.status).sort()).toEqual([
+    "fulfilled",
+    "rejected",
+  ]);
+  expect(managers()).toHaveLength(1);
+
+  await settle(people.viewer, { kind: "leave" });
+  expect(rolesOn()[people.viewer]).toBeUndefined();
+  const [lastManager] = managers() as [UserId];
+  const other = lastManager === people.manager ? people.editor : people.manager;
+  await settle(lastManager, {
+    kind: "setRole",
+    userId: other,
+    role: "manager",
+  });
+  const leavings = await Promise.allSettled(
+    [lastManager, other].map((userId) => settle(userId, { kind: "leave" })),
+  );
+  expect(leavings.map((result) => result.status).sort()).toEqual([
+    "fulfilled",
+    "rejected",
+  ]);
+  expect(managers()).toHaveLength(1);
+});
+
+test("a manager adds someone from the organisation as they assign them, and doing it again changes nothing", async () => {
+  const task = await taskOf(create(people.editor));
+  const assignOutsider = () =>
+    as(people.manager).addAndAssign({
+      data: { boardId: MARKETING, taskId: task.id, userId: people.outsider },
+    });
+  const first = await assignOutsider();
+  expect(first.status === "done" && first.task.assignee).toEqual({
+    id: people.outsider,
+    name: "outsider",
+  });
+  expect(rolesOn()[people.outsider]).toBe("editor");
+
+  const again = await assignOutsider();
+  expect(again).toEqual(first);
+  expect(
+    kit.rows(
+      `SELECT role FROM board_access WHERE user_id = '${people.outsider}'`,
+    ),
+  ).toEqual([{ role: "editor" }]);
+  const mine = await as(people.outsider).listMyTasks();
+  expect(mine.tasks.map((shown) => shown.id)).toEqual([task.id]);
+});
+
+test("adding someone while assigning keeps the role of someone already on the board", async () => {
+  const task = await taskOf(create(people.editor));
+  const given = await as(people.manager).addAndAssign({
+    data: { boardId: MARKETING, taskId: task.id, userId: people.viewer },
+  });
+  expect(given.status === "done" && given.task.assignee?.id).toBe(
+    people.viewer,
+  );
+  expect(rolesOn()[people.viewer]).toBe("viewer");
+});
+
+test("someone with Can edit can't add a person while assigning", async () => {
+  const task = await taskOf(create(people.editor));
+  expect(
+    await refused(
+      as(people.editor).addAndAssign({
+        data: { boardId: MARKETING, taskId: task.id, userId: people.outsider },
+      }),
+    ),
+  ).toEqual({ status: 403, message: ONLY_MANAGERS_MESSAGE });
+  expect(rolesOn()[people.outsider]).toBeUndefined();
+  const [shown] = (
+    await as(people.editor).listBoardTasks({ data: { boardId: MARKETING } })
+  ).tasks;
+  expect(shown?.assignee).toBeNull();
+});
+
+test("deleting a board deletes its tasks, and asking again changes nothing", async () => {
+  await create(people.editor, { assigneeId: people.editor });
+  await create(people.editor);
+  expect(
+    await as(people.manager).countBoardTasks({ data: { boardId: MARKETING } }),
+  ).toBe(2);
+
+  await settle(people.manager, { kind: "delete" });
+  expect(kit.rows("SELECT id FROM boards WHERE kind = 'team'")).toEqual([]);
+  expect(kit.rows("SELECT * FROM board_access")).toEqual([]);
+  expect(await as(people.editor).listMyBoards()).toEqual([]);
+  expect((await as(people.editor).listMyTasks()).tasks).toEqual([]);
+  expect(await refused(settle(people.manager, { kind: "delete" }))).toEqual({
+    status: 403,
+    message: NO_ACCESS_MESSAGE,
+  });
+
+  // The object is reached by the board's id, so a board brought back under the same id
+  // shows whether anything was left behind.
+  kit.sqlite.run(
+    "INSERT INTO boards (id, kind, name, colour) VALUES (?, 'team', 'Marketing', 2)",
+    [MARKETING],
+  );
+  kit.sqlite.run(
+    "INSERT INTO board_access (board_id, user_id, role) VALUES (?, ?, 'manager')",
+    [MARKETING, people.manager],
+  );
+  expect(
+    (await as(people.manager).listBoardTasks({ data: { boardId: MARKETING } }))
+      .tasks,
+  ).toEqual([]);
+});
+
+test("someone taken off a board loses it from My tasks, and their tasks there keep their name", async () => {
+  const task = await taskOf(
+    create(people.manager, { assigneeId: people.editor }),
+  );
+  expect((await as(people.editor).listMyTasks()).tasks).toHaveLength(1);
+
+  await settle(people.manager, { kind: "remove", userId: people.editor });
+  expect((await as(people.editor).listMyTasks()).tasks).toEqual([]);
+  expect(await as(people.editor).listMyBoards()).toEqual([]);
+  const [kept] = (
+    await as(people.manager).listBoardTasks({ data: { boardId: MARKETING } })
+  ).tasks;
+  expect(kept?.assignee).toEqual({ id: people.editor, name: "editor" });
+  const settings = await as(people.manager).boardSettings({
+    data: { boardId: MARKETING },
+  });
+  expect(settings.members.map((member) => member.id)).not.toContain(
+    people.editor,
+  );
+
+  const reassigned = await change(people.manager, {
+    kind: "assign",
+    id: task.id,
+    assigneeId: people.viewer,
+  });
+  expect(reassigned.status === "done" && reassigned.task.assignee?.id).toBe(
+    people.viewer,
+  );
+});
+
+test("a person's own board has no settings", async () => {
+  const task = await as(people.editor).createPrivateTask({
+    data: { id: newTaskId(), title: "Only mine", due: null },
+  });
+  for (const attempt of [
+    () => as(people.editor).boardSettings({ data: { boardId: task.board.id } }),
+    () => settle(people.editor, { kind: "leave" }, task.board.id),
+    () => settle(people.editor, { kind: "delete" }, task.board.id),
+    () =>
+      as(people.editor).addAndAssign({
+        data: {
+          boardId: task.board.id,
+          taskId: task.id,
+          userId: people.outsider,
+        },
+      }),
+  ]) {
+    expect(await refused(attempt())).toEqual({
+      status: 403,
+      message: PRIVATE_BOARD_MESSAGE,
+    });
+  }
 });

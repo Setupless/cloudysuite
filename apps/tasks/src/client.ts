@@ -18,6 +18,8 @@ export type BoardClient = {
   listMyTasks(doneSince: number): Promise<Task[]>;
   findTask(id: TaskId): Promise<Task | null>;
   change(change: TaskChange): Promise<ChangeResult>;
+  countTasks(): Promise<number>;
+  erase(): Promise<"done" | "noAccess">;
 };
 
 // The only way for user-facing code to reach a board. A grant cannot cross RPC, so D1's
@@ -41,6 +43,8 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
     findTask: async (id) => (await stub.findTask(actor, id)) as Task | null,
     change: async (change) =>
       (await stub.changeTask(actor, change)) as ChangeResult,
+    countTasks: () => stub.countTasks(actor),
+    erase: () => stub.erase(actor),
   };
 }
 

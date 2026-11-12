@@ -31,6 +31,16 @@ export class Board extends DurableObject<Env> {
     return this.#store.find(actor, id);
   }
 
+  countTasks(actor: Actor): number {
+    return this.#store.count(actor);
+  }
+
+  async erase(actor: Actor): Promise<"done" | "noAccess"> {
+    const result = this.#store.erase(actor);
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
   async changeTask(actor: Actor, change: TaskChange): Promise<ChangeResult> {
     const result = this.#store.change(actor, change, Date.now());
     await this.#scheduleNextWakeUp();
