@@ -26,6 +26,7 @@ import {
   PRIVATE_BOARD_MESSAGE,
   REFUSAL_MESSAGES,
   type SettingsChange,
+  refusedThereMessage,
   type TaskChangeInput,
   viewOnlyThereMessage,
 } from "./types";
@@ -56,10 +57,11 @@ const cookies = new Map<UserId, string>();
 const people = {} as Record<BoardRole | "outsider", UserId>;
 // Boards that fail when asked, as if their object couldn't be reached.
 const unreachable = new Set<string>();
+let boards: ReturnType<typeof createBoardTest>;
 
 beforeEach(async () => {
   kit = await createKit();
-  const boards = createBoardTest();
+  boards = createBoardTest();
   unreachable.clear();
   env.DB = kit.database;
   // A move's receiver checks the mover again, in the same directory.
@@ -729,6 +731,81 @@ test("deleting a board deletes its tasks, and asking again changes nothing", asy
     (await as(people.manager).listBoardTasks({ data: { boardId: MARKETING } }))
       .tasks,
   ).toEqual([]);
+});
+
+const marketingInD1 = () =>
+  kit.rows(`SELECT id FROM boards WHERE id = '${MARKETING}'`).length > 0;
+
+// Read straight from the object, since D1 no longer lets anyone reach it.
+const leftInMarketing = () =>
+  boards.objectOf(MARKETING).listTasks({
+    userId: people.manager,
+    boardId: MARKETING,
+    role: "manager",
+    kind: "team",
+  });
+
+for (const fault of ["silent", "loseAnswer"] as const) {
+  test(`a delete whose board object fails (${fault}) leaves the board listed, and deleting again finishes it`, async () => {
+    await create(people.editor);
+    boards.fail(MARKETING, "erase", fault);
+    await expect(settle(people.manager, { kind: "delete" })).rejects.toThrow();
+    expect(marketingInD1()).toBe(true);
+    expect(await as(people.editor).listMyBoards()).toHaveLength(1);
+
+    boards.fail(MARKETING, "erase", null);
+    await settle(people.manager, { kind: "delete" });
+    expect(marketingInD1()).toBe(false);
+    expect(kit.rows("SELECT * FROM board_access")).toEqual([]);
+    expect(leftInMarketing()).toEqual([]);
+  });
+}
+
+test("a delete whose D1 step fails leaves a board that refuses every change, and deleting again finishes it", async () => {
+  const task = await taskOf(create(people.editor));
+  const privateTask = await as(people.editor).createPrivateTask({
+    data: { id: newTaskId(), title: "Only mine", due: null },
+  });
+  kit.sqlite.run(
+    `CREATE TRIGGER d1_fails BEFORE DELETE ON boards
+     BEGIN SELECT RAISE(ABORT, 'D1 is unreachable'); END`,
+  );
+  await expect(settle(people.manager, { kind: "delete" })).rejects.toThrow();
+  expect(marketingInD1()).toBe(true);
+  expect(
+    (await as(people.editor).listBoardTasks({ data: { boardId: MARKETING } }))
+      .tasks,
+  ).toEqual([]);
+  // As from a page still open from before the delete.
+  const gone = { status: 404, message: REFUSAL_MESSAGES.boardGone };
+  expect(await refused(create(people.editor))).toEqual(gone);
+  expect(
+    await refused(
+      change(people.editor, { kind: "rename", id: task.id, title: "Again" }),
+    ),
+  ).toEqual(gone);
+  expect(
+    await refused(change(people.editor, { kind: "undoDelete", id: task.id })),
+  ).toEqual(gone);
+  expect(
+    await refused(
+      moveTask(people.editor, privateTask.id, privateTask.board.id, MARKETING),
+    ),
+  ).toEqual({
+    status: 409,
+    message: refusedThereMessage("noAccess", "Marketing"),
+  });
+  expect(await titlesOn(people.editor, privateTask.board.id)).toEqual([
+    { title: "Only mine", assignee: null },
+  ]);
+
+  kit.sqlite.run("DROP TRIGGER d1_fails");
+  await settle(people.manager, { kind: "delete" });
+  expect(marketingInD1()).toBe(false);
+  expect(
+    kit.rows(`SELECT * FROM board_access WHERE board_id = '${MARKETING}'`),
+  ).toEqual([]);
+  expect(leftInMarketing()).toEqual([]);
 });
 
 test("someone taken off a board loses it from My tasks, and their tasks there keep their name", async () => {

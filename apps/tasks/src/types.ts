@@ -89,7 +89,8 @@ export type RefusalReason =
   | "itemTooLong"
   | "itemGone"
   | "tooLateToUndo"
-  | "moving";
+  | "moving"
+  | "boardGone";
 
 export const REFUSAL_MESSAGES: Record<RefusalReason, string> = {
   noAccess:
@@ -106,6 +107,7 @@ export const REFUSAL_MESSAGES: Record<RefusalReason, string> = {
   itemGone: "That checklist item has been removed.",
   tooLateToUndo: "It's too late to undo. The task has been deleted.",
   moving: "This task is being moved to another board. Try again in a minute.",
+  boardGone: "This board has been deleted, so it can't be changed.",
 };
 
 export type Refusal = {

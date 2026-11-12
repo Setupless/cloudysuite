@@ -376,3 +376,30 @@ test("a board deleted while a task arrives drops the copy, and nothing is left b
   expect(kit.alarmOf(MARKETING)).toBeNull();
   expect(await shown(PRODUCT)).toEqual([]);
 });
+
+test("a task already on its way out of a deleted board still arrives", async () => {
+  const id = await addTask();
+  kit.fail(PRODUCT, "receiveMove", "silent");
+  expect(await move(id)).toEqual({ status: "pending" });
+  expect(await (await kit.as(ALICE)).erase()).toBe("done");
+  kit.fail(PRODUCT, "receiveMove", null);
+  await laterAlarm(MARKETING);
+  expect(await shown(PRODUCT)).toEqual([
+    { id, title: "Send the newsletter", moving: null },
+  ]);
+  expect(await shown(MARKETING)).toEqual([]);
+  expect(kit.alarmOf(MARKETING)).toBeNull();
+});
+
+test("a deleted board refuses a task moving to it, which stays where it was", async () => {
+  const id = await addTask(PRODUCT);
+  expect(await (await kit.as(ALICE)).erase()).toBe("done");
+  expect(await move(id, PRODUCT, MARKETING)).toEqual({
+    status: "refusedThere",
+    reason: "noAccess",
+  });
+  expect(await shown(PRODUCT)).toEqual([
+    { id, title: "Send the newsletter", moving: null },
+  ]);
+  expect(await shown(MARKETING)).toEqual([]);
+});

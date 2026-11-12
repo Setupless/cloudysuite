@@ -362,6 +362,7 @@ export class TaskStore {
 
   change(actor: Actor, change: TaskChange, now: number): ChangeResult {
     return this.#db.transaction(() => {
+      if (this.#isErased()) return refuse("boardGone");
       const row = this.#row(change.id);
       if (!mayMake(actor, change, row)) return refuse("noAccess");
       if (actor.kind === "personal" && namesSomeone(change)) {
@@ -649,11 +650,17 @@ export class TaskStore {
     return row?.total ?? 0;
   }
 
-  // Empties a deleted board. Running it again changes nothing. A task already on its way
-  // out carries on to the other board, and a copy still arriving goes with this one.
+  #isErased(): boolean {
+    return this.#rows("SELECT 1 AS found FROM erased").length > 0;
+  }
+
+  // Empties a deleted board and refuses every change after it. Running it again changes
+  // nothing. A task already on its way out carries on to the other board, and a copy
+  // still arriving goes with this one.
   erase(actor: Actor): "done" | "noAccess" {
     if (actor.role !== "manager") return "noAccess";
     this.#db.transaction(() => {
+      this.#db.exec("INSERT OR IGNORE INTO erased (only) VALUES (1)");
       this.#db.exec("DELETE FROM tasks");
       this.#db.exec("DELETE FROM move_notices");
       const arriving = this.#rows<{ id: string }>(
@@ -681,6 +688,7 @@ export class TaskStore {
     | Exclude<MoveOutcome, { status: "moved" | "pending" }>
     | { status: "begun" } {
     return this.#db.transaction(() => {
+      if (this.#isErased()) return refuse("boardGone");
       if (levelOfRole(actor.role) !== "edit") return refuse("noAccess");
       const row = this.#row(input.id);
       if (!row || row.deleted_at !== null) return refuse("gone");
@@ -913,7 +921,7 @@ export class TaskStore {
       const phase = this.#incomingPhase(delivery.moveId);
       if (phase === "dropped") return { status: "refused", reason: "dropped" };
       if (phase !== "unheard") return { status: "added" };
-      if (levelOfRole(actor.role) !== "edit") {
+      if (this.#isErased() || levelOfRole(actor.role) !== "edit") {
         return { status: "refused", reason: "noAccess" };
       }
       const id = delivery.task.id;
