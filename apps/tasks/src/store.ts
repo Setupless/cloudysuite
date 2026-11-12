@@ -243,6 +243,11 @@ function changed(
   }
 }
 
+// Whose tasks My tasks lists here. Nobody can be assigned a task on a personal board, so
+// there it's the tasks with no assignee, which is all of them.
+const mineAssignee = (actor: Actor): UserId | null =>
+  actor.kind === "personal" ? null : actor.userId;
+
 // One board's tasks. Each change is checked against who is asking in the same
 // transaction that makes it, and each is safe to send twice.
 export class TaskStore {
@@ -285,28 +290,26 @@ export class TaskStore {
   }
 
   // For My tasks: what's open or done since `doneSince`, of a team board only what's
-  // assigned to the person asking.
+  // assigned to the person asking. Written as two whole branches so each one is a
+  // search of tasks_mine.
   listMine(actor: Actor, doneSince: number): Task[] {
-    return this.#db
-      .exec<TaskRow>(
-        `${TASKS}
-         WHERE deleted_at IS NULL
-           AND (status != 'done' OR done_at >= ?)
-           AND (? = 'personal' OR assignee_id = ?)
-         ORDER BY created_at, tasks.id`,
-        doneSince,
-        actor.kind,
-        actor.userId,
-      )
-      .toArray()
-      .map(taskOf);
+    const assignee = mineAssignee(actor);
+    return this.#rows<TaskRow>(
+      `${TASKS}
+       WHERE (deleted_at IS NULL AND assignee_id IS ? AND done_at IS NULL)
+          OR (deleted_at IS NULL AND assignee_id IS ? AND done_at >= ?)
+       ORDER BY created_at, tasks.id`,
+      assignee,
+      assignee,
+      doneSince,
+    ).map(taskOf);
   }
 
   // Of every task here, the open ones assigned to someone, for their tasks page.
   listOpenFor(_actor: Actor, assigneeId: UserId): Task[] {
     return this.#rows<TaskRow>(
       `${TASKS}
-       WHERE deleted_at IS NULL AND status != 'done' AND assignee_id = ?
+       WHERE deleted_at IS NULL AND done_at IS NULL AND assignee_id = ?
        ORDER BY created_at, tasks.id`,
       assigneeId,
     ).map(taskOf);
