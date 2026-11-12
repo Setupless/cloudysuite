@@ -656,7 +656,8 @@ export class TaskStore {
 
   // Empties a deleted board and refuses every change after it. Running it again changes
   // nothing. A task already on its way out carries on to the other board, and a copy
-  // still arriving goes with this one.
+  // still arriving goes with this one. Its notes go too, and a move refused later leaves
+  // none, since the task can't still be here. Clearing tasks also clears their emails.
   erase(actor: Actor): "done" | "noAccess" {
     if (actor.role !== "manager") return "noAccess";
     this.#db.transaction(() => {
@@ -779,7 +780,7 @@ export class TaskStore {
       `INSERT INTO move_notices (move_id, user_id, title, to_kind, to_name, setback,
          noted_at, index_due_at)
        SELECT id, moved_by, json_extract(task, '$.title'), to_kind, to_name, ?, ?, ?
-       FROM moves_out WHERE id = ?
+       FROM moves_out WHERE id = ? AND NOT EXISTS (SELECT 1 FROM erased)
        ON CONFLICT (move_id) DO NOTHING`,
       setback,
       now,
