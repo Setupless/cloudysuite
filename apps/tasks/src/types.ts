@@ -156,6 +156,32 @@ export type MyTask = TaskHit;
 // `unreachable` counts the boards that didn't answer in time.
 export type MyTasks = { tasks: MyTask[]; unreachable: number };
 
+// Calendar's days, from the first up to but not including `to`. No `from` reaches back to
+// every overdue task.
+export type DueRange = { from: PlainDate | null; to: PlainDate };
+
+// One of the person's own open tasks, as Calendar shows it. The notes and the checklist
+// stay in Tasks. `path` is where it opens on the Tasks address.
+export type DueTask = {
+  id: TaskId;
+  title: string;
+  status: Exclude<TaskStatus, "done">;
+  due: PlainDate;
+  board: BoardOfTask;
+  path: string;
+};
+
+// `unreachable` counts the boards that didn't answer in time.
+export type DueTasks =
+  | { status: "off" }
+  | { status: "listed"; tasks: DueTask[]; unreachable: number };
+
+// Calendar's Schedule never asks for more than a month and its spare days.
+export const MAX_DUE_RANGE_DAYS = 62;
+
+export const TASKS_OFF_IN_CALENDAR_MESSAGE =
+  "An admin turned Tasks off, so tasks can't be changed here. Your tasks are safe, and they come back when it's turned on again.";
+
 export type BoardTasks = { role: BoardRole; kind: BoardKind; tasks: Task[] };
 
 // Someone in the organisation, who may or may not be on a board.
@@ -375,29 +401,3 @@ export type AssignmentEmailStatus =
 
 // The assignment email waits out the same 10 seconds as Undo.
 export const ASSIGNMENT_EMAIL_WAIT_MS = 10_000;
-
-// Calendar's days, from the first up to but not including `to`. No `from` reaches back to
-// every overdue task.
-export type DueRange = { from: PlainDate | null; to: PlainDate };
-
-// One of the person's own open tasks, as Calendar shows it. The notes and the checklist
-// stay in Tasks. `path` is where it opens on the Tasks address.
-export type DueTask = {
-  id: TaskId;
-  title: string;
-  status: Exclude<TaskStatus, "done">;
-  due: PlainDate;
-  board: BoardOfTask;
-  path: string;
-};
-
-// `unreachable` counts the boards that didn't answer in time.
-export type DueTasks =
-  | { status: "off" }
-  | { status: "listed"; tasks: DueTask[]; unreachable: number };
-
-// Calendar's Schedule never asks for more than a month and its spare days.
-export const MAX_DUE_RANGE_DAYS = 62;
-
-export const TASKS_OFF_IN_CALENDAR_MESSAGE =
-  "An admin turned Tasks off, so tasks can't be changed here. Your tasks are safe, and they come back when it's turned on again.";
