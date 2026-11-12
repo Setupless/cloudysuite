@@ -42,6 +42,8 @@ test("only the access-checked client imports the stub", () => {
 
 // These only finish or undo a move whose delivery was checked. See moveReceiver.
 const FINISHING_A_MOVE = ["unlockMoveIn", "dropMoveIn"];
+// These reach only the asker's own notes, and are told whether they can open the board.
+const OWN_NOTES = ["moveNotices", "dismissMoveNotice"];
 
 test("every Board method is told who is asking", () => {
   const source = readFileSync(join(import.meta.dir, "board.ts"), "utf8");
@@ -53,7 +55,8 @@ test("every Board method is told who is asking", () => {
     ([, name]) =>
       name !== "constructor" &&
       name !== "alarm" &&
-      !FINISHING_A_MOVE.includes(name as string),
+      !FINISHING_A_MOVE.includes(name as string) &&
+      !OWN_NOTES.includes(name as string),
   );
   expect(methods.length).toBeGreaterThan(2);
   for (const [name, parameters] of methods.map(([, n, p]) => [n, p])) {

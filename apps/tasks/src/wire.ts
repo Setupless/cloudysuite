@@ -263,6 +263,15 @@ export const parsePersonInput = (raw: unknown) => ({
   userId: requireUserId(record(raw).userId),
 });
 
+// A move's id is a UUID, as a task's is.
+export const parseMoveNoticeInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    boardId: requireBoardId(input.boardId),
+    moveId: uuid<string>(input.moveId),
+  };
+};
+
 export const parseTaskInput = (raw: unknown) => {
   const input = record(raw);
   return {

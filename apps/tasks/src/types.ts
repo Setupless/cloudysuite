@@ -283,6 +283,27 @@ export const refusedThereMessage = (
     ? `You can no longer add tasks to ${name}, so the task is still here.`
     : `The task couldn't be moved to ${name} just now, so it is still here. Try again in a minute.`;
 
+// Why a move didn't happen after the person was told it was on its way.
+export type MoveSetback =
+  Extract<MoveOutcome, { status: "refusedThere" }>["reason"] | "noAnswer";
+
+// A note the board the task stayed on keeps for the person who moved it, until they
+// choose OK.
+export type BoardMoveNotice = {
+  moveId: string;
+  // Null once they can no longer open that board, so the note doesn't reveal the task.
+  title: string | null;
+  to: MoveDestination;
+  setback: MoveSetback;
+  notedAt: number;
+};
+
+// As a page shows it. `stillOn` is null exactly when the title is.
+export type MoveNotice = Omit<BoardMoveNotice, "title"> & {
+  boardId: BoardId;
+  task: { title: string; stillOn: BoardOfTask } | null;
+};
+
 // Where search started, which decides whose names come first.
 export type SearchPlace =
   { kind: "board"; boardId: BoardId } | { kind: "mine" };

@@ -12,6 +12,7 @@ import type { Actor } from "./store";
 import { boardStub } from "./stub";
 import type {
   AssignmentEmailStatus,
+  BoardMoveNotice,
   ChangeResult,
   MoveDestination,
   MoveOutcome,
@@ -118,6 +119,22 @@ export function moveReceiver(env: Env, boardId: BoardId) {
     drop: async (moveId: string) => {
       await stub.dropMoveIn(moveId);
     },
+  };
+}
+
+// A person's own notes about their moves from this board. They keep them after losing
+// the board, when the access check leaves out each task's title.
+export async function moveNoticesOn(
+  env: Env,
+  userId: UserId,
+  boardId: BoardId,
+) {
+  const stub = boardStub(env, boardId);
+  const access = await checkBoardAccess(env.DB, userId, boardId);
+  const reader = { userId, canOpen: access.allowed };
+  return {
+    list: async () => (await stub.moveNotices(reader)) as BoardMoveNotice[],
+    dismiss: (moveId: string) => stub.dismissMoveNotice(reader, moveId),
   };
 }
 
