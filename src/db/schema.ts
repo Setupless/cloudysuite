@@ -16,6 +16,7 @@ export type UserId = Brand<string, "UserId">;
 export type MailboxId = Brand<string, "MailboxId">;
 export type DriveId = Brand<string, "DriveId">;
 export type CalendarId = Brand<string, "CalendarId">;
+export type BoardId = Brand<string, "BoardId">;
 
 export const ORG_ROLES = ["admin", "user"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -43,6 +44,13 @@ export type CalendarKind = (typeof CALENDAR_KINDS)[number];
 // A team calendar offers the same choices as a team folder.
 export const CALENDAR_ROLES = DRIVE_ROLES;
 export type CalendarRole = DriveRole;
+
+export const BOARD_KINDS = ["personal", "team"] as const;
+export type BoardKind = (typeof BOARD_KINDS)[number];
+
+// A team board offers the same choices as a team folder.
+export const BOARD_ROLES = DRIVE_ROLES;
+export type BoardRole = DriveRole;
 
 const now = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
 const timestamp = (name: string) => integer(name, { mode: "timestamp_ms" });
@@ -518,5 +526,60 @@ export const calendarAccess = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.calendarId, table.userId] }),
     index("calendar_access_user_id_idx").on(table.userId),
+  ],
+);
+
+// The Board object holds every task. D1 holds only which boards exist and who is on each,
+// so a task's title, notes, and people live in one place.
+export const boards = sqliteTable(
+  "boards",
+  {
+    id: text()
+      .$type<BoardId>()
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID() as BoardId),
+    kind: text({ enum: BOARD_KINDS }).notNull(),
+    // Null for a person's own board, which holds their private tasks.
+    name: text(),
+    colour: integer().notNull(),
+    // Removing a person sets this to null, so their tasks stay.
+    ownerId: text("owner_id")
+      .$type<UserId>()
+      .references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    check("boards_colour", sql`${table.colour} BETWEEN 1 AND 6`),
+    check(
+      "boards_team_has_name",
+      sql`${table.kind} = 'personal' OR ${table.name} IS NOT NULL`,
+    ),
+    check(
+      "boards_owner_only_when_personal",
+      sql`${table.ownerId} IS NULL OR ${table.kind} = 'personal'`,
+    ),
+    uniqueIndex("boards_one_personal_per_owner")
+      .on(table.ownerId)
+      .where(sql`${table.kind} = 'personal'`),
+  ],
+);
+
+export const boardAccess = sqliteTable(
+  "board_access",
+  {
+    boardId: text("board_id")
+      .$type<BoardId>()
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text({ enum: BOARD_ROLES }).notNull(),
+    createdAt: timestamp("created_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey({ columns: [table.boardId, table.userId] }),
+    index("board_access_user_id_idx").on(table.userId),
   ],
 );
