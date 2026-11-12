@@ -143,12 +143,60 @@ export type MyTasks = { tasks: MyTask[]; unreachable: number };
 
 export type BoardTasks = { role: BoardRole; kind: BoardKind; tasks: Task[] };
 
-export type Member = {
-  id: UserId;
-  name: string;
-  email: string;
+// Someone in the organisation, who may or may not be on a board.
+export type Colleague = { id: UserId; name: string; email: string };
+
+// A suspended member stays on the list, so a manager can still remove them, but can't
+// be given a task.
+export type Member = Colleague & {
   role: BoardRole;
+  joinedAt: number;
+  suspended: boolean;
 };
+
+// A team board's settings. Members come in the order they joined.
+export type BoardSettings = {
+  board: { id: BoardId; name: string; colour: number };
+  myRole: BoardRole;
+  members: Member[];
+};
+
+// What a board's settings can change.
+export type SettingsChange =
+  | { kind: "add"; userId: UserId; role: BoardRole }
+  | { kind: "setRole"; userId: UserId; role: BoardRole }
+  | { kind: "remove"; userId: UserId }
+  | { kind: "leave" }
+  | { kind: "rename"; name: string }
+  | { kind: "setColour"; colour: number }
+  | { kind: "delete" };
+
+// Only a manager adds members anywhere in the suite. Anyone on a board may leave it,
+// unless they're its last manager.
+export const MAY_CHANGE_SETTINGS: Record<
+  SettingsChange["kind"],
+  "manager" | "anyone"
+> = {
+  add: "manager",
+  setRole: "manager",
+  remove: "manager",
+  leave: "anyone",
+  rename: "manager",
+  setColour: "manager",
+  delete: "manager",
+};
+
+export const mayChangeSettings = (
+  role: BoardRole,
+  kind: SettingsChange["kind"],
+): boolean => MAY_CHANGE_SETTINGS[kind] === "anyone" || role === "manager";
+
+// What the assignee picker offers for the text typed: the board's members, then everyone
+// else in the organisation.
+export type AssigneeChoices = { onBoard: Member[]; others: Colleague[] };
+
+// Adding someone while assigning gives them the team folder default.
+export const ADDED_WHILE_ASSIGNING_ROLE: BoardRole = "editor";
 
 // What a page sends. People come as ids, and the server reads their names from D1.
 export type TaskChangeInput =
@@ -182,4 +230,13 @@ export const NO_ACCESS_MESSAGE =
 export const NOT_ON_BOARD_MESSAGE =
   "That person isn't on this board. Ask one of its managers to add them first.";
 export const BOARD_NAME_EMPTY_MESSAGE = "Give the board a name.";
+export const ONLY_MANAGERS_MESSAGE =
+  "Only a manager of this board can do that.";
+export const LAST_MANAGER_MESSAGE =
+  "A team board needs at least one manager. Make someone else a manager first.";
+export const NOT_ON_IT_MESSAGE = "That person isn't on this board.";
+export const NOT_A_PERSON_MESSAGE =
+  "That person can't be added. They may have been removed or suspended.";
+export const PRIVATE_BOARD_MESSAGE =
+  "Your private tasks are just for you. Nobody else can be added, and they can't be left or deleted.";
 export const BOARD_NAME_TOO_LONG_MESSAGE = `Use a name of ${MAX_BOARD_NAME_LENGTH} characters or fewer.`;

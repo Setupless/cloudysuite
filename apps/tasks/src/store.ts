@@ -341,6 +341,23 @@ export class TaskStore {
     );
   }
 
+  // What the delete confirmation names. A task waiting out its Undo is already gone.
+  count(_actor: Actor): number {
+    const [row] = this.#db
+      .exec<{ total: number }>(
+        "SELECT COUNT(*) AS total FROM tasks WHERE deleted_at IS NULL",
+      )
+      .toArray();
+    return row?.total ?? 0;
+  }
+
+  // Empties a deleted board. Running it again changes nothing.
+  erase(actor: Actor): "done" | "noAccess" {
+    if (actor.role !== "manager") return "noAccess";
+    this.#db.exec("DELETE FROM tasks");
+    return "done";
+  }
+
   // Removes for good every task whose Undo has passed. Running it again changes nothing.
   purgeDeleted(now: number): void {
     this.#db.exec(

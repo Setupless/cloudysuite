@@ -1,8 +1,8 @@
-import type { UserId } from "@cloudysuite/access";
+import type { BoardId, UserId } from "@cloudysuite/access";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
 import { NameDialog, NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
-import { IconHome, IconPlus } from "@tabler/icons-react";
+import { IconDots, IconHome, IconPlus } from "@tabler/icons-react";
 import {
   type DehydratedState,
   HydrationBoundary,
@@ -14,6 +14,7 @@ import { type ReactNode, useState } from "react";
 import { createTeamBoard } from "../functions";
 import { boardsQuery, call, tasksKeys } from "../queries";
 import type { BoardEntry } from "../types";
+import { BoardSettingsDialog } from "./board-settings";
 import { BoardSwatch } from "./parts";
 import { MeProvider } from "./task-page";
 
@@ -22,9 +23,11 @@ const itemClass = (active: boolean) =>
 
 function Navigation({
   boards,
+  onSettings,
   onNewBoard,
 }: {
   boards: BoardEntry[] | undefined;
+  onSettings: (boardId: BoardId) => void;
   onNewBoard: () => void;
 }) {
   const { pathname } = useLocation();
@@ -44,21 +47,35 @@ function Navigation({
       </h3>
       {boards?.map((board) => {
         const active = path.endsWith(`/boards/${board.id}`);
+        // Shown on hover or focus, on the board that's open, and always on a device that
+        // can't hover, such as a phone.
+        const shown = active
+          ? "pr-9"
+          : "group-focus-within:pr-9 group-hover:pr-9 [@media(hover:none)]:pr-9";
         return (
-          <Link
-            key={board.id}
-            to="/tasks/boards/$boardId"
-            params={{ boardId: board.id }}
-            aria-current={active ? "page" : undefined}
-            className={itemClass(active)}
-          >
-            <span className="flex size-[18px] flex-none items-center justify-center">
-              <BoardSwatch colour={board.colour} />
-            </span>
-            <span className="min-w-0 truncate" dir="auto">
-              {board.name}
-            </span>
-          </Link>
+          <div key={board.id} className="group relative">
+            <Link
+              to="/tasks/boards/$boardId"
+              params={{ boardId: board.id }}
+              aria-current={active ? "page" : undefined}
+              className={`${itemClass(active)} ${shown}`}
+            >
+              <span className="flex size-[18px] flex-none items-center justify-center">
+                <BoardSwatch colour={board.colour} />
+              </span>
+              <span className="min-w-0 truncate" dir="auto">
+                {board.name}
+              </span>
+            </Link>
+            <button
+              type="button"
+              aria-label={`Settings for ${board.name}`}
+              className={`absolute top-1/2 right-1 flex -translate-y-1/2 cursor-pointer rounded p-1 text-secondary outline-accent group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-panel hover:text-text focus-visible:outline-2 [@media(hover:none)]:opacity-100 ${active ? "" : "opacity-0"}`}
+              onClick={() => onSettings(board.id)}
+            >
+              <IconDots size={16} stroke={1.75} aria-hidden />
+            </button>
+          </div>
         );
       })}
       <button
@@ -78,18 +95,40 @@ function Navigation({
 function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { data: boards } = useQuery(boardsQuery());
   const [naming, setNaming] = useState(false);
+  const [settingsFor, setSettingsFor] = useState<BoardId | null>(null);
+  // Gone from the list once it's deleted or left, which closes its settings.
+  const settingsEntry = boards?.find((board) => board.id === settingsFor);
   return (
     <SuiteShell
       app="tasks"
       user={user}
       navigationLabel="Tasks"
       navigation={
-        <Navigation boards={boards} onNewBoard={() => setNaming(true)} />
+        <Navigation
+          boards={boards}
+          onSettings={setSettingsFor}
+          onNewBoard={() => setNaming(true)}
+        />
       }
     >
       {children}
+      {settingsEntry && (
+        <BoardSettingsDialog
+          key={settingsEntry.id}
+          entry={settingsEntry}
+          meId={user.id as UserId}
+          onClose={() => setSettingsFor(null)}
+          onGone={async () => {
+            const path = pathname.replace(/\/$/, "");
+            if (path.endsWith(`/boards/${settingsEntry.id}`)) {
+              await navigate({ to: "/tasks" });
+            }
+          }}
+        />
+      )}
       {naming && (
         <NameDialog
           title="New team board"

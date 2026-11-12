@@ -26,3 +26,14 @@ export function phraseTerm(text: string): SearchTerm | null {
 // with remove_diacritics.
 export const toPrefixMatch = (terms: readonly SearchTerm[]) =>
   terms.length === 0 ? null : terms.map((term) => `"${term}"*`).join(" AND ");
+
+const folded = (text: string) =>
+  text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+
+// Each word typed must start a word of the text, in any order, whatever the case or
+// accents, the way names are searched. Nothing typed matches everything.
+export function matchesWords(typed: string, text: string): boolean {
+  const wanted = wordsOf(folded(typed));
+  const theirs = wordsOf(folded(text));
+  return wanted.every((word) => theirs.some((their) => their.startsWith(word)));
+}
