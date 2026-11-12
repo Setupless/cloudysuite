@@ -128,7 +128,10 @@ function useTick() {
       toast({ tone: "danger", message: (failure as Error).message });
       return false;
     }
+    // A read that began before the write would bring the task back when it lands.
+    await client.cancelQueries({ queryKey: calendarKeys.tasks });
     dropTask(client, task);
+    void refresh();
     toast({
       message: `"${task.title}" is done.`,
       action: { label: "Undo", run: () => void undo(task) },
