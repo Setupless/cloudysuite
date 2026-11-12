@@ -99,25 +99,33 @@ export function PageHeading({
   canAdd: boolean | null;
   onAdd: () => void;
 }) {
+  // Narrow, the detail takes its own line under the title, so New task stays beside the
+  // title. As in Calendar's Overview, the queries see the screen's width, not the window's.
   return (
-    <div className="flex min-h-[62px] flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-3 pb-3">
-      <h1 className="flex min-w-0 items-center gap-2.5 pl-1 text-[21px] leading-[34px] font-semibold">
-        {swatch}
-        <span className="truncate">{title}</span>
-      </h1>
-      {detail && <p className="text-secondary">{detail}</p>}
-      {canAdd && (
-        <div className="ml-auto">
-          <Button
-            variant="toolbarAction"
-            icon={IconPlus}
-            aria-keyshortcuts="N"
-            onClick={onAdd}
-          >
-            New task
-          </Button>
-        </div>
-      )}
+    <div className="@container">
+      <div className="flex min-h-[62px] flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-3 pb-3">
+        <h1 className="flex min-w-0 grow basis-0 items-center gap-2.5 pl-1 text-[21px] leading-[34px] font-semibold @2xl:grow-0 @2xl:basis-auto">
+          {swatch}
+          <span className="truncate">{title}</span>
+        </h1>
+        {detail && (
+          <p className="order-1 min-w-0 basis-full pl-1 text-secondary @2xl:order-none @2xl:basis-auto @2xl:pl-0">
+            {detail}
+          </p>
+        )}
+        {canAdd && (
+          <div className="ml-auto flex-none">
+            <Button
+              variant="toolbarAction"
+              icon={IconPlus}
+              aria-keyshortcuts="N"
+              onClick={onAdd}
+            >
+              New task
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
