@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@cloudysuite/access": "workspace:*",
+    "@cloudysuite/app-email": "workspace:*",
     "@cloudysuite/auth": "workspace:*",
+    "@cloudysuite/mail": "workspace:*",
     "@cloudysuite/object-sql": "workspace:*",
     "@cloudysuite/search": "workspace:*",
     "@cloudysuite/ui": "workspace:*",

@@ -1,4 +1,5 @@
 import type { UserId } from "@cloudysuite/access";
+import type { EmailPort } from "@cloudysuite/app-email";
 import { judgeSendError, retryDelay } from "@cloudysuite/mail/send-outcome";
 import { canStillEdit } from "../client";
 import { findPersonalCalendar } from "../directory";
@@ -13,12 +14,6 @@ import type {
 import type { IcsAttendee } from "./ics";
 import { invitationMime, type SendablePlan } from "./message";
 import { readSendingFacts, type SendingFacts } from "./senders";
-
-// The binding takes one raw message to one address. That's one email per person, which
-// also keeps inside the service's limit of 50 recipients a message.
-export type EmailPort = {
-  send(message: { from: string; to: string; raw: string }): Promise<unknown>;
-};
 
 const EMAILS_PER_WAKE_UP = 25;
 

@@ -15,6 +15,7 @@ import {
   LIMITS,
   parsePlainDate,
   type Task,
+  ASSIGNMENT_EMAIL_WAIT_MS,
   UNDO_DELETE_MS,
 } from "./types";
 
@@ -345,7 +346,8 @@ test("delete then undo restores the task, and a delete sent twice keeps its firs
   expect(made(await board.change({ kind: "undoDelete", id }))).toEqual(before!);
   expect(made(await board.change({ kind: "undoDelete", id }))).toEqual(before!);
   expect(await board.listTasks()).toEqual([before!]);
-  expect(kit.alarmOf(MARKETING)).toBeNull();
+  // Nothing is left to purge. Only Bob's assignment email is due.
+  expect(kit.alarmOf(MARKETING)).toBe(START + ASSIGNMENT_EMAIL_WAIT_MS);
 });
 
 test("after Undo has passed the alarm deletes the task for good, and running it again changes nothing", async () => {

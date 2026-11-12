@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@cloudysuite/access": "workspace:*",
+    "@cloudysuite/app-email": "workspace:*",
     "@cloudysuite/auth": "workspace:*",
     "@cloudysuite/calendar": "workspace:*",
     "@cloudysuite/jev": "workspace:*",

@@ -27,7 +27,7 @@ import {
   createFakeEmail,
   partOfType,
   readEmail,
-} from "../../calendar/src/email/test-support";
+} from "@cloudysuite/app-email/test-support";
 import {
   AUTH,
   calendarAttachment,

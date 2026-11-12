@@ -5,6 +5,7 @@ import {
   ensurePersonalBoard,
   type UserId,
 } from "@cloudysuite/access";
+import { createFakeEmail } from "@cloudysuite/app-email/test-support";
 import { createSqlDriver } from "@cloudysuite/object-sql/test-driver";
 import {
   createTestDatabase,
@@ -21,6 +22,16 @@ mock.module("cloudflare:workers", () => ({
       this.ctx = ctx;
       this.env = env;
     }
+  },
+}));
+// The raw message the Board object hands the EMAIL binding.
+mock.module("cloudflare:email", () => ({
+  EmailMessage: class {
+    constructor(
+      readonly from: string,
+      readonly to: string,
+      readonly raw: string,
+    ) {}
   },
 }));
 const { Board } = await import("./board");
@@ -71,6 +82,7 @@ export function createBoardTest() {
   >();
   const faults = new Map<string, Map<string, Fault>>();
   const calls = new Map<string, BoardCall[]>();
+  const email = createFakeEmail();
   // Records every call that reaches an object through the binding, and applies faults.
   function reach(name: string) {
     const object = instanceOf(name).object;
@@ -97,6 +109,7 @@ export function createBoardTest() {
   }
   const env = {
     DB: d1,
+    EMAIL: email.binding,
     BOARD: {
       idFromName: (name: string) => name,
       get: reach,
@@ -122,6 +135,7 @@ export function createBoardTest() {
         deleteAlarm: async () => {
           instance.alarm = null;
         },
+        sync: async () => {},
       },
     };
     instance.object = new Board(ctx as unknown as DurableObjectState, env);
@@ -166,6 +180,7 @@ export function createBoardTest() {
   return {
     env,
     d1,
+    email,
     directory,
     join,
     as,

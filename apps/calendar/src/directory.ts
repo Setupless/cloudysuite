@@ -1,3 +1,4 @@
+import { chunked } from "@cloudysuite/app-email";
 import {
   type CalendarId,
   type CalendarRole,
@@ -10,7 +11,6 @@ import {
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { calendarAccess, calendars, user } from "../../../src/db/schema";
-import { chunked } from "./chunked";
 import {
   type CalendarEntry,
   type Invitee,

@@ -21,7 +21,7 @@ import {
   partOfType,
   readEmail,
   type SentEmail,
-} from "./email/test-support";
+} from "@cloudysuite/app-email/test-support";
 import { readCalendarFile } from "./outside/ics";
 import { createCalendarTest, SYDNEY, saved, TEAM } from "./test-support";
 import type {

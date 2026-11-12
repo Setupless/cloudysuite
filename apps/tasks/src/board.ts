@@ -3,10 +3,12 @@ import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { BoardId, UserId } from "@cloudysuite/access";
 import type { SearchTerm } from "@cloudysuite/search";
 import { moveReceiver } from "./client";
+import { runDueEmails } from "./email/send";
 import { MIGRATIONS } from "./migrations";
 import type { MoveDelivery, ReceiveAnswer } from "./moves";
 import { type Actor, TaskStore } from "./store";
 import type {
+  AssignmentEmailStatus,
   ChangeResult,
   MoveDestination,
   MoveOutcome,
@@ -158,6 +160,19 @@ export class Board extends DurableObject<Env> {
     }
   }
 
+  assignmentEmail(actor: Actor, id: TaskId): AssignmentEmailStatus {
+    return this.#store.emailStatus(actor, id);
+  }
+
+  async retryAssignmentEmail(
+    actor: Actor,
+    id: TaskId,
+  ): Promise<"done" | "noAccess"> {
+    const result = this.#store.retryEmail(actor, id, Date.now());
+    await this.#scheduleNextWakeUp();
+    return result;
+  }
+
   receiveMove(actor: Actor, delivery: MoveDelivery): ReceiveAnswer {
     return this.#store.receiveMove(actor, delivery);
   }
@@ -178,11 +193,41 @@ export class Board extends DurableObject<Env> {
       : this.ctx.storage.setAlarm(due);
   }
 
+  // The purge goes first, so an email about a task deleted for good goes with it.
   override async alarm(): Promise<void> {
+    this.#store.purgeDeleted(Date.now());
+    await this.#sendEmails();
     for (const moveId of this.#store.dueMoves(Date.now(), MOVES_PER_WAKE_UP)) {
       await this.#runMove(moveId);
     }
-    this.#store.purgeDeleted(Date.now());
     await this.#scheduleNextWakeUp();
+  }
+
+  async #sendEmails(): Promise<void> {
+    try {
+      await runDueEmails(
+        {
+          store: this.#store,
+          database: this.env.DB,
+          email: {
+            send: async ({ from, to, raw }) => {
+              // Loaded here, so code that never sends doesn't need the Workers runtime.
+              const { EmailMessage } = await import("cloudflare:email");
+              return this.env.EMAIL.send(new EmailMessage(from, to, raw));
+            },
+          },
+          saveProgress: async () => {
+            await this.#scheduleNextWakeUp();
+            await this.ctx.storage.sync();
+          },
+        },
+        Date.now(),
+      );
+    } catch (error) {
+      console.error(
+        "Assignment emails stopped. They'll be looked at again.",
+        error,
+      );
+    }
   }
 }
