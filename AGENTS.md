@@ -53,7 +53,7 @@ Do not guess or build around these. Ask the user first.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off. The only other exception is a `GET` of `/pwa/session` on the Mail host, which returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Production code runs on Workers, so it cannot use Bun APIs.
 - Each mailbox, each drive, and each calendar is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
-- D1 holds the directory, settings, and sign-in tables, and `src/db/schema.ts` lists them all. `saved_mail_attachments`, `drive_shares`, and `drive_move_notices` only index into objects and hold no content. The Drive object owns the shares and move notes themselves, and the Calendar object owns every event.
+- D1 holds the directory, settings, sign-in, push, and usage tables, and `src/db/schema.ts` lists them all. `saved_mail_attachments`, `drive_shares`, and `drive_move_notices` only index into objects and hold no content. The Drive object owns the shares and move notes themselves, and the Calendar object owns every event.
 - Every mailbox, drive, or calendar read and write goes through its one access-check function.
 - Every message enters a mailbox through `apps/mail/src/ingest.ts`. Imports use `prepareImported` and sent copies use `prepareSent`, so each job can commit inside its own Durable Object transaction.
 - Durable Object alarms handle background work. Do not add Queues or Workflows.
