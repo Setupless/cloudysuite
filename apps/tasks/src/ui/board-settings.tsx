@@ -51,18 +51,18 @@ function useRunning(boardId: BoardId) {
   const client = useQueryClient();
   const [running, setRunning] = useState<Running>(null);
   const [error, setError] = useState<string | null>(null);
-  // `before` runs ahead of the refresh, so a dialog for a board that's gone closes first
-  // and doesn't ask about it again.
+  // `before` runs ahead of the refresh, so a dialog or page for a board that's gone closes
+  // first and doesn't ask about it again.
   async function run(
     action: Running,
     change: SettingsChange,
-    before?: () => void,
+    before?: () => Promise<void>,
   ) {
     setRunning(action);
     setError(null);
     try {
       await call(() => changeBoardSettings({ data: { boardId, change } }));
-      before?.();
+      await before?.();
       await client.invalidateQueries({ queryKey: tasksKeys.all });
     } catch (failure) {
       setError((failure as Error).message);
@@ -180,7 +180,7 @@ function DeleteConfirmation({
 }: {
   entry: BoardEntry;
   onBack: () => void;
-  onDeleted: () => void;
+  onDeleted: () => Promise<void>;
 }) {
   const toast = useToast();
   const count = useQuery(taskCountQuery(entry.id));
@@ -214,9 +214,9 @@ function DeleteConfirmation({
           disabled={!count.isSuccess}
           pending={running?.kind === "delete"}
           onClick={() =>
-            void run({ kind: "delete" }, { kind: "delete" }, () => {
+            void run({ kind: "delete" }, { kind: "delete" }, async () => {
               toast({ message: `${entry.name} is deleted.` });
-              onDeleted();
+              await onDeleted();
             })
           }
         >
@@ -239,7 +239,7 @@ export function BoardSettingsDialog({
   meId: UserId;
   onClose: () => void;
   // The board is deleted or left, so a page showing it should go elsewhere.
-  onGone: () => void;
+  onGone: () => Promise<void>;
 }) {
   const toast = useToast();
   const settings = useQuery(settingsQuery(entry.id));
@@ -258,7 +258,7 @@ export function BoardSettingsDialog({
         onBack={() => setConfirming(false)}
         onDeleted={() => {
           onClose();
-          onGone();
+          return onGone();
         }}
       />
     );
@@ -361,7 +361,7 @@ export function BoardSettingsDialog({
             void run({ kind: "leave" }, { kind: "leave" }, () => {
               toast({ message: `You've left ${entry.name}.` });
               onClose();
-              onGone();
+              return onGone();
             })
           }
         >

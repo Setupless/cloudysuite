@@ -121,13 +121,10 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
           entry={settingsEntry}
           meId={user.id as UserId}
           onClose={() => setSettingsFor(null)}
-          onGone={() => {
-            if (
-              pathname
-                .replace(/\/$/, "")
-                .endsWith(`/boards/${settingsEntry.id}`)
-            ) {
-              void navigate({ to: "/tasks" });
+          onGone={async () => {
+            const path = pathname.replace(/\/$/, "");
+            if (path.endsWith(`/boards/${settingsEntry.id}`)) {
+              await navigate({ to: "/tasks" });
             }
           }}
         />
