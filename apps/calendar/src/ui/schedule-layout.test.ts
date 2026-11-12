@@ -268,3 +268,22 @@ test("Month leaves out events outside the days shown", () => {
       .entries,
   ).toEqual([]);
 });
+
+test("a task on its day comes after that day's all-day events, whatever its title", () => {
+  const days = week("2026-11-09");
+  const task = {
+    ...allDay("Book flights", "2026-11-12", "2026-11-13"),
+    trailing: true,
+  };
+  const items = [task, allDay("Team offsite", "2026-11-12", "2026-11-13")];
+  const rows = (layout: { item: Shown; row: number }[]) =>
+    layout.map(({ item, row }) => [item.title, row]);
+  expect(rows(layoutTimeGrid(days, items, SYDNEY).bars)).toEqual([
+    ["Team offsite", 0],
+    ["Book flights", 1],
+  ]);
+  expect(rows(layoutMonthWeek(days, items, SYDNEY).entries)).toEqual([
+    ["Team offsite", 0],
+    ["Book flights", 1],
+  ]);
+});

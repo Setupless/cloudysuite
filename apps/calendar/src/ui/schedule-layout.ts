@@ -16,7 +16,8 @@ export const SHORTEST_MINUTES = 30;
 
 export const MONTH_LINES = 3;
 
-export type Shown = { time: EventTime; title: string };
+// A task is `trailing`, so on its day it comes after the events.
+export type Shown = { time: EventTime; title: string; trailing?: boolean };
 
 // The days an event covers on the viewer's calendar, the last one included.
 export type DaySpan = { first: CivilDate; last: CivilDate };
@@ -118,6 +119,7 @@ function inShownOrder<Item extends Shown>(
     (a, b) =>
       startOf(a.time) - startOf(b.time) ||
       endOf(b.time) - endOf(a.time) ||
+      Number(a.trailing ?? false) - Number(b.trailing ?? false) ||
       a.title.localeCompare(b.title),
   );
 }

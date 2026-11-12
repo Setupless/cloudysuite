@@ -208,6 +208,7 @@ export type ShownTask = {
   key: string;
   title: string;
   time: EventTime;
+  trailing: true;
   task: DueTask;
 };
 
@@ -218,6 +219,7 @@ export const shownTasks = (tasks: DueTask[]): ShownTask[] =>
       key: `task/${task.id}`,
       title: task.title,
       time: { kind: "allDay", startDate: due, endDate: addDays(due, 1) },
+      trailing: true,
       task,
     };
   });
