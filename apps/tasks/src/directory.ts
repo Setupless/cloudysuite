@@ -41,8 +41,7 @@ export async function readMyBoards(
   return rows.map((row) => ({ ...row, name: row.name ?? me.name }));
 }
 
-// Those who can be given a task on this board: on it, with any role, and not suspended.
-// In the order they joined, the way a board's settings list them.
+// Everyone on the board, in the order they joined, the way a board's settings list them.
 export async function readMembers(
   database: D1Database,
   boardId: BoardId,
@@ -61,14 +60,11 @@ export async function readMembers(
     .innerJoin(user, eq(user.id, boardAccess.userId))
     .where(eq(boardAccess.boardId, boardId))
     .orderBy(asc(boardAccess.createdAt), asc(user.name), asc(user.id));
-  return rows
-    .filter((row) => !isBanned(row))
-    .map(
-      ({ banned: _banned, banExpires: _banExpires, joinedAt, ...member }) => ({
-        ...member,
-        joinedAt: joinedAt.getTime(),
-      }),
-    );
+  return rows.map(({ banned, banExpires, joinedAt, ...member }) => ({
+    ...member,
+    joinedAt: joinedAt.getTime(),
+    suspended: isBanned({ banned, banExpires }),
+  }));
 }
 
 export async function findMember(

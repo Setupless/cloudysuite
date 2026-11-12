@@ -15,7 +15,7 @@ export function assigneeChoices(
   const matching = <Person extends Colleague>(people: readonly Person[]) =>
     people.filter((person) => matchesWords(typed, person.name)).sort(byName);
   return {
-    onBoard: matching(members),
+    onBoard: matching(members.filter((member) => !member.suspended)),
     others: matching(colleagues.filter((person) => !onBoard.has(person.id))),
   };
 }

@@ -193,6 +193,30 @@ test("Can view can't add a task, but can tick off one assigned to them", async (
   ).toEqual({ status: 403, message: REFUSAL_MESSAGES.noAccess });
 });
 
+test("a suspended member stays on the board's list, so a manager can remove them, but can't be assigned", async () => {
+  kit.sqlite.run("UPDATE user SET banned = 1 WHERE id = ?", [people.viewer]);
+  const settings = await as(people.manager).boardSettings({
+    data: { boardId: MARKETING },
+  });
+  expect(
+    settings.members.map((member) => [member.name, member.suspended]),
+  ).toEqual([
+    ["Boss", false],
+    ["editor", false],
+    ["viewer", true],
+  ]);
+  const task = await taskOf(create(people.editor));
+  expect(
+    await refused(
+      change(people.editor, {
+        kind: "assign",
+        id: task.id,
+        assigneeId: people.viewer,
+      }),
+    ),
+  ).toEqual({ status: 400, message: NOT_ON_BOARD_MESSAGE });
+});
+
 test("only someone on the board can be assigned, under the name the directory holds", async () => {
   const task = await taskOf(create(people.editor));
   expect(

@@ -8,10 +8,11 @@ const person = (id: string, name: string): Colleague => ({
   name,
   email: `${id}@example.com`,
 });
-const member = (id: string, name: string): Member => ({
+const member = (id: string, name: string, suspended = false): Member => ({
   ...person(id, name),
   role: "viewer",
   joinedAt: 0,
+  suspended,
 });
 
 const members = [member("maya", "Maya Ortiz"), member("ana", "Ána Lind")];
@@ -45,4 +46,14 @@ test("each word typed must start a word of the name, in any order and any case",
 test("a sentence names someone by their first name", () => {
   expect(firstNameOf("Ben Hart")).toBe("Ben");
   expect(firstNameOf("  Cher ")).toBe("Cher");
+});
+
+test("a suspended member is offered in neither section", () => {
+  const choices = assigneeChoices(
+    "",
+    [...members, member("ben", "Ben Hart", true)],
+    everyone,
+  );
+  expect(names(choices.onBoard)).toEqual(["Ána Lind", "Maya Ortiz"]);
+  expect(names(choices.others)).toEqual(["Beatrix Ortega"]);
 });

@@ -146,7 +146,13 @@ export type BoardTasks = { role: BoardRole; kind: BoardKind; tasks: Task[] };
 // Someone in the organisation, who may or may not be on a board.
 export type Colleague = { id: UserId; name: string; email: string };
 
-export type Member = Colleague & { role: BoardRole; joinedAt: number };
+// A suspended member stays on the list, so a manager can still remove them, but can't
+// be given a task.
+export type Member = Colleague & {
+  role: BoardRole;
+  joinedAt: number;
+  suspended: boolean;
+};
 
 // A team board's settings. Members come in the order they joined.
 export type BoardSettings = {
