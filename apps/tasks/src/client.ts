@@ -15,6 +15,7 @@ export type BoardClient = {
   role: BoardRole;
   kind: BoardKind;
   listTasks(): Promise<Task[]>;
+  listMyTasks(doneSince: number): Promise<Task[]>;
   findTask(id: TaskId): Promise<Task | null>;
   change(change: TaskChange): Promise<ChangeResult>;
 };
@@ -35,6 +36,8 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
     role: grant.role,
     kind: grant.kind,
     listTasks: async () => (await stub.listTasks(actor)) as Task[],
+    listMyTasks: async (doneSince) =>
+      (await stub.listMyTasks(actor, doneSince)) as Task[],
     findTask: async (id) => (await stub.findTask(actor, id)) as Task | null,
     change: async (change) =>
       (await stub.changeTask(actor, change)) as ChangeResult,

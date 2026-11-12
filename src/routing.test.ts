@@ -7,6 +7,7 @@ const allOn: Settings = { primaryDomain: "example.com", disabled: new Set() };
 const mailOff: Settings = { ...allOn, disabled: new Set(["mail"]) };
 const storageOff: Settings = { ...allOn, disabled: new Set(["storage"]) };
 const calendarOff: Settings = { ...allOn, disabled: new Set(["calendar"]) };
+const tasksOff: Settings = { ...allOn, disabled: new Set(["tasks"]) };
 const notSetUp: Settings = { primaryDomain: null, disabled: new Set() };
 
 test.each([
@@ -21,6 +22,9 @@ test.each([
   ["calendar.example.com", allOn, { kind: "app", app: "calendar" }],
   ["calendar.example.com", calendarOff, { kind: "off", app: "calendar" }],
   ["mail.example.com", calendarOff, { kind: "app", app: "mail" }],
+  ["tasks.example.com", allOn, { kind: "app", app: "tasks" }],
+  ["tasks.example.com", tasksOff, { kind: "off", app: "tasks" }],
+  ["calendar.example.com", tasksOff, { kind: "app", app: "calendar" }],
   [
     "mail.EXAMPLE.com",
     { ...allOn, primaryDomain: "Example.com" },
@@ -173,6 +177,27 @@ test.each([
     expect(gate(calendarIsOff, calling(path, method))).toEqual({
       action: "refuse",
       app: "calendar",
+    });
+  },
+);
+
+const tasksIsOff: HostRoute = { kind: "off", app: "tasks" };
+
+test.each([
+  ["GET", "/"],
+  ["GET", "/boards/1b3f4e30-ac2d-4f90-9e77-2c3d4e5f6071"],
+  ["GET", "/pwa/session"],
+  ["POST", "/_serverFn/anything"],
+] as const)(
+  "%s %s on Tasks while it is off goes to the off page, or is refused when a page calls it",
+  (method, path) => {
+    expect(gate(tasksIsOff, opening(path, method))).toEqual({
+      action: "redirect",
+      to: "/off",
+    });
+    expect(gate(tasksIsOff, calling(path, method))).toEqual({
+      action: "refuse",
+      app: "tasks",
     });
   },
 );

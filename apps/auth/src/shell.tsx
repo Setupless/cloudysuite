@@ -1,6 +1,7 @@
 import { AppShell, type ShellApp } from "@cloudysuite/ui";
 import {
   IconCalendar,
+  IconChecklist,
   IconFolder,
   IconMail,
   IconUserCircle,
@@ -14,6 +15,7 @@ const APP_DISPLAY: Record<AppId, { name: string; icon: Icon }> = {
   mail: { name: "Mail", icon: IconMail },
   storage: { name: "Storage", icon: IconFolder },
   calendar: { name: "Calendar", icon: IconCalendar },
+  tasks: { name: "Tasks", icon: IconChecklist },
   auth: { name: "Account", icon: IconUserCircle },
 };
 

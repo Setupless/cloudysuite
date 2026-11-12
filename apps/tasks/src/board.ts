@@ -23,6 +23,10 @@ export class Board extends DurableObject<Env> {
     return this.#store.list(actor);
   }
 
+  listMyTasks(actor: Actor, doneSince: number): Task[] {
+    return this.#store.listMine(actor, doneSince);
+  }
+
   findTask(actor: Actor, id: TaskId): Task | null {
     return this.#store.find(actor, id);
   }

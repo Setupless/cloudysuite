@@ -364,6 +364,7 @@ export async function ensurePersonalCalendar(
 }
 
 export const PERSONAL_BOARD_COLOUR = PERSONAL_CALENDAR_COLOUR;
+export const TEAM_BOARD_COLOURS = TEAM_CALENDAR_COLOURS;
 
 // Safe to repeat for the same reason as ensurePersonalCalendar.
 export async function ensurePersonalBoard(

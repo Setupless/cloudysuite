@@ -31,6 +31,10 @@ const APP_TEXT: Record<ToggleableApp, { name: string; off: string }> = {
     name: "Calendar",
     off: "People who open Calendar will see a page saying an admin turned it off, and it leaves the app list. Nothing is deleted, so every event will be there when you turn it back on.",
   },
+  tasks: {
+    name: "Tasks",
+    off: "People who open Tasks will see a page saying an admin turned it off, and it leaves the app list. Nothing is deleted, so every task will be there when you turn it back on.",
+  },
 };
 
 function AppToggle({ id, enabled }: { id: ToggleableApp; enabled: boolean }) {

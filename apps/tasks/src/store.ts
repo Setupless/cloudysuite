@@ -211,6 +211,24 @@ export class TaskStore {
       .map(taskOf);
   }
 
+  // For My tasks: what's open or done since `doneSince`, of a team board only what's
+  // assigned to the person asking.
+  listMine(actor: Actor, doneSince: number): Task[] {
+    return this.#db
+      .exec<TaskRow>(
+        `SELECT * FROM tasks
+         WHERE deleted_at IS NULL
+           AND (status != 'done' OR done_at >= ?)
+           AND (? = 'personal' OR assignee_id = ?)
+         ORDER BY created_at, id`,
+        doneSince,
+        actor.kind,
+        actor.userId,
+      )
+      .toArray()
+      .map(taskOf);
+  }
+
   find(_actor: Actor, id: TaskId): Task | null {
     const row = this.#row(id);
     return row && row.deleted_at === null ? taskOf(row) : null;

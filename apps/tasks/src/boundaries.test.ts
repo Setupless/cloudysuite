@@ -61,5 +61,9 @@ test("only the Board object makes a task store", () => {
 });
 
 test("the package does not export the stub or the store", () => {
-  expect(Object.keys(packageJson.exports).sort()).toEqual(["./board"]);
+  expect(Object.keys(packageJson.exports).sort()).toEqual([
+    ".",
+    "./board",
+    "./routes",
+  ]);
 });

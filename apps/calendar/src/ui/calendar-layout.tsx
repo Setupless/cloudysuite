@@ -1,6 +1,11 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { NAV_ITEM, NAV_ITEM_ACTIVE, useToast } from "@cloudysuite/ui";
+import {
+  NameDialog,
+  NAV_ITEM,
+  NAV_ITEM_ACTIVE,
+  useToast,
+} from "@cloudysuite/ui";
 import type { CalendarId, UserId } from "@cloudysuite/access";
 import {
   IconCalendarWeek,
@@ -27,7 +32,6 @@ import type { CalendarEntry } from "../types";
 import { CalendarSettings } from "./calendar-settings";
 import { calendarBorder, calendarFill } from "./colours";
 import { MeProvider } from "./me";
-import { NameDialog } from "./name-dialog";
 import { SearchBox } from "./search-box";
 
 // A personal calendar has no id until it's first used.
