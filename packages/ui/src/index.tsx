@@ -10,6 +10,7 @@ import {
 } from "react";
 
 export * from "./linkify";
+export * from "./name-dialog";
 export * from "./shell";
 export * from "./toast";
 

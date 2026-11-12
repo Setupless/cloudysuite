@@ -1,4 +1,9 @@
-import type { UserId } from "@cloudysuite/access";
+import type {
+  BoardId,
+  BoardKind,
+  BoardRole,
+  UserId,
+} from "@cloudysuite/access";
 
 type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
@@ -119,3 +124,62 @@ export function parsePlainDate(raw: string): PlainDate | null {
   date.setUTCFullYear(year, month - 1, day);
   return date.toISOString().slice(0, 10) === raw ? (raw as PlainDate) : null;
 }
+
+// A team board in the sidebar, from D1 alone.
+export type BoardEntry = {
+  id: BoardId;
+  kind: BoardKind;
+  name: string;
+  colour: number;
+  role: BoardRole;
+};
+
+export type BoardOfTask = Omit<BoardEntry, "role">;
+
+export type MyTask = Task & { board: BoardOfTask };
+
+// `unreachable` counts the boards that didn't answer in time.
+export type MyTasks = { tasks: MyTask[]; unreachable: number };
+
+export type BoardTasks = { role: BoardRole; kind: BoardKind; tasks: Task[] };
+
+export type Member = {
+  id: UserId;
+  name: string;
+  email: string;
+  role: BoardRole;
+};
+
+// What a page sends. People come as ids, and the server reads their names from D1.
+export type TaskChangeInput =
+  | Exclude<TaskChange, { kind: "create" | "assign" }>
+  | {
+      kind: "create";
+      id: TaskId;
+      title: string;
+      due: PlainDate | null;
+      assigneeId: UserId | null;
+    }
+  | { kind: "assign"; id: TaskId; assigneeId: UserId | null };
+
+export type NewPrivateTask = {
+  id: TaskId;
+  title: string;
+  due: PlainDate | null;
+};
+
+export type ChangeAnswer = Exclude<ChangeResult, Refusal>;
+
+// The start of today, in any time zone, is at most 25 hours ago, on the day clocks go
+// back. So this holds every task done today wherever the person is, and their device
+// picks out its own day.
+export const DONE_TODAY_LOOKBACK_MS = 25 * 60 * 60 * 1000;
+
+export const MAX_BOARD_NAME_LENGTH = 100;
+
+export const NO_ACCESS_MESSAGE =
+  "You aren't on this board, or it has been deleted. Ask one of its managers to add you.";
+export const NOT_ON_BOARD_MESSAGE =
+  "That person isn't on this board. Ask one of its managers to add them first.";
+export const BOARD_NAME_EMPTY_MESSAGE = "Give the board a name.";
+export const BOARD_NAME_TOO_LONG_MESSAGE = `Use a name of ${MAX_BOARD_NAME_LENGTH} characters or fewer.`;

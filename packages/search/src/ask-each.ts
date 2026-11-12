@@ -13,7 +13,7 @@ type Outcome<Answer> = { answer: Answer } | "refused" | "missing";
 export async function askEach<Entry, Answer>(
   list: readonly Entry[],
   ask: (entry: Entry) => Promise<Answer>,
-): Promise<{ answers: Answer[]; incomplete: boolean }> {
+): Promise<{ answers: Answer[]; incomplete: boolean; missing: number }> {
   const outcomes: Outcome<Answer>[] = list.map(() => "missing");
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"late">((resolve) => {
@@ -52,5 +52,6 @@ export async function askEach<Entry, Answer>(
       typeof outcome === "object" ? [outcome.answer] : [],
     ),
     incomplete: missing > 0,
+    missing,
   };
 }
