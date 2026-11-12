@@ -29,7 +29,7 @@
 Do not guess or build around these. Ask the user first.
 
 - The task conflicts with a rule here or a decision in the README.
-- The task touches an item in the README's "Open questions".
+- The task touches an item in the README's "Open questions" or "Checks before the first release".
 - The task needs a dependency outside the README's tech stack, or another Better Auth plugin, Cloudflare service, or Worker. Installing the listed stack does not need approval.
 - The task needs a destructive data migration.
 

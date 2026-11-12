@@ -8,7 +8,7 @@ CloudySuite is an open source workspace for small organisations. One technical p
 
 ## Status
 
-Built, not yet proven. Auth, Mail, Storage, and Calendar are in the code and tested locally. None has run on a real deployment with real mail yet, and the first release waits until one has.
+Built, not yet proven. Auth, Mail, Storage, and Calendar are in the code and tested locally. No app has handled real mail on a real deployment yet, and the first release waits until one has.
 
 This README describes what is on `main`. Anything planned, unbuilt, or still to check is in [What's next](#whats-next).
 
@@ -110,9 +110,9 @@ The session cookie covers the app domain and every site under it, so whoever run
 - With no other site, the app domain is the apex, as in `auth.example.com`.
 - With other sites, such as a third-party `www`, the wizard explains the risk and recommends a parent such as `suite.example.com`. The apps become `auth.suite.example.com`, and email stays `@example.com`.
 
-An email domain is always a zone apex, because Email Routing's catch-all rule works only there. When the app domain is a subdomain of another stored domain, only the parent is an email domain, so nobody gets an address at the app domain.
-
 ### Email domains
+
+An email domain is always a zone apex, because Email Routing's catch-all rule works only there. When the app domain is a subdomain of another stored domain, only the parent is an email domain, so nobody gets an address at the app domain.
 
 An admin adds another email domain by following a guide in their Cloudflare account, because CloudySuite stores no token. **Check again** looks up the domain's public DNS records over HTTPS, and saves the domain only once the records for receiving and sending exist. DNS can't show the catch-all rule that sends mail to the Worker, so the guide says so and asks the admin to send a test message.
 
@@ -159,7 +159,7 @@ Apple Mail, Outlook, and other native mail apps aren't supported, because they n
 
 - **Undo.** Send waits 10 seconds on the server, so closing the tab can't lose the message, and Undo still works after a reload. Undo turns it back into a draft.
 - **A send is never repeated by guesswork.** A clean refusal says what to do, and only a rate limit retries by itself. If a crash or a lost connection leaves it unclear whether a message went, the person is told to check with the recipient, because a duplicate is worse than asking.
-- **A queued message is checked again before each attempt,** because minutes can pass between Send and the message going out. If its From address has left the mailbox, its sender has lost access or been banned, or Mail was turned off, it doesn't go, and it stays in Drafts with a plain reason. If the directory can't answer, the job waits and tries again, then fails the same way. It never sends without an answer.
+- **A queued message is checked again before each attempt,** because minutes can pass between Send and the message going out. If its From address has left the mailbox, its sender has lost access or been banned, or Mail was turned off, it doesn't go, and it stays in Drafts with a plain reason. If the directory can't answer, the job waits and tries again, then fails the same way. It never sends without an answer. If the attachments can't be read from storage yet, the job waits and tries again in the same way.
 - **A message that can't settle at once never floats over the mail.** A failure, or a wait to retry, sits in a band above the mail, one at a time, with a count of the rest. Only the seconds just after Send float, because they're gone within moments.
 - **A message to your own address appears twice, threaded together,** once in Sent and once in the Inbox. A header on inbound mail is never a reason to drop it, because anyone can copy one. Only a byte-identical redelivery counts as a duplicate.
 - **A message holds up to 50 recipients and 32 attachments, of about 18 MB in total.** The 25 MiB limit counts the encoded message, and files grow by about a third in email.
@@ -238,7 +238,8 @@ Spam filtering works without a Jev key and adds no dependency.
 How the score works:
 
 - **DMARC decides alone only under an enforcing policy.** A failed DMARC check files a message by itself only when the sender's domain says failing mail isn't theirs, with `quarantine` or `reject`. That includes a mailing list breaking such a domain's check, so some real mail lands in Spam. Under `p=none` or no policy, it is one small sign, because half-set records and mailing lists fail this way all the time. Only Cloudflare's first `Authentication-Results` header is read, because anything below it is the sender's to forge.
-- **Every other sign takes several together,** because real mail does each of them. The signs are a name showing another address, replies going to another site, a link whose text names another site, a program file from a stranger, a subject in capitals, and a broken SPF or DKIM result. Only a pass for the `From` domain cancels a failed SPF result. A signature for some other domain says nothing, because anyone can sign for their own domain.
+- **A program file from a first-time sender is enough on its own.** A program file scores just under the threshold, and a sender the mailbox has never dealt with adds the last point.
+- **Every other sign takes several together,** because real mail does each of them. The signs are a name showing another address, replies going to another site, a link whose text names another site, a subject in capitals, and a broken SPF or DKIM result. Only a pass for the `From` domain cancels a failed SPF result. A signature for some other domain says nothing, because anyone can sign for their own domain.
 - **A reply to this mailbox counts strongly for a message,** going by a `Message-ID` the mailbox wrote in `In-Reply-To` or `References`. It outweighs several odd signs, but not the block list or an enforcing DMARC policy, because a `Message-ID` can leak.
 - **Imported and sent mail skip the filter** and teach it nothing, unless a person marks that mail.
 
@@ -300,7 +301,7 @@ A question is asked only when its answer could change something:
 - Mail already filed in Spam isn't sent at all, even for a rule, so "Not spam" brings it back without a label that rule might have added.
 - A rule's description is asked only if the rule's other conditions leave it open. In a mailbox with a rule that has only a description, every new message outside Spam goes to Jev.
 
-**How far an answer counts.** An answer is a probability, and a yes needs 0.9 for spam and 0.8 for a description.
+**How far an answer counts.** An answer is a probability, and a yes needs 0.9 for spam and 0.8 for a description. Those bars haven't been tuned on real answers yet.
 
 - A yes adds 6 points and never subtracts any, so the model alone never files a message and never takes one out of Spam. Spam's reason says only "The optional message check flagged this as likely spam." No words from the model reach a screen.
 - It never counts for a sender on the allow list or marked "Not spam", for a reply to this mailbox, or for a message the mailbox's marks say looks real.
@@ -324,7 +325,7 @@ Storage replaces Google Drive. A person lands on Home, which shows their team fo
 ### Team folders and access
 
 - **A team folder is its own member list,** like a shared mailbox, so there are no organisation-wide teams to keep in step. Anyone signed in can create one and becomes its Manager, so sharing never waits for an admin. A Manager adds and removes people, and sets each to Can view, Can edit, or Manager. A team folder always has a Manager, so the last one can't leave or step down. A Manager can rename it, and delete it once it and its Trash are empty.
-- **Each person has My files,** where the screen shows them as Owner. It is made on first use, not on first look, because no `GET` request changes a person's data. The first upload or folder makes it, and so does an admin giving the person a limit. The database allows one for each person, so two tabs can't make two.
+- **Each person has My files,** where the screen shows them as Owner. It is made on first use, not on first look, because no `GET` request changes a person's data. Making a folder, uploading, moving something in, or saving a mail attachment makes it, and so does an admin giving the person a limit. The database allows one for each person, so two tabs can't make two.
 - **Access is the highest of a person's role on the drive and any share above the item.** Can view can open, preview, and download. It can't upload, make a folder, rename, move in or out, delete, restore, delete forever, or share. The Drive object refuses these itself, in the same call that would do the work, so a hidden button is only a courtesy. A Can view member who is also given Can edit through a share can edit what that share covers.
 - **One access check.** `checkDriveAccess` is the only thing that issues a drive's grant and says who someone is to the drive. Every call then tells the Drive object who is asking, and `reachOf` in the object decides what that person reaches, walking up from the item. A person not on a drive gets the same answer for an item out of reach as for one that doesn't exist. Alarm work doesn't open a drive again, because it only finishes what was already approved.
 
@@ -359,7 +360,7 @@ Storage replaces Google Drive. A person lands on Home, which shows their team fo
 - **Previews are limited to PNG, JPEG, WebP, and GIF, up to 5 MB.** `storage.` shares the session cookie's domain, so an HTML or SVG file shown inline would be a script running with the signed-in person's session. The preview route refuses every other type and sends `nosniff` and a `sandbox` policy. Everything else downloads and shows a type icon.
 - **Names.** A new folder with a taken name is refused. An upload keeps both, as `Report (2).pdf`, because a person dropping files shouldn't be stopped. Rename and move refuse a taken name, because the person can choose again. Restore keeps both, because refusing would leave the item stuck in Trash. Each folder holds one item for each name, ignoring case.
 - **Renaming needs sight of the folder around the item.** Someone who reaches an item only through a share on it can't rename it, because a refused name would tell them what else is in a folder they can't open.
-- **Trash belongs to each drive and shows as one flat list.** Deleting a folder takes what is in it, and it comes back as one unit. A deleted item frees its name. If its folder is gone, it returns to the top of its drive and the page says so. Bytes in Trash count towards the amount used until they are deleted forever, because R2 still holds them. They leave a team folder's file count, Recent, and listings at once, and downloading one gives a plain 404.
+- **Trash belongs to each drive and shows as one flat list** of the 200 most recently deleted items. Deleting a folder takes what is in it, and it comes back as one unit. A deleted item frees its name. If its folder is gone, it returns to the top of its drive and the page says so. Bytes in Trash count towards the amount used until they are deleted forever, because R2 still holds them. They leave a team folder's file count, Recent, and listings at once, and downloading one gives a plain 404.
 - **Trash empties itself after 30 days.** Delete forever, Empty Trash, and the 30 days all go through one path. Each small batch removes rows and queues their R2 objects in one transaction, so the alarm picks up after a crash without losing or leaving a file. Empty Trash covers every drive where the person has Can edit or is a Manager, including what others deleted, and its confirmation says so.
 - **A move between drives keeps the bytes where they are.** The new drive's row points at the same R2 object. The two objects can't share a transaction, so for a moment both hold a row for one object. Both rows stay locked through that moment. The sender locks its rows, the receiver adds locked rows, the sender removes its own, and only then does the receiver unlock. A locked row can't be renamed, moved, deleted, or shared by anyone, including through a share, so at most one drive can delete the bytes at each step. Taking a share away still works at once, because shares don't travel with a move. Each repeat of a step changes nothing. A refusal unlocks the sender at once. If the receiver never answers, the sender gives up after an hour, unlocks, and keeps the file, and the alarm keeps telling the receiver to drop its locked rows, which go without touching R2. A folder of more than 2,000 items is refused, because it must fit in one call.
 - **A locked folder refuses restores, new folders, and moves into it** for now, with a request to try again in a minute. An upload finishing into it keeps trying by itself.
@@ -414,7 +415,7 @@ Calendar replaces Google Calendar. A person lands on Overview, and Schedule hold
 
 ### Personal and team calendars
 
-- **Each person has one personal calendar, which only they see.** It is made on first use, not on first look, like My files. Their first event or the first invitation that reaches them makes it, and the database allows one for each person. It can't be deleted, because invitations land there.
+- **Each person has one personal calendar, which only they see.** It is made on first use, not on first look, like My files. Any first change makes it, such as an event, an invitation, an import, a new colour, or hiding it. The database allows one for each person. It can't be deleted, because invitations land there.
 - **A team calendar is its own member list,** like a team folder, with the same roles. Anyone signed in can make one and becomes its Manager. A Manager adds and removes people, sets each to Can view, Can edit, or Manager, renames the calendar, changes its colour, and deletes it. The last Manager can't leave or step down. Everyone on it sees who else is. Deleting it removes its events and cancels everyone's copies, so the confirmation counts them.
 - **Can view is read-only, on the server.** The Calendar object refuses adding, changing, or deleting an event itself, so a hidden button is only a courtesy.
 - **A calendar's colour is one of the six team colours,** the `avatar-1` to `avatar-6` roles. A personal calendar starts as `avatar-4`, and its person can change it. New team calendars cycle through the other five, because in the design concept a blue personal calendar was hard to tell from a blue team calendar beside it.
@@ -436,7 +437,7 @@ Calendar replaces Google Calendar. A person lands on Overview, and Schedule hold
 
 ### Invitations
 
-- **Anyone in the directory can be invited, and so can any email address.** Typing a colleague's primary address or an alias of their personal mailbox invites that colleague.
+- **Anyone in the directory can be invited, and so can any email address,** up to 100 people an event. Typing a colleague's primary address or an alias of their personal mailbox invites that colleague.
 - **A colleague gets the event straight in their personal calendar,** made then if needed, unanswered and dashed, so it's there before they open their mail.
 - **Everyone invited who has an email address gets an iMIP email of their own.** iMIP is the standard way calendars send invitations by email, so any mail app can answer. Each email has the text/calendar part that Outlook and Gmail answer from, and the same event attached as `invite.ics`. One email per person lets each answer for themselves and stays inside Cloudflare's 50-recipient limit. A colleague with no personal mailbox gets the event but no email.
 - **Invitations and replies go from the primary address of the sender's personal mailbox,** the organiser's for an invitation and the answering person's for a reply, because a shared mailbox belongs to no one person. Without a personal mailbox, someone can invite colleagues but not outside addresses, and the dialog says why and offers no addresses.
@@ -482,7 +483,7 @@ Mail stores its sender check with each message as it arrives, because the check 
 
 ### Join buttons
 
-- **An event shows "Join Google Meet", "Join Microsoft Teams", "Join Zoom", or "Join Webex"** when it carries an `https` link on that service's own host: `meet.google.com`, `teams.microsoft.com`, `teams.live.com`, `zoom.us` or `*.zoom.us`, or `webex.com` or `*.webex.com`. Any other link gets no button, so an invitation can't dress up an address as "Join". A look-alike host, a port, or a name before the host, as in `https://meet.google.com@evil.com`, gets none either.
+- **An event shows "Join Google Meet", "Join Microsoft Teams", "Join Zoom", or "Join Webex"** when it carries an `https` link on that service's own host: `meet.google.com`, `teams.microsoft.com`, `teams.live.com`, `zoom.us` or `*.zoom.us`, or `webex.com` or `*.webex.com`. Any other link gets no button, so an invitation can't dress up an address as "Join". A look-alike host, a port other than 443, or a name before the host, as in `https://meet.google.com@evil.com`, gets none either.
 - **The link comes from the conference field first, then the place, then the notes.** The conference field is Google's `X-GOOGLE-CONFERENCE` or Outlook's `X-MICROSOFT-SKYPETEAMSMEETINGURL`, falling back to `X-MICROSOFT-ONLINEMEETINGEXTERNALLINK`. It leads because meeting services put the link there, not because it can be trusted. The exact-host check is what protects people.
 - **The button shows in the card, the panel, and Overview's next event.** The panel prints the address under it only for a conference link, since the place and notes already show theirs. A cancelled event or date has no Join button and is never Overview's next event.
 - **No Google or Microsoft account or API is needed.** People can paste a meeting link into Where for their own events.
@@ -618,15 +619,17 @@ Some pieces are hand-written instead of added as a dependency:
 
 ### Checks before the first release
 
-- A real deployment proves all four apps, including sending and receiving real mail and invitations.
-- Cloudflare confirms that Email Service allows person-to-person mailbox mail. Its [FAQ](https://developers.cloudflare.com/email-service/reference/faq/) answers "Can I use Email Service for marketing emails?" with "No. Email Service supports transactional email only." It doesn't say whether mailbox mail is allowed.
-- Every wizard step runs against real Cloudflare with one token. Each step applies through the API in the code, but not every step has run for real.
-- Web push works on Safari and an iPhone. iPhone web push needs the app on the Home Screen first.
-- Cloudflare's Email Service sends Calendar's raw message to an outside address as written, and Gmail, Outlook, and Apple Mail offer their answer buttons. Its structured form can only attach files, not add a text/calendar part. Locally, `wrangler dev` writes each raw message to a `.eml` file instead of sending it.
-- Real Google and Outlook invitation emails put the organiser's own address in `From` and pass the [sender check](#invitations-from-outside), so their updates and replies count.
-- A real Outlook invitation carries the Teams link in `X-MICROSOFT-SKYPETEAMSMEETINGURL`. That name comes from a public, redacted invitation that Exchange sent to an outside address, and the FairEmail, Evolution, and DavMail clients read it. Exchange also writes `X-MICROSOFT-ONLINEMEETINGEXTERNALLINK`, which is often empty, and `X-MICROSOFT-ONLINEMEETINGCONFLINK`, which holds a `sip:` address and no web link.
-- The update steps work on a real Deploy button copy, including automatic provisioning of a new binding. A terminal in the browser, such as GitHub Codespaces, might also work, but nobody has tried it.
-- Jev's bars of 0.9 for spam and 0.8 for a description are tuned on real answers.
+None of these has been confirmed yet.
+
+- Confirm on a real deployment that all four apps work, including sending and receiving real mail and invitations.
+- Confirm with Cloudflare that Email Service allows person-to-person mailbox mail. Its [FAQ](https://developers.cloudflare.com/email-service/reference/faq/) answers "Can I use Email Service for marketing emails?" with "No. Email Service supports transactional email only." It doesn't say whether mailbox mail is allowed.
+- Confirm that every wizard step runs against real Cloudflare with one token. Each step applies through the API in the code, but not every step has run for real.
+- Confirm that web push works on Safari and an iPhone. iPhone web push needs the app on the Home Screen first.
+- Confirm that Cloudflare's Email Service sends Calendar's raw message to an outside address as written, and Gmail, Outlook, and Apple Mail offer their answer buttons. Its structured form can only attach files, not add a text/calendar part. Locally, `wrangler dev` writes each raw message to a `.eml` file instead of sending it.
+- Confirm that real Google and Outlook invitation emails put the organiser's own address in `From` and pass the [sender check](#invitations-from-outside), so their updates and replies count.
+- Confirm that a real Outlook invitation carries the Teams link in `X-MICROSOFT-SKYPETEAMSMEETINGURL`. That name comes from a public, redacted invitation that Exchange sent to an outside address, and the FairEmail, Evolution, and DavMail clients read it. Exchange also writes `X-MICROSOFT-ONLINEMEETINGEXTERNALLINK`, which is often empty, and `X-MICROSOFT-ONLINEMEETINGCONFLINK`, which holds a `sip:` address and no web link.
+- Confirm that the update steps work on a real Deploy button copy, including automatic provisioning of a new binding. A terminal in the browser, such as GitHub Codespaces, might also work, but nobody has tried it.
+- Tune Jev's bars of 0.9 for spam and 0.8 for a description on real answers.
 
 ### Known gaps
 
