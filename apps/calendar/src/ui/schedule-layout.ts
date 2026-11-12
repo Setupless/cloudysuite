@@ -143,7 +143,12 @@ function spannedIn<Item extends Shown>(
 const isBar = ({ item, span }: Spanned<Shown>) =>
   item.time.kind === "allDay" || span.first !== span.last;
 
-function barsOf<Item>(
+const overlaps = (a: Bar<unknown>, b: Bar<unknown>) =>
+  a.first <= b.last && b.first <= a.last;
+
+// Events take their rows first. A task then takes the first row below every event on its
+// days that no other task there has, so it never sits above an event.
+function barsOf<Item extends Shown>(
   days: readonly CivilDate[],
   spanned: readonly Spanned<Item>[],
 ): Bar<Item>[] {
@@ -161,12 +166,26 @@ function barsOf<Item>(
       after: last > lastIndex,
     };
   });
+  const events = bars.filter((bar) => !bar.item.trailing);
   const rows = packLanes(
-    bars,
+    events,
     (bar) => bar.first,
     (bar) => bar.last + 1,
   );
-  for (const bar of bars) bar.row = (rows.get(bar) as Lane).lane;
+  for (const bar of events) bar.row = (rows.get(bar) as Lane).lane;
+  const tasks: Bar<Item>[] = [];
+  for (const task of bars.filter((bar) => bar.item.trailing)) {
+    task.row = Math.max(
+      0,
+      ...events.filter((bar) => overlaps(bar, task)).map((bar) => bar.row + 1),
+    );
+    while (
+      tasks.some((other) => other.row === task.row && overlaps(other, task))
+    ) {
+      task.row++;
+    }
+    tasks.push(task);
+  }
   return bars;
 }
 

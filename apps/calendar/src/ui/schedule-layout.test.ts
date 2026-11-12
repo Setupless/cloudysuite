@@ -287,3 +287,25 @@ test("a task on its day comes after that day's all-day events, whatever its titl
     ["Book flights", 1],
   ]);
 });
+
+test("a task stays below an all-day event over its day after an earlier event ends", () => {
+  const days = week("2026-11-09");
+  const task = {
+    ...allDay("Book flights", "2026-11-10", "2026-11-11"),
+    trailing: true,
+  };
+  const items = [
+    allDay("Event A", "2026-11-08", "2026-11-10"),
+    allDay("Event B", "2026-11-09", "2026-11-12"),
+    task,
+  ];
+  const rows = (layout: { item: Shown; row: number }[]) =>
+    layout.map(({ item, row }) => [item.title, row]);
+  const expected = [
+    ["Event A", 0],
+    ["Event B", 1],
+    ["Book flights", 2],
+  ];
+  expect(rows(layoutTimeGrid(days, items, SYDNEY).bars)).toEqual(expected);
+  expect(rows(layoutMonthWeek(days, items, SYDNEY).entries)).toEqual(expected);
+});
