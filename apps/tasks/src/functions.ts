@@ -37,6 +37,7 @@ import {
   type BoardEntry,
   type BoardSettings,
   type BoardTasks,
+  type AssignmentEmailStatus,
   type ChangeAnswer,
   type ChangeResult,
   type Colleague,
@@ -75,6 +76,7 @@ import {
   parsePersonInput,
   parseSearchInput,
   parseSettingsChangeInput,
+  parseTaskInput,
   refusal,
 } from "./wire";
 
@@ -407,4 +409,22 @@ export const listPersonTasks = createServerFn({ method: "GET" })
       (boardId) => openBoardFor(person.id, boardId),
       them,
     );
+  });
+
+// Whether the task's assignee was emailed, for the panel.
+export const assignmentEmail = createServerFn({ method: "GET" })
+  .validator(parseTaskInput)
+  .handler(async ({ data }): Promise<AssignmentEmailStatus> =>
+    (await openBoardFor((await me()).id, data.boardId)).assignmentEmail(
+      data.taskId,
+    ),
+  );
+
+// Sends again only an email that didn't go, or may not have, from whoever chose it.
+export const retryAssignmentEmail = createServerFn({ method: "POST" })
+  .validator(parseTaskInput)
+  .handler(async ({ data }): Promise<void> => {
+    const board = await openBoardFor((await me()).id, data.boardId);
+    const result = await board.retryAssignmentEmail(data.taskId);
+    if (result === "noAccess") throw refusal(403, REFUSAL_MESSAGES.noAccess);
   });

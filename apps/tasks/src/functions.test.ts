@@ -482,6 +482,14 @@ test("with Tasks off, every function refuses in plain words", async () => {
       }),
     () =>
       as(people.editor).listPersonTasks({ data: { userId: people.viewer } }),
+    () =>
+      as(people.editor).assignmentEmail({
+        data: { boardId: MARKETING, taskId: task.id },
+      }),
+    () =>
+      as(people.editor).retryAssignmentEmail({
+        data: { boardId: MARKETING, taskId: task.id },
+      }),
   ];
   for (const call of calls) {
     const refusal = await refused(call());
@@ -490,6 +498,7 @@ test("with Tasks off, every function refuses in plain words", async () => {
   }
   expect(Object.keys(functions).sort()).toEqual([
     "addAndAssign",
+    "assignmentEmail",
     "boardSettings",
     "changeBoardSettings",
     "changeTask",
@@ -502,6 +511,7 @@ test("with Tasks off, every function refuses in plain words", async () => {
     "listMyTasks",
     "listPersonTasks",
     "moveTask",
+    "retryAssignmentEmail",
     "searchTasks",
   ]);
 });

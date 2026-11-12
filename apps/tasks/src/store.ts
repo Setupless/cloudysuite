@@ -8,6 +8,12 @@ import {
 import type { SqlDriver } from "@cloudysuite/object-sql";
 import { type SearchTerm, toPrefixMatch } from "@cloudysuite/search";
 import {
+  EMAIL_STEPS,
+  type EmailEvent,
+  type EmailState,
+  type QueuedEmail,
+} from "./email/queue";
+import {
   INCOMING_STEPS,
   type IncomingEvent,
   type IncomingPhase,
@@ -19,11 +25,14 @@ import {
   type ReceiveAnswer,
 } from "./moves";
 import {
+  ASSIGNMENT_EMAIL_WAIT_MS,
+  type AssignmentEmailStatus,
   type ChangeResult,
   type ChecklistItem,
   LIMITS,
   type MoveDestination,
   type MoveOutcome,
+  type NotEmailedReason,
   type PlainDate,
   REFUSAL_MESSAGES,
   type Refusal,
@@ -36,6 +45,20 @@ import {
 } from "./types";
 
 const TASKS_PER_SEARCH = 50;
+
+// A claim found still sending after this came from a run that never finished.
+const SENDING_CHECK_MS = 60_000;
+
+type EmailRow = {
+  task_id: string;
+  email_id: string;
+  board_id: string;
+  assignee_id: string;
+  assigned_by: string;
+  state: string;
+  reason: string | null;
+  tries: number;
+};
 
 // Who is asking, from their grant, which can't cross RPC.
 export type Actor = {
@@ -340,6 +363,13 @@ export class TaskStore {
       const next = changed(taskOf(row), change, now);
       if (typeof next === "string") return refuse(next);
       this.#write(next);
+      this.#assigned(
+        actor,
+        next.id,
+        row.assignee_id as UserId | null,
+        next.assignee?.id ?? null,
+        now,
+      );
       return { status: "done", task: next };
     });
   }
@@ -371,7 +401,167 @@ export class TaskStore {
       moving: null,
     };
     this.#insert(task);
+    this.#assigned(actor, task.id, null, task.assignee?.id ?? null, now);
     return { status: "done", task };
+  }
+
+  // In the same transaction as the assignment. A new assignee replaces whatever email
+  // was due before, so someone reassigned within the wait gets nothing. Nobody is
+  // emailed about a task they assigned themselves.
+  #assigned(
+    actor: Actor,
+    id: TaskId,
+    before: UserId | null,
+    after: UserId | null,
+    now: number,
+  ): void {
+    if (before === after) return;
+    if (after === null || after === actor.userId) {
+      this.#db.exec("DELETE FROM assignment_emails WHERE task_id = ?", id);
+      return;
+    }
+    this.#db.exec(
+      `INSERT INTO assignment_emails (task_id, email_id, board_id, assignee_id,
+         assigned_by, state, reason, tries, try_at)
+       VALUES (?, ?, ?, ?, ?, 'waiting', NULL, 0, ?)
+       ON CONFLICT (task_id) DO UPDATE SET email_id = excluded.email_id,
+         board_id = excluded.board_id, assignee_id = excluded.assignee_id,
+         assigned_by = excluded.assigned_by, state = 'waiting', reason = NULL,
+         tries = 0, try_at = excluded.try_at`,
+      id,
+      crypto.randomUUID(),
+      actor.boardId,
+      after,
+      actor.userId,
+      now + ASSIGNMENT_EMAIL_WAIT_MS,
+    );
+  }
+
+  dueEmails(now: number, limit: number): QueuedEmail[] {
+    return this.#rows<EmailRow>(
+      `SELECT * FROM assignment_emails WHERE try_at <= ? ORDER BY try_at LIMIT ?`,
+      now,
+      limit,
+    ).map((row) => ({
+      emailId: row.email_id,
+      taskId: row.task_id as TaskId,
+      boardId: row.board_id as BoardId,
+      assigneeId: row.assignee_id as UserId,
+      assignedBy: row.assigned_by as UserId,
+      state: row.state === "sending" ? "sending" : "waiting",
+      tries: row.tries,
+    }));
+  }
+
+  // The task an email is about, deleted or not, for the checks before it goes.
+  emailTask(id: TaskId): { task: Task; deletedAt: number | null } | null {
+    const row = this.#row(id);
+    return row ? { task: taskOf(row), deletedAt: row.deleted_at } : null;
+  }
+
+  // Every change to a queued email goes through here. False when its state doesn't
+  // allow the step, or a newer assignment has replaced it.
+  stepEmail(
+    queued: Pick<QueuedEmail, "taskId" | "emailId">,
+    event: EmailEvent,
+    now: number,
+    detail: { reason?: NotEmailedReason; tryAt?: number } = {},
+  ): boolean {
+    return this.#db.transaction(() =>
+      this.#stepEmail(queued, event, now, detail),
+    );
+  }
+
+  #stepEmail(
+    queued: Pick<QueuedEmail, "taskId" | "emailId">,
+    event: EmailEvent,
+    now: number,
+    detail: { reason?: NotEmailedReason; tryAt?: number },
+  ): boolean {
+    const [row] = this.#rows<{ state: string }>(
+      "SELECT state FROM assignment_emails WHERE task_id = ? AND email_id = ?",
+      queued.taskId,
+      queued.emailId,
+    );
+    const next = row && EMAIL_STEPS[row.state as EmailState][event];
+    if (!next) return false;
+    if (next === "dropped") {
+      this.#db.exec(
+        "DELETE FROM assignment_emails WHERE task_id = ?",
+        queued.taskId,
+      );
+      return true;
+    }
+    const tryAt =
+      next === "sending"
+        ? now + SENDING_CHECK_MS
+        : next === "waiting"
+          ? (detail.tryAt ?? now)
+          : null;
+    this.#db.exec(
+      `UPDATE assignment_emails SET state = ?, reason = ?, try_at = ?,
+         tries = CASE ? WHEN 'tryLater' THEN tries + 1 ELSE tries END
+       WHERE task_id = ?`,
+      next,
+      next === "notSent" ? (detail.reason ?? "invalidMessage") : null,
+      tryAt,
+      event,
+      queued.taskId,
+    );
+    return true;
+  }
+
+  // Only an email that didn't go, or may not have, as the steps allow. One on its way or
+  // gone is left as it is, so pressing it twice sends once. It then goes from whoever
+  // chose it, who must be able to edit the board, and never to themselves.
+  retryEmail(actor: Actor, id: TaskId, now: number): "done" | "noAccess" {
+    if (levelOfRole(actor.role) !== "edit") return "noAccess";
+    this.#db.transaction(() => {
+      const [row] = this.#rows<{ email_id: string; assignee_id: string }>(
+        "SELECT email_id, assignee_id FROM assignment_emails WHERE task_id = ?",
+        id,
+      );
+      if (!row || row.assignee_id === actor.userId) return;
+      if (
+        !this.#stepEmail(
+          { taskId: id, emailId: row.email_id },
+          "retry",
+          now,
+          {},
+        )
+      ) {
+        return;
+      }
+      this.#db.exec(
+        `UPDATE assignment_emails SET email_id = ?, assigned_by = ?, tries = 0
+         WHERE task_id = ?`,
+        crypto.randomUUID(),
+        actor.userId,
+        id,
+      );
+    });
+    return "done";
+  }
+
+  emailStatus(_actor: Actor, id: TaskId): AssignmentEmailStatus {
+    const [row] = this.#rows<{ state: string; reason: string | null }>(
+      `SELECT assignment_emails.state, assignment_emails.reason
+       FROM assignment_emails JOIN tasks ON tasks.id = assignment_emails.task_id
+       WHERE task_id = ? AND tasks.assignee_id = assignment_emails.assignee_id`,
+      id,
+    );
+    if (!row) return { state: "none" };
+    const state = row.state as EmailState;
+    switch (state) {
+      case "notSent":
+        return { state, reason: row.reason as NotEmailedReason };
+      case "waiting":
+      case "sending":
+        return { state: "pending" };
+      case "sent":
+      case "unclear":
+        return { state };
+    }
   }
 
   #insert(task: Task): void {
@@ -657,14 +847,20 @@ export class TaskStore {
   }
 
   nextWakeUpAt(): number | null {
-    const [row] = this.#rows<{ purge: number | null; move: number | null }>(
+    const [row] = this.#rows<{
+      purge: number | null;
+      move: number | null;
+      email: number | null;
+    }>(
       `SELECT
          (SELECT MIN(deleted_at) FROM tasks WHERE deleted_at IS NOT NULL) AS purge,
-         (SELECT MIN(try_at) FROM moves_out) AS move`,
+         (SELECT MIN(try_at) FROM moves_out) AS move,
+         (SELECT MIN(try_at) FROM assignment_emails) AS email`,
     );
     const due = [
       row?.purge == null ? null : row.purge + UNDO_DELETE_MS,
       row?.move ?? null,
+      row?.email ?? null,
     ].filter((at): at is number => at !== null);
     return due.length > 0 ? Math.min(...due) : null;
   }

@@ -24,7 +24,11 @@ import {
 } from "../../auth/src/admin/test-kit";
 import { ingest, receiveInbound } from "../../mail/src/ingest";
 import { createTestEnv } from "../../mail/src/test-support";
-import { createFakeEmail, partOfType, readEmail } from "./email/test-support";
+import {
+  createFakeEmail,
+  partOfType,
+  readEmail,
+} from "@cloudysuite/app-email/test-support";
 import {
   AUTH,
   calendarAttachment,

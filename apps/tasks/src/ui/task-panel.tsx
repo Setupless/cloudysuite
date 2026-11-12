@@ -28,6 +28,7 @@ import {
 } from "../types";
 import { type Editing, isEditing, type ListState } from "./list-state";
 import { AssigneePicker, type AssigneePick } from "./assignee-picker";
+import { AssignmentEmailNotice } from "./assignment-email-notice";
 import { MoveDialog } from "./move-dialog";
 import { FIELD } from "./new-task-row";
 import { BoardName, canEditWith, FOCUS, movingText, TickButton } from "./parts";
@@ -460,6 +461,13 @@ export function TaskPanel({
                 </span>
               )}
             </Fact>
+          )}
+          {canEdit && task.assignee && task.assignee.id !== me && (
+            <AssignmentEmailNotice
+              boardId={board.id}
+              taskId={task.id}
+              assignee={task.assignee}
+            />
           )}
           <Fact label="Due">
             {canEdit ? (

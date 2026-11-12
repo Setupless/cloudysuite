@@ -83,4 +83,28 @@ export const MIGRATIONS: Migrations = [
       DELETE FROM task_search WHERE rowid = old.rowid;
     END`,
   ],
+  [
+    // One row for each task whose assignee is due an email, replaced by each new
+    // assignment. The states and their steps are in email/queue.ts.
+    `CREATE TABLE assignment_emails (
+      task_id TEXT PRIMARY KEY,
+      email_id TEXT NOT NULL,
+      board_id TEXT NOT NULL,
+      assignee_id TEXT NOT NULL,
+      assigned_by TEXT NOT NULL,
+      state TEXT NOT NULL,
+      reason TEXT,
+      tries INTEGER NOT NULL,
+      try_at INTEGER,
+      CHECK (state IN ('waiting', 'sending', 'sent', 'notSent', 'unclear')),
+      CHECK ((try_at IS NULL) = (state NOT IN ('waiting', 'sending'))),
+      CHECK ((reason IS NULL) = (state != 'notSent'))
+    ) WITHOUT ROWID`,
+    `CREATE INDEX assignment_emails_due ON assignment_emails(try_at)
+     WHERE try_at IS NOT NULL`,
+    // In the same transaction as whatever removes the task: a purge, a move, or erasing.
+    `CREATE TRIGGER tasks_email_delete AFTER DELETE ON tasks BEGIN
+      DELETE FROM assignment_emails WHERE task_id = old.id;
+    END`,
+  ],
 ];

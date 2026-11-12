@@ -319,3 +319,36 @@ export type PersonTasks = {
 
 export const NO_PERSON_MESSAGE =
   "That person couldn't be found. They may have been removed.";
+
+// Why the email to someone assigned a task didn't go. The checks run again before each
+// attempt, and the rest are the mail service's own refusals.
+export const NOT_EMAILED_REASONS = [
+  "tasksOff",
+  "mailOff",
+  "assigneeCantOpen",
+  "assignerCantEdit",
+  "noSender",
+  "noAddress",
+  "checkUnavailable",
+  "rateLimited",
+  "senderNotVerified",
+  "dailyLimit",
+  "accountSuspended",
+  "recipientNotAllowed",
+  "recipientSuppressed",
+  "deliveryRefused",
+  "invalidMessage",
+] as const;
+export type NotEmailedReason = (typeof NOT_EMAILED_REASONS)[number];
+
+// What the panel says about the email to a task's assignee. "none" is a task nobody was
+// assigned by someone else, and "unclear" an email that may have gone.
+export type AssignmentEmailStatus =
+  | { state: "none" }
+  | { state: "pending" }
+  | { state: "sent" }
+  | { state: "unclear" }
+  | { state: "notSent"; reason: NotEmailedReason };
+
+// The assignment email waits out the same 10 seconds as Undo.
+export const ASSIGNMENT_EMAIL_WAIT_MS = 10_000;

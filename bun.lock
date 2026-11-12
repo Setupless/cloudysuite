@@ -55,6 +55,7 @@
       "name": "@cloudysuite/calendar",
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
@@ -74,6 +75,7 @@
       "name": "@cloudysuite/mail",
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/jev": "workspace:*",
@@ -113,7 +115,9 @@
       "name": "@cloudysuite/tasks",
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
         "@cloudysuite/search": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
@@ -129,6 +133,13 @@
     "packages/access": {
       "name": "@cloudysuite/access",
       "dependencies": {
+        "drizzle-orm": "1.0.0-rc.5",
+      },
+    },
+    "packages/app-email": {
+      "name": "@cloudysuite/app-email",
+      "dependencies": {
+        "@cloudysuite/access": "workspace:*",
         "drizzle-orm": "1.0.0-rc.5",
       },
     },
@@ -225,6 +236,8 @@
     "@cloudflare/workerd-windows-64": ["@cloudflare/workerd-windows-64@1.20261023.1", "", { "os": "win32", "cpu": "x64" }, "sha512-279WLVjNsMycAwr0EZNiNEf0l2SY6NUtsN80NwZzbTHzakmiN+WSx4w38muxPm+PAU0oSPPAPXKVD+H6Hya8xw=="],
 
     "@cloudysuite/access": ["@cloudysuite/access@workspace:packages/access"],
+
+    "@cloudysuite/app-email": ["@cloudysuite/app-email@workspace:packages/app-email"],
 
     "@cloudysuite/auth": ["@cloudysuite/auth@workspace:apps/auth"],
 

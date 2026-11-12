@@ -1,5 +1,6 @@
 import type { BoardId } from "@cloudysuite/access";
 import type { UserId } from "@cloudysuite/access";
+import type { TaskId } from "./types";
 import {
   dehydrate,
   keepPreviousData,
@@ -7,6 +8,7 @@ import {
   queryOptions,
 } from "@tanstack/react-query";
 import {
+  assignmentEmail,
   boardSettings,
   countBoardTasks,
   listBoardTasks,
@@ -74,12 +76,29 @@ export const tasksKeys = {
     ["tasks", "search", text, boardId] as const,
   people: ["tasks", "person"] as const,
   person: (userId: UserId) => ["tasks", "person", userId] as const,
+  assignmentEmail: (boardId: BoardId, taskId: TaskId, assigneeId: UserId) =>
+    ["tasks", "assignmentEmail", boardId, taskId, assigneeId] as const,
 };
 
 // A task on its way to another board shows that, and the list asks again until it's gone.
 const MOVING_CHECK_MS = 10_000;
 const whileMoving = (tasks: { moving: unknown }[] | undefined) =>
   tasks?.some((task) => task.moving) ? MOVING_CHECK_MS : false;
+
+// The email waits 10 seconds, so a refusal shows soon after it happens.
+const EMAIL_CHECK_MS = 5_000;
+
+export const assignmentEmailQuery = (
+  boardId: BoardId,
+  taskId: TaskId,
+  assigneeId: UserId,
+) =>
+  queryOptions({
+    queryKey: tasksKeys.assignmentEmail(boardId, taskId, assigneeId),
+    queryFn: () => call(() => assignmentEmail({ data: { boardId, taskId } })),
+    refetchInterval: (query) =>
+      query.state.data?.state === "pending" ? EMAIL_CHECK_MS : false,
+  });
 
 export const boardsQuery = () =>
   queryOptions({

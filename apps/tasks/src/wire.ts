@@ -262,3 +262,11 @@ export const parseSearchInput = (raw: unknown) => {
 export const parsePersonInput = (raw: unknown) => ({
   userId: requireUserId(record(raw).userId),
 });
+
+export const parseTaskInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    boardId: requireBoardId(input.boardId),
+    taskId: uuid<TaskId>(input.taskId),
+  };
+};

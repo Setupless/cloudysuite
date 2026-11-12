@@ -11,6 +11,7 @@ import type { MoveDelivery, ReceiveAnswer } from "./moves";
 import type { Actor } from "./store";
 import { boardStub } from "./stub";
 import type {
+  AssignmentEmailStatus,
   ChangeResult,
   MoveDestination,
   MoveOutcome,
@@ -37,6 +38,8 @@ export type BoardClient = {
     to: BoardClient,
     move: { to: MoveDestination; keepAssigneeId: UserId | null },
   ): Promise<MoveOutcome>;
+  assignmentEmail(id: TaskId): Promise<AssignmentEmailStatus>;
+  retryAssignmentEmail(id: TaskId): Promise<"done" | "noAccess">;
 };
 
 const actorOf = (grant: BoardGrant): Actor => ({
@@ -77,6 +80,9 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
         toBoardId: to.boardId,
         ...move,
       })) as MoveOutcome,
+    assignmentEmail: async (id) =>
+      (await stub.assignmentEmail(actor, id)) as AssignmentEmailStatus,
+    retryAssignmentEmail: (id) => stub.retryAssignmentEmail(actor, id),
   };
 }
 
@@ -113,4 +119,15 @@ export function moveReceiver(env: Env, boardId: BoardId) {
       await stub.dropMoveIn(moveId);
     },
   };
+}
+
+// For a board's alarm, after the person has gone: their role there now, or null when
+// they can no longer open it.
+export async function roleNow(
+  database: D1Database,
+  userId: UserId,
+  boardId: BoardId,
+): Promise<BoardRole | null> {
+  const access = await checkBoardAccess(database, userId, boardId);
+  return access.allowed ? access.grant.role : null;
 }
