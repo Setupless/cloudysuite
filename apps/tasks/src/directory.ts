@@ -5,10 +5,17 @@ import {
   TEAM_BOARD_COLOURS,
   type UserId,
 } from "@cloudysuite/access";
-import { and, asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { alias } from "drizzle-orm/sqlite-core";
 import { boardAccess, boards, user } from "../../../src/db/schema";
-import type { BoardEntry, BoardSettings, Member, Person } from "./types";
+import type {
+  BoardEntry,
+  BoardSettings,
+  Colleague,
+  Member,
+  Person,
+} from "./types";
 
 export type TeamChange = "done" | "lastManager" | "notOnIt";
 
@@ -259,4 +266,48 @@ export async function removeMember(
   return removed.length > 0
     ? "done"
     : whyNothingChanged(database, boardId, userId);
+}
+
+// Everyone else on a team board with this person, suspended or not.
+export async function readSharingWith(
+  database: D1Database,
+  me: UserId,
+): Promise<Set<UserId>> {
+  const mine = alias(boardAccess, "mine");
+  const rows = await drizzle(database)
+    .selectDistinct({ userId: boardAccess.userId })
+    .from(boardAccess)
+    .innerJoin(mine, eq(mine.boardId, boardAccess.boardId))
+    .innerJoin(boards, eq(boards.id, boardAccess.boardId))
+    .where(
+      and(
+        eq(mine.userId, me),
+        eq(boards.kind, "team"),
+        ne(boardAccess.userId, me),
+      ),
+    );
+  return new Set(rows.map((row) => row.userId));
+}
+
+// The boards someone is on, whoever is asking. Only the asker's own boards are opened.
+export async function readBoardIdsOf(
+  database: D1Database,
+  userId: UserId,
+): Promise<Set<BoardId>> {
+  const rows = await drizzle(database)
+    .select({ boardId: boardAccess.boardId })
+    .from(boardAccess)
+    .where(eq(boardAccess.userId, userId));
+  return new Set(rows.map((row) => row.boardId));
+}
+
+export async function readColleague(
+  database: D1Database,
+  userId: UserId,
+): Promise<Colleague | null> {
+  const [row] = await drizzle(database)
+    .select({ id: user.id, name: user.name, email: user.email })
+    .from(user)
+    .where(eq(user.id, userId));
+  return row ?? null;
 }

@@ -132,7 +132,8 @@ export function TaskSection({
 }: {
   title: string;
   tone?: keyof typeof TONES;
-  count: number;
+  // Left out where it would show how busy a colleague is.
+  count?: number;
   children: ReactNode;
 }) {
   return (
@@ -141,9 +142,11 @@ export function TaskSection({
         className={`flex items-baseline gap-2 border-b border-line px-1 pt-4 pb-2 font-semibold ${TONES[tone]}`}
       >
         {title}
-        <span className="text-[13px] font-normal text-secondary tabular-nums">
-          {count}
-        </span>
+        {count !== undefined && (
+          <span className="text-[13px] font-normal text-secondary tabular-nums">
+            {count}
+          </span>
+        )}
       </h2>
       <ul>{children}</ul>
     </section>

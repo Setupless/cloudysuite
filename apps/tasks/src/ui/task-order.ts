@@ -1,20 +1,7 @@
 import type { UserId } from "@cloudysuite/access";
 import type { MyTask, PlainDate, Task } from "../types";
+import { byLatestDone, bySoonestDue } from "../order";
 import { addDays, sundayOf } from "./dates";
-
-// Soonest due first and no date last. Among the same day, the newest first, so a task
-// just added is easy to find.
-export function bySoonestDue(a: Task, b: Task): number {
-  if (a.due !== b.due) {
-    if (a.due === null) return 1;
-    if (b.due === null) return -1;
-    return a.due < b.due ? -1 : 1;
-  }
-  return b.createdAt - a.createdAt || a.id.localeCompare(b.id);
-}
-
-const byLatestDone = (a: Task, b: Task) =>
-  (b.doneAt ?? 0) - (a.doneAt ?? 0) || a.id.localeCompare(b.id);
 
 export const MY_GROUPS = [
   "overdue",
@@ -43,6 +30,20 @@ function groupOf(due: PlainDate | null, today: PlainDate): MyGroup {
   return due <= sundayOf(today) ? "thisWeek" : "later";
 }
 
+// The open tasks, as Overdue, Today, and so on, leaving out empty groups.
+export function dueGroups<Shown extends Task>(
+  tasks: readonly Shown[],
+  today: PlainDate,
+) {
+  const open = tasks
+    .filter((task) => task.status !== "done")
+    .sort(bySoonestDue);
+  return MY_GROUPS.map((group) => ({
+    group,
+    tasks: open.filter((task) => groupOf(task.due, today) === group),
+  })).filter(({ tasks }) => tasks.length > 0);
+}
+
 // What's still mine. A task given to someone else leaves My tasks, even when its panel
 // is open.
 export const isMine = (task: MyTask, me: UserId) =>
@@ -55,12 +56,8 @@ export function planMyTasks(
   dayOf: (at: number) => PlainDate,
 ) {
   const mine = tasks.filter((task) => isMine(task, me));
-  const open = mine.filter((task) => task.status !== "done").sort(bySoonestDue);
   return {
-    groups: MY_GROUPS.map((group) => ({
-      group,
-      tasks: open.filter((task) => groupOf(task.due, today) === group),
-    })).filter(({ tasks }) => tasks.length > 0),
+    groups: dueGroups(mine, today),
     doneToday: mine
       .filter(
         (task) =>
@@ -81,3 +78,12 @@ export function boardSections(tasks: readonly Task[]) {
     done: withStatus("done").sort(byLatestDone),
   };
 }
+
+// A board filtered to one person shows only what's assigned to them.
+export const assignedTo = <Shown extends Task>(
+  tasks: readonly Shown[],
+  userId: UserId | null,
+): Shown[] =>
+  userId === null
+    ? [...tasks]
+    : tasks.filter((task) => task.assignee?.id === userId);

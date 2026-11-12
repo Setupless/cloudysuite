@@ -37,3 +37,28 @@ export function matchesWords(typed: string, text: string): boolean {
   const theirs = wordsOf(folded(text));
   return wanted.every((word) => theirs.some((their) => their.startsWith(word)));
 }
+
+export const MAX_SEARCH_LENGTH = 200;
+
+export type ParsedWords =
+  { ok: true; terms: SearchTerm[] } | { ok: false; problem: string };
+
+// For a search with no operators, so anything typed is words, and punctuation only splits
+// them. No input can reach FTS5 as syntax. `empty` says what to type instead.
+export function parseWords(text: string, empty: string): ParsedWords {
+  if (text.length > MAX_SEARCH_LENGTH) {
+    return {
+      ok: false,
+      problem: `That search is too long. Keep it under ${MAX_SEARCH_LENGTH} characters.`,
+    };
+  }
+  const terms = wordTerms(text);
+  if (terms.length === 0) return { ok: false, problem: empty };
+  if (terms.length > MAX_SEARCH_WORDS) {
+    return {
+      ok: false,
+      problem: `That search has too many words. Use up to ${MAX_SEARCH_WORDS}.`,
+    };
+  }
+  return { ok: true, terms };
+}

@@ -1,5 +1,11 @@
 import type { BoardId } from "@cloudysuite/access";
-import { dehydrate, QueryClient, queryOptions } from "@tanstack/react-query";
+import type { UserId } from "@cloudysuite/access";
+import {
+  dehydrate,
+  keepPreviousData,
+  QueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import {
   boardSettings,
   countBoardTasks,
@@ -7,6 +13,8 @@ import {
   listColleagues,
   listMyBoards,
   listMyTasks,
+  listPersonTasks,
+  searchTasks,
 } from "./functions";
 
 const CANNOT_REACH =
@@ -61,6 +69,11 @@ export const tasksKeys = {
   settings: (boardId: BoardId) => ["tasks", "settings", boardId] as const,
   taskCount: (boardId: BoardId) => ["tasks", "taskCount", boardId] as const,
   colleagues: ["tasks", "colleagues"] as const,
+  searches: ["tasks", "search"] as const,
+  search: (text: string, boardId: BoardId | null) =>
+    ["tasks", "search", text, boardId] as const,
+  people: ["tasks", "person"] as const,
+  person: (userId: UserId) => ["tasks", "person", userId] as const,
 };
 
 // A task on its way to another board shows that, and the list asks again until it's gone.
@@ -109,6 +122,21 @@ export const colleaguesQuery = () =>
     queryFn: () => call(() => listColleagues()),
   });
 
+// `boardId` is the board search started from, whose members come first.
+export const searchQuery = (text: string, boardId: BoardId | null) =>
+  queryOptions({
+    queryKey: tasksKeys.search(text, boardId),
+    queryFn: () => call(() => searchTasks({ data: { text, boardId } })),
+    placeholderData: keepPreviousData,
+  });
+
+export const personTasksQuery = (userId: UserId) =>
+  queryOptions({
+    queryKey: tasksKeys.person(userId),
+    queryFn: () => call(() => listPersonTasks({ data: { userId } })),
+    refetchInterval: (query) => whileMoving(query.state.data?.tasks),
+  });
+
 // The first HTML holds the data, so the page draws it as soon as the browser knows what
 // day it is.
 async function prefetch(fill: (client: QueryClient) => Promise<void>) {
@@ -129,8 +157,33 @@ export const prefetchBoard = (boardId: string) =>
     client.prefetchQuery(boardTasksQuery(boardId as BoardId)),
   );
 
+const textOf = (value: unknown) =>
+  typeof value === "string" && value !== "" ? value : undefined;
+
 // Opens a task when the page loads, such as from "Moved to Product".
 export const validateTaskSearch = (
   search: Record<string, unknown>,
-): { task?: string } =>
-  typeof search.task === "string" ? { task: search.task } : {};
+): { task?: string } => {
+  const task = textOf(search.task);
+  return task ? { task } : {};
+};
+
+// A board can also show only one person's tasks, chosen from search.
+export const validateBoardSearch = (
+  search: Record<string, unknown>,
+): { task?: string; person?: string } => {
+  const person = textOf(search.person);
+  return { ...validateTaskSearch(search), ...(person ? { person } : {}) };
+};
+
+// `board` is the board search started from.
+export const validateSearchPage = (
+  search: Record<string, unknown>,
+): { q?: string; board?: string } => {
+  const q = typeof search.q === "string" ? search.q : undefined;
+  const board = textOf(search.board);
+  return {
+    ...(q !== undefined ? { q } : {}),
+    ...(board ? { board } : {}),
+  };
+};

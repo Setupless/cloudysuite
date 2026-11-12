@@ -1,15 +1,19 @@
 import { BoardScreen } from "@cloudysuite/tasks";
-import { prefetchBoard, validateTaskSearch } from "@cloudysuite/tasks/routes";
+import { prefetchBoard, validateBoardSearch } from "@cloudysuite/tasks/routes";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/tasks/boards/$boardId")({
-  validateSearch: validateTaskSearch,
+  validateSearch: validateBoardSearch,
   loader: ({ params }) => prefetchBoard(params.boardId),
-  component: () => (
-    <BoardScreen
-      boardId={Route.useParams().boardId}
-      task={Route.useSearch().task}
-      prefetched={Route.useLoaderData()}
-    />
-  ),
+  component: () => {
+    const { task, person } = Route.useSearch();
+    return (
+      <BoardScreen
+        boardId={Route.useParams().boardId}
+        task={task}
+        person={person}
+        prefetched={Route.useLoaderData()}
+      />
+    );
+  },
 });

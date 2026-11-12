@@ -12,6 +12,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { openBoardFor, requireTasksUser } from "./access";
 import type { BoardClient } from "./client";
+import { searchBoards, tasksOfPerson } from "./search";
+import { parseTaskSearch } from "./search-query";
 import {
   addToTeam,
   createTeam,
@@ -20,6 +22,7 @@ import {
   isAddable,
   isOnBoard,
   personOf,
+  readColleague,
   readMyBoards,
   readSettings,
   removeMember,
@@ -42,11 +45,13 @@ import {
   type MoveAnswer,
   type MyTask,
   type MyTasks,
+  type PersonTasks,
   mayChangeSettings,
   NO_ACCESS_MESSAGE,
   NOT_A_PERSON_MESSAGE,
   NOT_ON_BOARD_MESSAGE,
   NOT_ON_IT_MESSAGE,
+  NO_PERSON_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
   type Person,
   PRIVATE_BOARD_MESSAGE,
@@ -57,6 +62,7 @@ import {
   type SettingsChange,
   type TaskChange,
   type TaskChangeInput,
+  type TaskSearchAnswer,
   viewOnlyThereMessage,
 } from "./types";
 import {
@@ -66,6 +72,8 @@ import {
   parseMoveInput,
   parseNewBoardInput,
   parseNewPrivateTaskInput,
+  parsePersonInput,
+  parseSearchInput,
   parseSettingsChangeInput,
   refusal,
 } from "./wire";
@@ -369,4 +377,34 @@ export const moveTask = createServerFn({ method: "POST" })
       case "refused":
         throw refused(outcome);
     }
+  });
+
+export const searchTasks = createServerFn({ method: "GET" })
+  .validator(parseSearchInput)
+  .handler(async ({ data }): Promise<TaskSearchAnswer> => {
+    const person = await me();
+    const parsed = parseTaskSearch(data.text);
+    if (!parsed.ok) return { status: "problem", problem: parsed.problem };
+    return searchBoards(
+      env.DB,
+      person,
+      (boardId) => openBoardFor(person.id, boardId),
+      parsed.terms,
+      data.place,
+    );
+  });
+
+// Someone suspended still has their tasks shown, because the boards still hold them.
+export const listPersonTasks = createServerFn({ method: "GET" })
+  .validator(parsePersonInput)
+  .handler(async ({ data }): Promise<PersonTasks> => {
+    const person = await me();
+    const them = await readColleague(env.DB, data.userId);
+    if (!them) throw refusal(404, NO_PERSON_MESSAGE);
+    return tasksOfPerson(
+      env.DB,
+      person,
+      (boardId) => openBoardFor(person.id, boardId),
+      them,
+    );
   });

@@ -5,6 +5,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import { BOARD_ROLES } from "../../../src/db/schema";
+import { MAX_SEARCH_LENGTH } from "./search-query";
 import {
   BOARD_NAME_EMPTY_MESSAGE,
   BOARD_NAME_TOO_LONG_MESSAGE,
@@ -17,6 +18,7 @@ import {
   parsePlainDate,
   REFUSAL_MESSAGES,
   type RefusalReason,
+  type SearchPlace,
   type SettingsChange,
   TASK_STATUSES,
   type TaskChangeInput,
@@ -245,3 +247,18 @@ export const parseMoveInput = (raw: unknown) => {
     to,
   };
 };
+
+// Too long to be a search is still a search, which says so in plain words.
+export const parseSearchInput = (raw: unknown) => {
+  const input = record(raw);
+  if (typeof input.text !== "string") throw badRequest();
+  const place: SearchPlace =
+    input.boardId === null
+      ? { kind: "mine" }
+      : { kind: "board", boardId: requireBoardId(input.boardId) };
+  return { text: input.text.slice(0, MAX_SEARCH_LENGTH + 1), place };
+};
+
+export const parsePersonInput = (raw: unknown) => ({
+  userId: requireUserId(record(raw).userId),
+});

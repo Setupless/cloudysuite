@@ -16,8 +16,10 @@ import type {
   MyTask,
   MyTasks,
   NewPrivateTask,
+  PersonTasks,
   Task,
   TaskChangeInput,
+  TaskHit,
   TaskId,
   TaskStatus,
 } from "../types";
@@ -38,16 +40,17 @@ export function useTaskChanges() {
     client.setQueryData<BoardTasks>(tasksKeys.board(boardId), (shown) =>
       shown ? { ...shown, tasks: withTask(shown.tasks, task) } : shown,
     );
-    client.setQueryData<MyTasks>(tasksKeys.mine, (shown) =>
+    const replace = <Shown extends { tasks: TaskHit[] }>(shown?: Shown) =>
       shown
         ? {
             ...shown,
-            tasks: shown.tasks.map((mine) =>
-              mine.id === task.id ? { ...task, board: mine.board } : mine,
+            tasks: shown.tasks.map((hit) =>
+              hit.id === task.id ? { ...task, board: hit.board } : hit,
             ),
           }
-        : shown,
-    );
+        : shown;
+    client.setQueryData<MyTasks>(tasksKeys.mine, replace);
+    client.setQueriesData<PersonTasks>({ queryKey: tasksKeys.people }, replace);
   }
 
   function drop(boardId: BoardId, id: TaskId) {

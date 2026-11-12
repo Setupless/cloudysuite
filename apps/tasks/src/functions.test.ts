@@ -21,6 +21,7 @@ import {
   LAST_MANAGER_MESSAGE,
   NO_ACCESS_MESSAGE,
   NOT_ON_BOARD_MESSAGE,
+  NO_PERSON_MESSAGE,
   ONLY_MANAGERS_MESSAGE,
   PRIVATE_BOARD_MESSAGE,
   REFUSAL_MESSAGES,
@@ -299,6 +300,34 @@ test("My tasks holds my assigned and private tasks, not other people's, and coun
   expect(without.tasks.map((task) => task.title)).toEqual(["Only mine"]);
 });
 
+test("search finds tasks on my boards, says what to type for odd text, and refuses a person who isn't there", async () => {
+  await create(people.manager, { title: "Send the brochure" });
+  await as(people.outsider).createPrivateTask({
+    data: { id: newTaskId(), title: "Brochure for me", due: null },
+  });
+  const found = await as(people.viewer).searchTasks({
+    data: { text: "brochure", boardId: MARKETING },
+  });
+  if (found.status !== "found") throw new Error("expected results");
+  expect(found.tasks.map((task) => task.title)).toEqual(["Send the brochure"]);
+  expect(found.people.kind).toBe("board");
+  expect(
+    await as(people.viewer).searchTasks({
+      data: { text: "%*", boardId: null },
+    }),
+  ).toEqual({
+    status: "problem",
+    problem: "Type a word from a task, or someone's name.",
+  });
+  expect(
+    await refused(
+      as(people.viewer).listPersonTasks({
+        data: { userId: "user-nobody" as UserId },
+      }),
+    ),
+  ).toEqual({ status: 404, message: NO_PERSON_MESSAGE });
+});
+
 test("a task done today stays in My tasks, and one done long ago doesn't", async () => {
   const task = await taskOf(
     create(people.manager, { assigneeId: people.editor }),
@@ -447,6 +476,12 @@ test("with Tasks off, every function refuses in plain words", async () => {
       as(people.editor).moveTask({
         data: { boardId: MARKETING, taskId: task.id, to: "private" },
       }),
+    () =>
+      as(people.editor).searchTasks({
+        data: { text: "newsletter", boardId: null },
+      }),
+    () =>
+      as(people.editor).listPersonTasks({ data: { userId: people.viewer } }),
   ];
   for (const call of calls) {
     const refusal = await refused(call());
@@ -465,7 +500,9 @@ test("with Tasks off, every function refuses in plain words", async () => {
     "listColleagues",
     "listMyBoards",
     "listMyTasks",
+    "listPersonTasks",
     "moveTask",
+    "searchTasks",
   ]);
 });
 
