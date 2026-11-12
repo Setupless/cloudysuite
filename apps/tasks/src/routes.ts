@@ -4,6 +4,8 @@ export {
   prefetchBoard,
   prefetchBoards,
   prefetchMyTasks,
+  validateBoardSearch,
+  validateSearchPage,
   validateTaskSearch,
 } from "./queries";
 export { requireTasksUser } from "./ui/session";

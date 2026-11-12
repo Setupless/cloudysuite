@@ -16,6 +16,7 @@ import { boardsQuery, call, tasksKeys } from "../queries";
 import type { BoardEntry } from "../types";
 import { BoardSettingsDialog } from "./board-settings";
 import { BoardSwatch } from "./parts";
+import { SearchBox } from "./search-box";
 import { MeProvider } from "./task-page";
 
 const itemClass = (active: boolean) =>
@@ -106,6 +107,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       app="tasks"
       user={user}
       navigationLabel="Tasks"
+      headerContent={<SearchBox ready={boards !== undefined} />}
       navigation={
         <Navigation
           boards={boards}

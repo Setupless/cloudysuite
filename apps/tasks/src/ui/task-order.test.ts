@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { BoardId, UserId } from "@cloudysuite/access";
 import type { MyTask, PlainDate, Task, TaskId } from "../types";
 import { dueText } from "./dates";
-import { boardSections, planMyTasks } from "./task-order";
+import { assignedTo, boardSections, planMyTasks } from "./task-order";
 
 const ME = "user-me" as UserId;
 const OTHER = "user-other" as UserId;
@@ -150,4 +150,18 @@ test("a due date reads as a day the person knows", () => {
   expect(dueText("2026-11-15" as PlainDate, TODAY).text).toBe("Sunday");
   expect(dueText("2026-11-10" as PlainDate, TODAY).tone).toBe("overdue");
   expect(dueText("2027-01-04" as PlainDate, TODAY).text).toContain("2027");
+});
+
+test("a board filtered to one person shows only their tasks, in the same sections", () => {
+  const tasks = [
+    task({ title: "Mine", status: "doing" }),
+    task({ title: "Theirs", assignee: { id: OTHER, name: "Other" } }),
+    task({ title: "Nobody's", assignee: null }),
+    task({ title: "Mine, done", status: "done", doneAt: 5 }),
+  ];
+  const sections = boardSections(assignedTo(tasks, ME));
+  expect(sections.doing.map((one) => one.title)).toEqual(["Mine"]);
+  expect(sections.todo).toEqual([]);
+  expect(sections.done.map((one) => one.title)).toEqual(["Mine, done"]);
+  expect(assignedTo(tasks, null)).toHaveLength(4);
 });

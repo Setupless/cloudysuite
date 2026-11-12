@@ -1,16 +1,24 @@
-import type { BoardId } from "@cloudysuite/access";
-import { Notice, useHydrated, useToast } from "@cloudysuite/ui";
+import type { BoardId, UserId } from "@cloudysuite/access";
+import { Avatar, Notice, useHydrated, useToast } from "@cloudysuite/ui";
+import { IconX } from "@tabler/icons-react";
 import {
   type DehydratedState,
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useReducer } from "react";
-import { boardsQuery, boardTasksQuery, settingsQuery } from "../queries";
-import type { BoardOfTask, Task, TaskId } from "../types";
+import {
+  boardsQuery,
+  boardTasksQuery,
+  colleaguesQuery,
+  settingsQuery,
+} from "../queries";
+import type { BoardOfTask, Colleague, Member, Task, TaskId } from "../types";
+import { firstNameOf } from "./assignee-choices";
 import { listReducer, openingWith } from "./list-state";
 import { NewTaskRow } from "./new-task-row";
-import { BoardSwatch, canEditWith } from "./parts";
+import { BoardSwatch, canEditWith, FOCUS } from "./parts";
 import { TaskPanel } from "./task-panel";
 import {
   DoneFold,
@@ -23,16 +31,65 @@ import {
   useMe,
   useToday,
 } from "./task-page";
-import { boardSections } from "./task-order";
+import { assignedTo, boardSections } from "./task-order";
 import { TaskRow } from "./task-row";
 import { useTaskChanges } from "./use-task-changes";
+
+// Who the board is filtered to, by the name the board knows them by.
+function usePersonShown(
+  userId: UserId | null,
+  members: readonly Member[] | undefined,
+  tasks: readonly Task[] | undefined,
+): Colleague | null {
+  const member = members?.find((one) => one.id === userId);
+  const colleagues = useQuery({
+    ...colleaguesQuery(),
+    enabled: userId !== null && members !== undefined && !member,
+  });
+  if (userId === null) return null;
+  if (member) return member;
+  const colleague = colleagues.data?.find((one) => one.id === userId);
+  if (colleague) return colleague;
+  const assignee = tasks?.find(
+    (task) => task.assignee?.id === userId,
+  )?.assignee;
+  return { id: userId, name: assignee?.name ?? "", email: userId };
+}
+
+function PersonChip({
+  boardId,
+  person,
+}: {
+  boardId: BoardId;
+  person: Colleague;
+}) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-field py-0.5 pr-0.5 pl-0.5 text-sm text-text">
+      <Avatar person={person} size="small" />
+      <span className="truncate" dir="auto">
+        {person.name}
+      </span>
+      <Link
+        to="/tasks/boards/$boardId"
+        params={{ boardId }}
+        aria-label={`Show everyone's tasks, not only ${person.name}'s`}
+        title="Show everyone's tasks"
+        className={`flex size-6 flex-none items-center justify-center rounded-full text-secondary hover:bg-panel hover:text-text ${FOCUS}`}
+      >
+        <IconX size={14} stroke={2} aria-hidden />
+      </Link>
+    </span>
+  );
+}
 
 function Board({
   boardId,
   taskToOpen,
+  personId,
 }: {
   boardId: BoardId;
   taskToOpen: string | undefined;
+  personId: UserId | null;
 }) {
   const me = useMe();
   const today = useToday();
@@ -67,7 +124,12 @@ function Board({
     name: entry?.name ?? "",
     colour: entry?.colour ?? 1,
   };
-  const sections = listing.data ? boardSections(listing.data.tasks) : null;
+  // A filter to one person means something only on a team board.
+  const filter = teamBoard ? personId : null;
+  const person = usePersonShown(filter, members, listing.data?.tasks);
+  const sections = listing.data
+    ? boardSections(assignedTo(listing.data.tasks, filter))
+    : null;
   const openTask =
     state.kind === "open"
       ? listing.data?.tasks.find((task) => task.id === state.taskId)
@@ -102,6 +164,7 @@ function Board({
         <PageHeading
           title={board.kind === "personal" ? "Only you" : board.name}
           swatch={entry && <BoardSwatch colour={entry.colour} />}
+          detail={person && <PersonChip boardId={boardId} person={person} />}
           canAdd={role ? canEdit : null}
           onAdd={() => dispatch({ type: "startAdding" })}
         />
@@ -159,9 +222,13 @@ function Board({
           {listing.isPending && <Loading />}
           {empty && state.kind !== "adding" && (
             <Empty>
-              {canEdit
-                ? "Add the first task with New task."
-                : "There are no tasks on this board yet."}
+              {person
+                ? person.name
+                  ? `${firstNameOf(person.name)} has no tasks on ${board.name}.`
+                  : `This person has no tasks on ${board.name}.`
+                : canEdit
+                  ? "Add the first task with New task."
+                  : "There are no tasks on this board yet."}
             </Empty>
           )}
           {sections && sections.doing.length > 0 && (
@@ -224,11 +291,14 @@ function Heading({ boardId }: { boardId: BoardId }) {
 export function BoardScreen({
   boardId: raw,
   task,
+  person,
   prefetched,
 }: {
   boardId: string;
   // A task to open, such as one just moved here.
   task?: string;
+  // Someone chosen in search, whose tasks alone are shown.
+  person?: string;
   prefetched: DehydratedState | undefined;
 }) {
   const boardId = raw as BoardId;
@@ -237,7 +307,12 @@ export function BoardScreen({
     <HydrationBoundary state={prefetched}>
       {/* A new board starts with nothing open. */}
       {hydrated ? (
-        <Board key={boardId} boardId={boardId} taskToOpen={task} />
+        <Board
+          key={boardId}
+          boardId={boardId}
+          taskToOpen={task}
+          personId={(person as UserId | undefined) ?? null}
+        />
       ) : (
         <Heading boardId={boardId} />
       )}

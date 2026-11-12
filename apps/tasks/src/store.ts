@@ -6,6 +6,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import type { SqlDriver } from "@cloudysuite/object-sql";
+import { type SearchTerm, toPrefixMatch } from "@cloudysuite/search";
 import {
   INCOMING_STEPS,
   type IncomingEvent,
@@ -33,6 +34,8 @@ import {
   type TaskStatus,
   UNDO_DELETE_MS,
 } from "./types";
+
+const TASKS_PER_SEARCH = 50;
 
 // Who is asking, from their grant, which can't cross RPC.
 export type Actor = {
@@ -274,6 +277,42 @@ export class TaskStore {
       )
       .toArray()
       .map(taskOf);
+  }
+
+  // Of every task here, the open ones assigned to someone, for their tasks page.
+  listOpenFor(_actor: Actor, assigneeId: UserId): Task[] {
+    return this.#rows<TaskRow>(
+      `${TASKS}
+       WHERE deleted_at IS NULL AND status != 'done' AND assignee_id = ?
+       ORDER BY created_at, tasks.id`,
+      assigneeId,
+    ).map(taskOf);
+  }
+
+  // Leaves out a deleted task and one on its way out. When more match than one answer
+  // holds, the ones kept are those search lists first.
+  search(
+    _actor: Actor,
+    terms: readonly SearchTerm[],
+  ): { tasks: Task[]; more: boolean } {
+    const expression = toPrefixMatch(terms);
+    if (expression === null) return { tasks: [], more: false };
+    const rows = this.#rows<TaskRow>(
+      `${TASKS}
+       WHERE tasks.deleted_at IS NULL AND moves_out.id IS NULL
+         AND tasks.rowid IN (
+           SELECT rowid FROM task_search WHERE task_search MATCH ?
+         )
+       ORDER BY status = 'done', CASE WHEN status = 'done' THEN -done_at END,
+         due IS NULL, due, created_at DESC, tasks.id
+       LIMIT ?`,
+      expression,
+      TASKS_PER_SEARCH + 1,
+    );
+    return {
+      tasks: rows.slice(0, TASKS_PER_SEARCH).map(taskOf),
+      more: rows.length > TASKS_PER_SEARCH,
+    };
   }
 
   find(_actor: Actor, id: TaskId): Task | null {

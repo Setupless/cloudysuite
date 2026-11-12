@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyMigrations, type SqlDriver } from "@cloudysuite/object-sql";
 import type { BoardId, UserId } from "@cloudysuite/access";
+import type { SearchTerm } from "@cloudysuite/search";
 import { moveReceiver } from "./client";
 import { MIGRATIONS } from "./migrations";
 import type { MoveDelivery, ReceiveAnswer } from "./moves";
@@ -43,6 +44,17 @@ export class Board extends DurableObject<Env> {
 
   listMyTasks(actor: Actor, doneSince: number): Task[] {
     return this.#store.listMine(actor, doneSince);
+  }
+
+  listOpenFor(actor: Actor, assigneeId: UserId): Task[] {
+    return this.#store.listOpenFor(actor, assigneeId);
+  }
+
+  searchTasks(
+    actor: Actor,
+    terms: SearchTerm[],
+  ): { tasks: Task[]; more: boolean } {
+    return this.#store.search(actor, terms);
   }
 
   findTask(actor: Actor, id: TaskId): Task | null {

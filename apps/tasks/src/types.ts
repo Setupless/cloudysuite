@@ -146,7 +146,10 @@ export type BoardEntry = {
 
 export type BoardOfTask = Omit<BoardEntry, "role">;
 
-export type MyTask = Task & { board: BoardOfTask };
+// A task with the board it's on, as My tasks, search, and a person's tasks list them.
+export type TaskHit = Task & { board: BoardOfTask };
+
+export type MyTask = TaskHit;
 
 // `unreachable` counts the boards that didn't answer in time.
 export type MyTasks = { tasks: MyTask[]; unreachable: number };
@@ -279,3 +282,40 @@ export const refusedThereMessage = (
   reason === "noAccess"
     ? `You can no longer add tasks to ${name}, so the task is still here.`
     : `The task couldn't be moved to ${name} just now, so it is still here. Try again in a minute.`;
+
+// Where search started, which decides whose names come first.
+export type SearchPlace =
+  { kind: "board"; boardId: BoardId } | { kind: "mine" };
+
+// People matching the search, never with how many tasks they have. On a team board its
+// members come first. Anywhere else it's the people on the boards the searcher shares
+// with them. Nobody suspended is offered.
+export type PeopleSections =
+  | {
+      kind: "board";
+      board: { id: BoardId; name: string };
+      members: Colleague[];
+      others: Colleague[];
+    }
+  | { kind: "mine"; shared: Colleague[]; others: Colleague[] };
+
+// `unreachable` counts the boards that couldn't be searched in time.
+export type TaskSearchAnswer =
+  | {
+      status: "found";
+      tasks: TaskHit[];
+      more: boolean;
+      people: PeopleSections;
+      unreachable: number;
+    }
+  | { status: "problem"; problem: string };
+
+// A person's open tasks on the boards the viewer shares with them.
+export type PersonTasks = {
+  person: Colleague;
+  tasks: TaskHit[];
+  unreachable: number;
+};
+
+export const NO_PERSON_MESSAGE =
+  "That person couldn't be found. They may have been removed.";

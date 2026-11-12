@@ -6,6 +6,7 @@ import {
   checkBoardAccess,
   type UserId,
 } from "@cloudysuite/access";
+import type { SearchTerm } from "@cloudysuite/search";
 import type { MoveDelivery, ReceiveAnswer } from "./moves";
 import type { Actor } from "./store";
 import { boardStub } from "./stub";
@@ -24,6 +25,8 @@ export type BoardClient = {
   kind: BoardKind;
   listTasks(): Promise<Task[]>;
   listMyTasks(doneSince: number): Promise<Task[]>;
+  listOpenFor(assigneeId: UserId): Promise<Task[]>;
+  search(terms: SearchTerm[]): Promise<{ tasks: Task[]; more: boolean }>;
   findTask(id: TaskId): Promise<Task | null>;
   change(change: TaskChange): Promise<ChangeResult>;
   countTasks(): Promise<number>;
@@ -56,6 +59,13 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
     listTasks: async () => (await stub.listTasks(actor)) as Task[],
     listMyTasks: async (doneSince) =>
       (await stub.listMyTasks(actor, doneSince)) as Task[],
+    listOpenFor: async (assigneeId) =>
+      (await stub.listOpenFor(actor, assigneeId)) as Task[],
+    search: async (terms) =>
+      (await stub.searchTasks(actor, terms)) as {
+        tasks: Task[];
+        more: boolean;
+      },
     findTask: async (id) => (await stub.findTask(actor, id)) as Task | null,
     change: async (change) =>
       (await stub.changeTask(actor, change)) as ChangeResult,

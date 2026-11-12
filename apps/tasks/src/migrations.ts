@@ -56,4 +56,31 @@ export const MIGRATIONS: Migrations = [
     ) WITHOUT ROWID`,
     `CREATE UNIQUE INDEX moves_in_one_arrival ON moves_in(task_id) WHERE phase = 'locked'`,
   ],
+  [
+    // Contentless because tasks already holds the text, as Calendar's event_search.
+    // Triggers keep it in the same transaction as every change to tasks. A task's rowid
+    // lasts its whole life: only VACUUM renumbers, and nothing here runs it.
+    `CREATE VIRTUAL TABLE task_search USING fts5(
+      title, notes,
+      content = '', contentless_delete = 1,
+      tokenize = 'unicode61 remove_diacritics 2',
+      prefix = '2 3'
+    )`,
+    `INSERT INTO task_search (rowid, title, notes)
+     SELECT rowid, title, notes FROM tasks`,
+    `CREATE TRIGGER tasks_search_insert AFTER INSERT ON tasks BEGIN
+      INSERT INTO task_search (rowid, title, notes)
+      VALUES (new.rowid, new.title, new.notes);
+    END`,
+    `CREATE TRIGGER tasks_search_change AFTER UPDATE OF title, notes ON tasks
+    WHEN old.title <> new.title OR old.notes <> new.notes
+    BEGIN
+      DELETE FROM task_search WHERE rowid = old.rowid;
+      INSERT INTO task_search (rowid, title, notes)
+      VALUES (new.rowid, new.title, new.notes);
+    END`,
+    `CREATE TRIGGER tasks_search_delete AFTER DELETE ON tasks BEGIN
+      DELETE FROM task_search WHERE rowid = old.rowid;
+    END`,
+  ],
 ];
