@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.tsx",
     "./board": "./src/board.ts",
+    "./in-calendar": "./src/in-calendar.ts",
     "./routes": "./src/routes.ts"
   },
   "dependencies": {

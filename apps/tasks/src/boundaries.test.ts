@@ -71,10 +71,26 @@ test("only the Board object makes a task store", () => {
   expect(usersOf(/\bnew TaskStore\b/)).toEqual(["apps/tasks/src/board.ts"]);
 });
 
+test("only Calendar's task functions reach Tasks' entry for Calendar, and its pages take only types", () => {
+  expect(
+    usersOf(/^import (?!type )[^;]*from "@cloudysuite\/tasks\/in-calendar"/m),
+  ).toEqual(["apps/calendar/src/task-functions.ts"]);
+  expect(
+    usersOf(/from "@cloudysuite\/tasks(\/[^"]*)?"/).filter((file) =>
+      file.startsWith("apps/calendar/"),
+    ),
+  ).toEqual([
+    "apps/calendar/src/queries.ts",
+    "apps/calendar/src/task-functions.ts",
+    "apps/calendar/src/ui/my-tasks.tsx",
+  ]);
+});
+
 test("the package does not export the stub or the store", () => {
   expect(Object.keys(packageJson.exports).sort()).toEqual([
     ".",
     "./board",
+    "./in-calendar",
     "./routes",
   ]);
 });

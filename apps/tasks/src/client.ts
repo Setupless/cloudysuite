@@ -14,6 +14,7 @@ import type {
   AssignmentEmailStatus,
   BoardMoveNotice,
   ChangeResult,
+  DueRange,
   MoveDestination,
   MoveOutcome,
   Task,
@@ -28,6 +29,7 @@ export type BoardClient = {
   listTasks(): Promise<Task[]>;
   listMyTasks(doneSince: number): Promise<Task[]>;
   listOpenFor(assigneeId: UserId): Promise<Task[]>;
+  listMyTasksDue(range: DueRange): Promise<Task[]>;
   search(terms: SearchTerm[]): Promise<{ tasks: Task[]; more: boolean }>;
   findTask(id: TaskId): Promise<Task | null>;
   change(change: TaskChange): Promise<ChangeResult>;
@@ -65,6 +67,8 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
       (await stub.listMyTasks(actor, doneSince)) as Task[],
     listOpenFor: async (assigneeId) =>
       (await stub.listOpenFor(actor, assigneeId)) as Task[],
+    listMyTasksDue: async (range) =>
+      (await stub.listMyTasksDue(actor, range)) as Task[],
     search: async (terms) =>
       (await stub.searchTasks(actor, terms)) as {
         tasks: Task[];

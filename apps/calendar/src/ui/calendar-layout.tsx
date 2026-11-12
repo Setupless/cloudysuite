@@ -32,6 +32,7 @@ import type { CalendarEntry } from "../types";
 import { CalendarSettings } from "./calendar-settings";
 import { calendarBorder, calendarFill } from "./colours";
 import { MeProvider } from "./me";
+import { TasksAddressProvider } from "./my-tasks";
 import { SearchBox } from "./search-box";
 
 // A personal calendar has no id until it's first used.
@@ -216,7 +217,9 @@ export function CalendarLayout({
   return (
     <HydrationBoundary state={prefetched}>
       <MeProvider id={user.id as UserId}>
-        <Shell user={user}>{children}</Shell>
+        <TasksAddressProvider href={user.apps.tasks}>
+          <Shell user={user}>{children}</Shell>
+        </TasksAddressProvider>
       </MeProvider>
     </HydrationBoundary>
   );

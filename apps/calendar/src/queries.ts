@@ -5,6 +5,7 @@ import {
   queryOptions,
 } from "@tanstack/react-query";
 import type { CalendarId } from "@cloudysuite/access";
+import type { PlainDate } from "@cloudysuite/tasks/in-calendar";
 import {
   countCalendarEvents,
   getCalendars,
@@ -23,8 +24,9 @@ import {
   visibleDays,
 } from "./schedule";
 import { searchEvents } from "./search-functions";
+import { listDueTasks } from "./task-functions";
 import { addDays } from "./time";
-import type { EventUid, TimeZone } from "./types";
+import type { CivilDate, EventUid, TimeZone } from "./types";
 import { todayWindow } from "./ui/today-plan";
 
 const CANNOT_REACH =
@@ -87,6 +89,9 @@ export const calendarKeys = {
   search: (text: string, zone: TimeZone) =>
     ["calendar", "search", text, zone] as const,
   invitations: (zone: TimeZone) => ["calendar", "invitations", zone] as const,
+  tasks: ["calendar", "tasks"] as const,
+  dueTasks: (from: CivilDate | null, to: CivilDate) =>
+    ["calendar", "tasks", from, to] as const,
   unsentCancellations: (calendarId: CalendarId) =>
     ["calendar", "unsentCancellations", calendarId] as const,
 };
@@ -161,6 +166,22 @@ export const eventsQuery = (window: DayWindow) =>
             from: addDays(window.from, -1),
             to: addDays(window.to, 1),
             timeZone: UTC,
+          },
+        }),
+      ),
+  });
+
+// The person's own open tasks due from `from`, or ever before when it's null, up to the
+// day before `to`. Not prefetched, so a slow board can't hold up the page.
+export const dueTasksQuery = (from: CivilDate | null, to: CivilDate) =>
+  queryOptions({
+    queryKey: calendarKeys.dueTasks(from, to),
+    queryFn: () =>
+      call(() =>
+        listDueTasks({
+          data: {
+            from: from as string | null as PlainDate | null,
+            to: to as string as PlainDate,
           },
         }),
       ),
