@@ -55,7 +55,7 @@ Do not guess or build around these. Ask the user first.
 - Each mailbox, each drive, and each calendar is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
 - D1 holds the directory, settings, and sign-in tables, and `src/db/schema.ts` lists them all. `saved_mail_attachments`, `drive_shares`, and `drive_move_notices` only index into objects and hold no content. The Drive object owns the shares and move notes themselves, and the Calendar object owns every event.
 - Every mailbox, drive, or calendar read and write goes through its one access-check function.
-- Every message enters a mailbox through `apps/mail/src/ingest.ts`. Imports use `prepareImported` and sent copies use `prepareSent`, which do what `ingest` does before the commit.
+- Every message enters a mailbox through `apps/mail/src/ingest.ts`. Imports use `prepareImported` and sent copies use `prepareSent`, so each job can commit inside its own Durable Object transaction.
 - Durable Object alarms handle background work. Do not add Queues or Workflows.
 - Make jobs safe to repeat. A retry must not duplicate messages or skip work.
 
