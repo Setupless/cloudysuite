@@ -22,6 +22,9 @@ const ToastContext = createContext<(toast: Toast) => void>(() => {});
 
 export const useToast = () => useContext(ToastContext);
 
+export const toastAction = () =>
+  document.querySelector<HTMLElement>("[data-toast-action]");
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<(Toast & { id: number }) | null>(null);
   const show = useCallback((toast: Toast) => {
@@ -49,6 +52,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             {current.action && (
               <button
                 type="button"
+                data-toast-action
                 className="cursor-pointer font-semibold underline outline-page focus-visible:outline-2"
                 onClick={() => {
                   current.action?.run();

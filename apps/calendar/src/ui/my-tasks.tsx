@@ -150,16 +150,25 @@ function useTick() {
   };
 }
 
+export const dueCircle = (task: DueTask | undefined) =>
+  task
+    ? document.querySelector<HTMLElement>(
+        `[data-due-task="${CSS.escape(task.id)}"]`,
+      )
+    : null;
+
 // One row of Overview's Tasks due. The circle fills at once and the row leaves once
-// Tasks has it.
+// Tasks has it. `onDone` runs once the row is on its way out.
 export function DueTaskRow({
   task,
   today,
   tasksHref,
+  onDone,
 }: {
   task: DueTask;
   today: CivilDate;
   tasksHref: string;
+  onDone: () => void;
 }) {
   const tick = useTick();
   const [ticking, setTicking] = useState(false);
@@ -171,11 +180,15 @@ export function DueTaskRow({
         role="checkbox"
         aria-checked={ticking}
         aria-label={`Done: ${task.title}`}
-        disabled={ticking}
-        className={`group/tick -m-2 flex size-11 flex-none cursor-pointer items-center justify-center rounded-full disabled:cursor-default sm:size-9 ${FOCUS}`}
+        // Not `disabled`, which would take focus from it while Tasks answers.
+        aria-disabled={ticking}
+        data-due-task={task.id}
+        className={`group/tick -m-2 flex size-11 flex-none cursor-pointer items-center justify-center rounded-full aria-disabled:cursor-default sm:size-9 ${FOCUS}`}
         onClick={async () => {
+          if (ticking) return;
           setTicking(true);
-          if (!(await tick(task))) setTicking(false);
+          if (await tick(task)) onDone();
+          else setTicking(false);
         }}
       >
         <span

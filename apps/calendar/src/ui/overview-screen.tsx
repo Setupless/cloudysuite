@@ -1,4 +1,10 @@
-import { Button, Notice, useHydrated, useToast } from "@cloudysuite/ui";
+import {
+  Button,
+  Notice,
+  toastAction,
+  useHydrated,
+  useToast,
+} from "@cloudysuite/ui";
 import {
   IconCalendar,
   IconCheck,
@@ -29,6 +35,7 @@ import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
 import {
   DueTaskRow,
+  dueCircle,
   listedTasks,
   TASKS_FAILED,
   unreachableBoards,
@@ -333,12 +340,19 @@ function TasksDue({ today }: { today: CivilDate }) {
         </p>
       )}
       <ul>
-        {tasks.map((task) => (
+        {tasks.map((task, index) => (
           <DueTaskRow
             key={task.id}
             task={task}
             today={today}
             tasksHref={tasksHref}
+            onDone={() =>
+              focusFirst(
+                () => dueCircle(tasks[index + 1]),
+                () => dueCircle(tasks[index - 1]),
+                toastAction,
+              )
+            }
           />
         ))}
       </ul>
