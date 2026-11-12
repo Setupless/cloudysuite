@@ -140,9 +140,11 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     () => shownEvents(listing.data, calendars.data),
     [listing.data, calendars.data],
   );
-  const { due } = useDueTasks(window.from, window.to);
-  const tasks = useMemo(() => shownTasks(listedTasks(due.data)), [due.data]);
-  const unreachable = unreachableBoards(due.data);
+  const { tasksHref, due } = useDueTasks(window.from, window.to);
+  // A disabled query keeps its last answer, so once Tasks is off, ignore it.
+  const dueData = tasksHref === undefined ? undefined : due.data;
+  const tasks = useMemo(() => shownTasks(listedTasks(dueData)), [dueData]);
+  const unreachable = unreachableBoards(dueData);
   const at = `${place.view}/${place.date}`;
   const [openCard, setCard] = useState<OpenCard | null>(null);
   const card = openCard?.at === at ? openCard : null;
@@ -371,7 +373,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
           </Notice>
         </div>
       )}
-      {due.error && (
+      {tasksHref !== undefined && due.error && (
         <div className="px-4 pb-2">
           <Notice tone="info">{TASKS_FAILED}</Notice>
         </div>
