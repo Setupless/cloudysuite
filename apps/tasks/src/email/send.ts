@@ -95,8 +95,10 @@ function directoryFailure(facts: Facts): CheckFailure | null {
   if (!facts.assigneeCanOpen || facts.boardName === null) {
     return "assigneeCantOpen";
   }
-  if (!facts.assignerCanEdit) return "assignerCantEdit";
+  // Ahead of the edit check, because the board's access check also refuses a suspended
+  // assigner, and only this check names that as the reason.
   if (!facts.sender) return "noSender";
+  if (!facts.assignerCanEdit) return "assignerCantEdit";
   return null;
 }
 

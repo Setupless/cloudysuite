@@ -179,6 +179,12 @@ const FAILED_CHECKS: [
     "assignerCantEdit",
   ],
   [
+    "the assigner was suspended",
+    (kit) =>
+      kit.directory.run("UPDATE user SET banned = 1 WHERE id = ?", [CAROL.id]),
+    "noSender",
+  ],
+  [
     "the assigner has no personal mailbox",
     (kit) =>
       kit.directory.run("DELETE FROM mailbox_access WHERE user_id = ?", [
