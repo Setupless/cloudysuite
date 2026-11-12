@@ -32,7 +32,12 @@ import {
 import { AddressField } from "./address-field";
 import { AdminPage } from "./admin-page";
 import type { DriveToClaim } from "./handover";
-import { handedOverName, needsRecipient } from "./handover-text";
+import {
+  handedOverName,
+  needsRecipient,
+  SPACE_KINDS,
+  type SpaceKind,
+} from "./handover-text";
 import type { InviteRow, PersonRow } from "./people";
 import { type LimitKey, StorageLimitForm } from "./storage-limit-form";
 
@@ -253,36 +258,66 @@ const countOf = (count: number, thing: string) =>
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-function handOverText(
-  { name, toHand: { files, calendars } }: PersonRow,
-  recipient: string,
-): string {
-  const parts = [
-    files.personal &&
+// How the removal dialog speaks of each kind, in the order it lists them.
+const SPACE_WORDS: Record<
+  SpaceKind,
+  {
+    plural: string;
+    team: string;
+    arrives: (name: string, recipient: string) => string;
+  }
+> = {
+  files: {
+    plural: "files",
+    team: "team folder",
+    arrives: (name, recipient) =>
       `Their My files arrives for ${recipient} as a new team folder called "${handedOverName("files", name)}", and ${recipient} manages it.`,
-    files.aloneIn > 0 &&
-      `${sentence(countOf(files.aloneIn, "team folder"))} only ${name} was on ${files.aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`,
-    calendars.personal &&
+  },
+  calendars: {
+    plural: "calendars",
+    team: "team calendar",
+    arrives: (name, recipient) =>
       `Their calendar arrives for ${recipient} as a new team calendar called "${handedOverName("calendars", name)}", with all its events, and ${recipient} manages it.`,
-    calendars.aloneIn > 0 &&
-      `${sentence(countOf(calendars.aloneIn, "team calendar"))} only ${name} was on ${calendars.aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`,
-  ];
-  return parts.filter(Boolean).join(" ");
+  },
+  boards: {
+    plural: "tasks",
+    team: "team board",
+    arrives: (name, recipient) =>
+      `Their private tasks arrive for ${recipient} on a new team board called "${handedOverName("boards", name)}", and ${recipient} manages it.`,
+  },
+};
+
+const listed = (items: string[]) =>
+  items.length <= 2
+    ? items.join(" and ")
+    : `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+
+function handOverText({ name, toHand }: PersonRow, recipient: string): string {
+  return SPACE_KINDS.flatMap((kind) => {
+    const { personal, aloneIn } = toHand[kind];
+    const { team, arrives } = SPACE_WORDS[kind];
+    return [
+      personal && arrives(name, recipient),
+      aloneIn > 0 &&
+        `${sentence(countOf(aloneIn, team))} only ${name} was on ${aloneIn === 1 ? "goes" : "go"} to ${recipient} as well.`,
+    ];
+  })
+    .filter(Boolean)
+    .join(" ");
 }
 
-function managedAloneText({
-  name,
-  toHand: { files, calendars },
-}: PersonRow): string | null {
-  const total = files.managedAlone + calendars.managedAlone;
-  if (total === 0) return null;
-  const what = [
-    files.managedAlone > 0 && countOf(files.managedAlone, "team folder"),
-    calendars.managedAlone > 0 &&
-      countOf(calendars.managedAlone, "team calendar"),
-  ]
-    .filter(Boolean)
-    .join(" and ");
+function managedAloneText({ name, toHand }: PersonRow): string | null {
+  const managed = SPACE_KINDS.filter((kind) => toHand[kind].managedAlone > 0);
+  if (managed.length === 0) return null;
+  const total = managed.reduce(
+    (sum, kind) => sum + toHand[kind].managedAlone,
+    0,
+  );
+  const what = listed(
+    managed.map((kind) =>
+      countOf(toHand[kind].managedAlone, SPACE_WORDS[kind].team),
+    ),
+  );
   return `${sentence(what)} ${name} managed alone ${total === 1 ? "stays with the people on it" : "stay with the people on them"}, and one of them becomes the manager.`;
 }
 
@@ -328,15 +363,11 @@ function RemoveDialog({
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [recipientId, setRecipientId] = useState("");
-  const filesToHand = needsRecipient(person.toHand.files);
-  const calendarsToHand = needsRecipient(person.toHand.calendars);
-  const mustChoose = filesToHand || calendarsToHand;
-  const what =
-    filesToHand && calendarsToHand
-      ? "files and calendars"
-      : filesToHand
-        ? "files"
-        : "calendars";
+  const kindsToHand = SPACE_KINDS.filter((kind) =>
+    needsRecipient(person.toHand[kind]),
+  );
+  const mustChoose = kindsToHand.length > 0;
+  const what = listed(kindsToHand.map((kind) => SPACE_WORDS[kind].plural));
   const stayWithTheirPeople = managedAloneText(person);
   const recipient =
     others.find((other) => other.id === recipientId)?.name ??
