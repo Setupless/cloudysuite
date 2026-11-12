@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import type {
+  BoardId,
   CalendarId,
   DriveId,
   MailboxId,
@@ -8,11 +9,14 @@ import type {
 } from "../../../src/db/schema";
 import { createTestDatabase } from "../../../src/db/test-database";
 import {
+  type BoardGrant,
   type CalendarGrant,
+  checkBoardAccess,
   checkCalendarAccess,
   checkDriveAccess,
   checkMailboxAccess,
   type DriveGrant,
+  ensurePersonalBoard,
   type MailboxGrant,
   parseDriveId,
   parseMailboxId,
@@ -380,5 +384,112 @@ test("a person can have only one personal calendar, and a team calendar needs a 
       "INSERT INTO calendars (id, kind, colour) VALUES (?, 'team', 1)",
       [finance],
     ),
+  ).toThrow();
+});
+
+const newsletter = "3d5a6f52-ce4f-4ab2-9a99-4e5f60718294" as BoardId;
+
+function addBoard() {
+  sqlite.run(
+    "INSERT INTO boards (id, kind, name, colour) VALUES (?, 'team', 'Newsletter', 3)",
+    [newsletter],
+  );
+  sqlite.run(
+    "INSERT INTO board_access (board_id, user_id, role) VALUES (?, ?, 'editor')",
+    [newsletter, alice],
+  );
+}
+
+test("someone on a board gets a grant with their role and the board's kind, and nobody else gets one", async () => {
+  addBoard();
+  const access = await checkBoardAccess(d1, alice, newsletter);
+  if (!access.allowed) throw new Error("expected access");
+  expect({ ...access.grant }).toEqual({
+    userId: alice,
+    boardId: newsletter,
+    role: "editor",
+    kind: "team",
+  });
+  expect(Object.isFrozen(access.grant)).toBe(true);
+  expect(await checkBoardAccess(d1, bob, newsletter)).toEqual({
+    allowed: false,
+  });
+  const missing = "00000000-0000-4000-8000-000000000000" as BoardId;
+  expect(await checkBoardAccess(d1, alice, missing)).toEqual({
+    allowed: false,
+  });
+});
+
+test("a banned person is refused a board until the ban ends", async () => {
+  addBoard();
+  for (const expires of [null, Date.now() + 60_000]) {
+    banAlice(expires);
+    expect(await checkBoardAccess(d1, alice, newsletter)).toEqual({
+      allowed: false,
+    });
+  }
+  banAlice(Date.now() - 60_000);
+  expect((await checkBoardAccess(d1, alice, newsletter)).allowed).toBe(true);
+});
+
+test("a board's grant can't be built by hand, and a calendar's can't pass as one", async () => {
+  addBoard();
+  addCalendar();
+  const boardAccess = await checkBoardAccess(d1, alice, newsletter);
+  const calendarAccess = await checkCalendarAccess(d1, alice, launches);
+  if (!boardAccess.allowed || !calendarAccess.allowed) {
+    throw new Error("expected access");
+  }
+  // @ts-expect-error A grant only comes from checkBoardAccess.
+  const forged: BoardGrant = {
+    userId: alice,
+    boardId: newsletter,
+    role: "manager",
+    kind: "team",
+  };
+  // @ts-expect-error A calendar's grant is not a board's.
+  const crossed: BoardGrant = calendarAccess.grant;
+  expect(forged).not.toBeInstanceOf(boardAccess.grant.constructor);
+  expect(crossed).not.toBeInstanceOf(boardAccess.grant.constructor);
+  const Grant = boardAccess.grant.constructor as new (
+    ...values: unknown[]
+  ) => BoardGrant;
+  expect(() => new Grant(alice, newsletter, "manager", "team")).toThrow();
+});
+
+test("two tabs opening Tasks at once make one personal board, managed by its person", async () => {
+  const [first, second] = await Promise.all([
+    ensurePersonalBoard(d1, alice),
+    ensurePersonalBoard(d1, alice),
+  ]);
+  expect(second).toBe(first);
+  expect(
+    sqlite
+      .query("SELECT id, kind, name, owner_id AS ownerId FROM boards")
+      .all(),
+  ).toEqual([{ id: first, kind: "personal", name: null, ownerId: alice }]);
+  const access = await checkBoardAccess(d1, alice, first);
+  if (!access.allowed) throw new Error("expected access");
+  expect([access.grant.role, access.grant.kind]).toEqual([
+    "manager",
+    "personal",
+  ]);
+});
+
+test("a person can have only one personal board, and a team board needs a name", () => {
+  sqlite.run(
+    "INSERT INTO boards (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+    [newsletter, alice],
+  );
+  expect(() =>
+    sqlite.run(
+      "INSERT INTO boards (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+      [launches, alice],
+    ),
+  ).toThrow();
+  expect(() =>
+    sqlite.run("INSERT INTO boards (id, kind, colour) VALUES (?, 'team', 1)", [
+      launches,
+    ]),
   ).toThrow();
 });

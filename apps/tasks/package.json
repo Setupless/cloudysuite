@@ -1,0 +1,13 @@
+{
+  "name": "@cloudysuite/tasks",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    "./board": "./src/board.ts"
+  },
+  "dependencies": {
+    "@cloudysuite/access": "workspace:*",
+    "@cloudysuite/object-sql": "workspace:*"
+  }
+}
