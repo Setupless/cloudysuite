@@ -10,7 +10,9 @@ import {
   BOARD_NAME_EMPTY_MESSAGE,
   BOARD_NAME_TOO_LONG_MESSAGE,
   type ChecklistItemId,
+  type DueRange,
   LIMITS,
+  MAX_DUE_RANGE_DAYS,
   MAX_BOARD_NAME_LENGTH,
   type MoveTarget,
   type NewPrivateTask,
@@ -175,6 +177,32 @@ export const parseNewPrivateTaskInput = (raw: unknown): NewPrivateTask => {
     id: uuid<TaskId>(input.id),
     title: title(input.title),
     due: requireDueOrNull(input.due),
+  };
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const parseDueRangeInput = (raw: unknown): DueRange => {
+  const input = record(raw);
+  const from = requireDueOrNull(input.from);
+  const to = requireDueOrNull(input.to);
+  if (!to) throw badRequest();
+  if (
+    from &&
+    (from >= to ||
+      Date.parse(to) - Date.parse(from) > MAX_DUE_RANGE_DAYS * DAY_MS)
+  ) {
+    throw badRequest();
+  }
+  return { from, to };
+};
+
+export const parseStatusInput = (raw: unknown) => {
+  const input = record(raw);
+  return {
+    boardId: requireBoardId(input.boardId),
+    taskId: uuid<TaskId>(input.taskId),
+    status: requireStatus(input.status),
   };
 };
 

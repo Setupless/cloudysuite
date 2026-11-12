@@ -30,6 +30,7 @@ import {
   type BoardMoveNotice,
   type ChangeResult,
   type ChecklistItem,
+  type DueRange,
   LIMITS,
   type MoveDestination,
   type MoveOutcome,
@@ -316,6 +317,23 @@ export class TaskStore {
       assignee,
       assignee,
       doneSince,
+    ).map(taskOf);
+  }
+
+  // For Calendar: the open tasks the person asking has to do that are due in the range,
+  // of a team board only what's assigned to them.
+  listMineDue(actor: Actor, range: DueRange): Task[] {
+    return this.#rows<TaskRow>(
+      `${TASKS}
+       WHERE deleted_at IS NULL AND status != 'done'
+         AND due IS NOT NULL AND (? IS NULL OR due >= ?) AND due < ?
+         AND (? = 'personal' OR assignee_id = ?)
+       ORDER BY due, created_at DESC, tasks.id`,
+      range.from,
+      range.from,
+      range.to,
+      actor.kind,
+      actor.userId,
     ).map(taskOf);
   }
 

@@ -60,6 +60,7 @@
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
         "@cloudysuite/search": "workspace:*",
+        "@cloudysuite/tasks": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-hotkeys": "0.20.1",

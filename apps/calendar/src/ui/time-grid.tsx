@@ -22,6 +22,7 @@ import {
   layoutTimeGrid,
   SHORTEST_MINUTES,
 } from "./schedule-layout";
+import { isTask, type ShownTask, TaskChip } from "./my-tasks";
 import { type ShownEvent, spokenLabel } from "./shown-event";
 
 const HOUR_PX = 48;
@@ -142,7 +143,7 @@ function AllDayRow({
   columns,
   handlers,
 }: {
-  bars: Bar<ShownEvent>[];
+  bars: Bar<ShownEvent | ShownTask>[];
   rows: number;
   columns: string;
   handlers: EventHandlers;
@@ -157,20 +158,30 @@ function AllDayRow({
       >
         All day
       </span>
-      {bars.map((bar) => (
-        <EventButton
-          key={bar.item.key}
-          event={bar.item}
-          handlers={handlers}
-          className={`mx-0.5 truncate px-1.5 text-xs leading-6 font-semibold ${bar.before ? "rounded-l-none" : "rounded-l-md"} ${bar.after ? "rounded-r-none" : "rounded-r-md"}`}
-          style={{
-            gridColumn: `${bar.first + 2} / ${bar.last + 3}`,
-            gridRow: bar.row + 1,
-          }}
-        >
-          {bar.item.title}
-        </EventButton>
-      ))}
+      {bars.map((bar) => {
+        const style = {
+          gridColumn: `${bar.first + 2} / ${bar.last + 3}`,
+          gridRow: bar.row + 1,
+        };
+        return isTask(bar.item) ? (
+          <TaskChip
+            key={bar.item.key}
+            item={bar.item}
+            style={style}
+            className="mx-0.5 rounded-md px-1.5"
+          />
+        ) : (
+          <EventButton
+            key={bar.item.key}
+            event={bar.item}
+            handlers={handlers}
+            className={`mx-0.5 truncate px-1.5 text-xs leading-6 font-semibold ${bar.before ? "rounded-l-none" : "rounded-l-md"} ${bar.after ? "rounded-r-none" : "rounded-r-md"}`}
+            style={style}
+          >
+            {bar.item.title}
+          </EventButton>
+        );
+      })}
     </div>
   );
 }
@@ -238,18 +249,21 @@ function NowLine({
 export function TimeGrid({
   days,
   events,
+  tasks,
   now,
   handlers,
 }: {
   days: CivilDate[];
   events: ShownEvent[];
+  tasks: ShownTask[];
   now: number;
   handlers: EventHandlers;
 }) {
   const { zone, today } = handlers;
   const layout = useMemo(
-    () => layoutTimeGrid(days, events, zone),
-    [days, events, zone],
+    () =>
+      layoutTimeGrid<ShownEvent | ShownTask>(days, [...events, ...tasks], zone),
+    [days, events, tasks, zone],
   );
   const scroller = useRef<HTMLDivElement>(null);
   const columns = COLUMNS[days.length as 1 | 7];
@@ -318,13 +332,15 @@ export function TimeGrid({
             }}
             className={`relative h-[1152px] border-l border-line bg-[repeating-linear-gradient(to_bottom,transparent_0_47px,var(--color-line)_47px_48px)] ${isWeekend(day) ? "bg-weekend" : ""}`}
           >
-            {layout.columns[index]?.map((block) => (
-              <TimedBlock
-                key={block.item.key}
-                block={block}
-                handlers={handlers}
-              />
-            ))}
+            {layout.columns[index]?.map((block) =>
+              isTask(block.item) ? null : (
+                <TimedBlock
+                  key={block.item.key}
+                  block={block as Block<ShownEvent>}
+                  handlers={handlers}
+                />
+              ),
+            )}
             {day === today && <NowLine now={now} zone={zone} day={day} />}
           </div>
         ))}

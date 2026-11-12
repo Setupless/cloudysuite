@@ -10,6 +10,7 @@ import {
   weekdayShort,
 } from "./event-text";
 import { layoutMonthWeek, type MonthEntry } from "./schedule-layout";
+import { isTask, type ShownTask, TaskChip } from "./my-tasks";
 import type { ShownEvent } from "./shown-event";
 import { EventButton, type EventHandlers } from "./time-grid";
 
@@ -24,7 +25,7 @@ function Entry({
   entry,
   handlers,
 }: {
-  entry: MonthEntry<ShownEvent>;
+  entry: MonthEntry<ShownEvent | ShownTask>;
   handlers: EventHandlers;
 }) {
   const { item: event } = entry;
@@ -32,6 +33,15 @@ function Entry({
     gridColumn: `${entry.first + 1} / ${entry.last + 2}`,
     gridRow: entry.row + 2,
   };
+  if (isTask(event)) {
+    return (
+      <TaskChip
+        item={event}
+        style={placement}
+        className="mx-1 rounded px-1 @max-3xl:mx-0.5 @max-3xl:px-0.5"
+      />
+    );
+  }
   if (entry.kind === "bar") {
     return (
       <EventButton
@@ -78,7 +88,7 @@ function Week({
 }: {
   days: CivilDate[];
   month: string;
-  events: ShownEvent[];
+  events: (ShownEvent | ShownTask)[];
   handlers: EventHandlers;
 }) {
   const { zone, today, onOpenDay } = handlers;
@@ -145,13 +155,16 @@ export function MonthGrid({
   date,
   window,
   events,
+  tasks,
   handlers,
 }: {
   date: CivilDate;
   window: DayWindow;
   events: ShownEvent[];
+  tasks: ShownTask[];
   handlers: EventHandlers;
 }) {
+  const items = useMemo(() => [...events, ...tasks], [events, tasks]);
   const weeks = useMemo(() => {
     const days = daysIn(window);
     return Array.from({ length: days.length / 7 }, (_, week) =>
@@ -174,7 +187,7 @@ export function MonthGrid({
             key={days[0]}
             days={days}
             month={month}
-            events={events}
+            events={items}
             handlers={handlers}
           />
         ))}

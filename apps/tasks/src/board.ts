@@ -17,6 +17,7 @@ import type {
   AssignmentEmailStatus,
   BoardMoveNotice,
   ChangeResult,
+  DueRange,
   MoveDestination,
   MoveOutcome,
   Task,
@@ -61,6 +62,10 @@ export class Board extends DurableObject<Env> {
 
   listMyTasks(actor: Actor, doneSince: number): Task[] {
     return this.#store.listMine(actor, doneSince);
+  }
+
+  listMyTasksDue(actor: Actor, range: DueRange): Task[] {
+    return this.#store.listMineDue(actor, range);
   }
 
   listOpenFor(actor: Actor, assigneeId: UserId): Task[] {

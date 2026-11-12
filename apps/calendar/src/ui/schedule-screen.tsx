@@ -38,6 +38,7 @@ import {
 } from "./event-form";
 import { dayTitle, monthTitle, shortDayTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
+import { listedTasks, shownTasks, useDueTasks } from "./my-tasks";
 import { daySpanOf } from "./schedule-layout";
 import { type ShownEvent, shownEvents } from "./shown-event";
 import { type EventHandlers, TimeGrid } from "./time-grid";
@@ -132,6 +133,8 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     () => shownEvents(listing.data, calendars.data),
     [listing.data, calendars.data],
   );
+  const { due } = useDueTasks(window.from, window.to);
+  const tasks = useMemo(() => shownTasks(listedTasks(due.data)), [due.data]);
   const at = `${place.view}/${place.date}`;
   const [openCard, setCard] = useState<OpenCard | null>(null);
   const card = openCard?.at === at ? openCard : null;
@@ -369,10 +372,17 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             date={place.date}
             window={window}
             events={events}
+            tasks={tasks}
             handlers={handlers}
           />
         ) : (
-          <TimeGrid days={days} events={events} now={now} handlers={handlers} />
+          <TimeGrid
+            days={days}
+            events={events}
+            tasks={tasks}
+            now={now}
+            handlers={handlers}
+          />
         )}
         {panelEvent && (
           <EventPanel

@@ -17,6 +17,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { calendarsQuery, eventsQuery, invitationsQuery } from "../queries";
 import { keyOf, searchOf, todayIn } from "../schedule";
+import { addDays } from "../time";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
 import { EventDialog } from "./event-dialog";
@@ -26,6 +27,7 @@ import { AnswerButtons } from "./invitation-parts";
 import { JoinButton } from "./join-button";
 import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
+import { DueTaskRow, listedTasks, useDueTasks } from "./my-tasks";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
 import {
@@ -293,6 +295,57 @@ function Invitations({ zone, today }: { zone: TimeZone; today: CivilDate }) {
           Nothing waiting for an answer.
         </p>
       )}
+    </section>
+  );
+}
+
+const unreachableText = (count: number) =>
+  `We couldn't reach ${count === 1 ? "one of your boards" : `${count} of your boards`}, so some tasks may be missing.`;
+
+// The person's own open tasks, overdue, today, then tomorrow. It loads on its own and is
+// left out while Tasks is off or nothing is due, so it never holds up the rest.
+function TasksDue({ today }: { today: CivilDate }) {
+  const { tasksHref, due } = useDueTasks(null, addDays(today, 2));
+  const tasks = listedTasks(due.data);
+  const unreachable = due.data?.status === "listed" ? due.data.unreachable : 0;
+  if (!tasksHref || due.isPending || due.data?.status === "off") return null;
+  if (!due.error && tasks.length === 0 && unreachable === 0) return null;
+  return (
+    <section className="min-w-0">
+      <h2 className={SECTION}>
+        Tasks due
+        {tasks.length > 0 && (
+          <span className="text-[13px] font-normal text-secondary">
+            {tasks.length === 1 ? "1 task" : `${tasks.length} tasks`}
+          </span>
+        )}
+      </h2>
+      {due.error && (
+        <p className="px-1 py-3 text-sm text-secondary">
+          Your tasks couldn't be shown just now. Try again in a moment.
+        </p>
+      )}
+      {unreachable > 0 && (
+        <p className="px-1 py-3 text-sm text-secondary">
+          {unreachableText(unreachable)}
+        </p>
+      )}
+      <ul>
+        {tasks.map((task) => (
+          <DueTaskRow
+            key={task.id}
+            task={task}
+            today={today}
+            tasksHref={tasksHref}
+          />
+        ))}
+      </ul>
+      <a
+        href={tasksHref}
+        className={`mt-1 inline-flex min-h-6 items-center rounded px-1 text-[13px] text-accent hover:underline ${FOCUS}`}
+      >
+        Open in Tasks
+      </a>
     </section>
   );
 }
@@ -664,6 +717,7 @@ function LiveOverview() {
         )}
         {/* It loads on its own, so invitations still show when the events can't. */}
         {(ready || failure) && <Invitations zone={zone} today={today} />}
+        {(ready || failure) && <TasksDue today={today} />}
       </div>
       {opening && calendars.data && (
         <EventDialog
