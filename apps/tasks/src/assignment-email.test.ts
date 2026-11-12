@@ -405,3 +405,41 @@ test("Open task links to the task's panel on the stored app domain", async () =>
     `<a href="${link}">Open task</a>`,
   );
 });
+
+// The object is emptied before D1 forgets the board, so these run while D1 still
+// lists it and every check against D1 still passes.
+test("a board deleted before its email goes sends nothing", async () => {
+  const kit = setUp();
+  const { id } = await assignedTask(kit, BOB);
+  expect(await (await kit.as(ALICE)).erase()).toBe("done");
+  expect(kit.alarmOf(MARKETING)).toBeNull();
+  await kit.at(WAIT);
+  await kit.runAlarm(MARKETING);
+  expect(kit.email.attempts).toEqual([]);
+  expect(await (await kit.as(ALICE)).assignmentEmail(id)).toEqual({
+    state: "none",
+  });
+});
+
+test("a board deleted while its email is being checked sends nothing", async () => {
+  const kit = setUp();
+  await assignedTask(kit, BOB);
+  const prepare = kit.d1.prepare.bind(kit.d1);
+  let erased = false;
+  kit.d1.prepare = (query: string) => {
+    if (!erased) {
+      erased = true;
+      void kit.objectOf(MARKETING).erase({
+        userId: ALICE.id,
+        boardId: MARKETING,
+        role: "manager",
+        kind: "team",
+      });
+    }
+    return prepare(query);
+  };
+  await kit.at(WAIT);
+  expect(erased).toBe(true);
+  expect(kit.email.attempts).toEqual([]);
+  expect(kit.alarmOf(MARKETING)).toBeNull();
+});

@@ -135,4 +135,9 @@ export const MIGRATIONS: Migrations = [
     `CREATE INDEX move_notices_due ON move_notices(index_due_at)
      WHERE index_due_at IS NOT NULL`,
   ],
+  [
+    // Written in the same transaction that empties a deleted board, before D1 forgets it,
+    // so a page still open can't add to it in between and a repeated delete finds it done.
+    `CREATE TABLE erased (only INTEGER PRIMARY KEY CHECK (only = 1)) WITHOUT ROWID`,
+  ],
 ];

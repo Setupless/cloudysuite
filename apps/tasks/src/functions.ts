@@ -91,6 +91,7 @@ const REFUSAL_STATUS: Partial<Record<RefusalReason, number>> = {
   itemGone: 404,
   tooLateToUndo: 409,
   moving: 409,
+  boardGone: 404,
 };
 
 const refused = (result: Refusal) =>
@@ -218,13 +219,14 @@ async function requireAddable(userId: UserId) {
   }
 }
 
-// D1 first, so the board is gone for everyone at once. If emptying the object then
-// fails, nobody can reach what's left.
+// The object first, so a failure leaves the board listed for its manager to delete
+// again. Once emptied it refuses every change, so nothing new lands there before D1
+// forgets it.
 async function deleteBoard(board: BoardClient) {
-  await deleteTeam(env.DB, board.boardId);
   if ((await board.erase()) === "noAccess") {
     throw refusal(403, ONLY_MANAGERS_MESSAGE);
   }
+  await deleteTeam(env.DB, board.boardId);
 }
 
 async function settle(

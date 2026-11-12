@@ -219,7 +219,10 @@ test("a deleted board takes its notes with it", async () => {
 function movingBeforeNotes() {
   const id = newTaskId();
   kit.seedStorage(MARKETING, (db) => {
-    applyMigrations(db, MIGRATIONS.slice(0, -1));
+    applyMigrations(db, MIGRATIONS.slice(0, -2));
+    // Today's store checks for a deletion before it writes. That release had none, so
+    // an empty stand-in lets it write, and the later migration makes the real table.
+    db.exec("CREATE TABLE erased (only INTEGER PRIMARY KEY)");
     const store = new TaskStore(db);
     const actor = {
       userId: ALICE.id,
@@ -237,6 +240,7 @@ function movingBeforeNotes() {
       tryAt: START + MINUTE,
       giveUpAt: START + 60 * MINUTE,
     });
+    db.exec("DROP TABLE erased");
   });
   return id;
 }
@@ -286,4 +290,33 @@ test("a note D1 couldn't be told about still arrives after a save that failed ou
   kit.d1Failures.moveNotices = false;
   await laterAlarm();
   expect(await notesFor()).toMatchObject([{ setback: "noAccess" }]);
+});
+
+const eraseMarketing = async () =>
+  expect(await (await kit.as(ALICE)).erase()).toBe("done");
+
+test("deleting a board drops its notes before D1 forgets it, and D1 keeps none after", async () => {
+  await refusedLater();
+  await eraseMarketing();
+  expect(await notesFor()).toEqual([]);
+
+  kit.directory.run("DELETE FROM boards WHERE id = ?", [MARKETING]);
+  expect(kit.directory.query("SELECT * FROM board_move_notices").all()).toEqual(
+    [],
+  );
+  expect(await notesFor()).toEqual([]);
+  expect(asked).toEqual([]);
+});
+
+test("a move out of a deleted board that's refused later leaves no note", async () => {
+  const id = await addTask();
+  kit.fail(PRODUCT, "receiveMove", "silent");
+  expect(await move(id)).toEqual({ status: "pending" });
+  await eraseMarketing();
+  loseCanEditOnProduct();
+  kit.fail(PRODUCT, "receiveMove", null);
+  await laterAlarm();
+  expect(await notesFor()).toEqual([]);
+  expect(asked).toEqual([]);
+  expect(kit.alarmOf(MARKETING)).toBeNull();
 });

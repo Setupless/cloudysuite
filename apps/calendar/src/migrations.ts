@@ -171,4 +171,10 @@ export const MIGRATIONS: Migrations = [
     // removed before this, which stay removed.
     `ALTER TABLE removed_events ADD COLUMN organiser TEXT`,
   ],
+  [
+    // Written in the same transaction that empties a deleted team calendar, before D1
+    // forgets it, so a page still open can't add to it in between and a repeated delete
+    // finds it done.
+    `CREATE TABLE erased (only INTEGER PRIMARY KEY CHECK (only = 1)) WITHOUT ROWID`,
+  ],
 ];
