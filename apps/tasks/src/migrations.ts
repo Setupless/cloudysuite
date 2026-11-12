@@ -113,4 +113,30 @@ export const MIGRATIONS: Migrations = [
     `CREATE INDEX tasks_mine ON tasks(assignee_id, done_at, due)
      WHERE deleted_at IS NULL`,
   ],
+  [
+    // Which board a note is kept on, for D1's board_move_notices. Null for a move begun
+    // before this, which leaves no note.
+    `ALTER TABLE moves_out ADD COLUMN from_board_id TEXT`,
+    // Written in the transaction that unlocks the task, so a retry can't lose or repeat
+    // it. index_due_at says D1 still needs telling, and what to write is read from
+    // dismissed when the write runs. A dismissed row goes once D1 has dropped it.
+    `CREATE TABLE move_notices (
+      move_id TEXT PRIMARY KEY,
+      board_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      to_kind TEXT NOT NULL,
+      to_name TEXT NOT NULL,
+      setback TEXT NOT NULL,
+      noted_at INTEGER NOT NULL,
+      dismissed INTEGER NOT NULL DEFAULT 0,
+      index_due_at INTEGER,
+      CHECK (to_kind IN ('personal', 'team')),
+      CHECK (setback IN ('noAccess', 'busy', 'dropped', 'noAnswer')),
+      CHECK (dismissed IN (0, 1))
+    ) WITHOUT ROWID`,
+    `CREATE INDEX move_notices_for_person ON move_notices(user_id, noted_at)`,
+    `CREATE INDEX move_notices_due ON move_notices(index_due_at)
+     WHERE index_due_at IS NOT NULL`,
+  ],
 ];

@@ -11,7 +11,8 @@ import { askEach } from "@cloudysuite/search";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { openBoardFor, requireTasksUser } from "./access";
-import type { BoardClient } from "./client";
+import { type BoardClient, moveNoticesOn } from "./client";
+import { noticesAcrossBoards } from "./move-notices";
 import { searchBoards, tasksOfPerson } from "./search";
 import { parseTaskSearch } from "./search-query";
 import {
@@ -44,6 +45,7 @@ import {
   DONE_TODAY_LOOKBACK_MS,
   LAST_MANAGER_MESSAGE,
   type MoveAnswer,
+  type MoveNotice,
   type MyTask,
   type MyTasks,
   type PersonTasks,
@@ -71,6 +73,7 @@ import {
   parseBoardInput,
   parseChangeInput,
   parseMoveInput,
+  parseMoveNoticeInput,
   parseNewBoardInput,
   parseNewPrivateTaskInput,
   parsePersonInput,
@@ -379,6 +382,25 @@ export const moveTask = createServerFn({ method: "POST" })
       case "refused":
         throw refused(outcome);
     }
+  });
+
+// Every page shows these, so a move that didn't happen is seen wherever the person goes.
+export const listMoveNotices = createServerFn({ method: "GET" }).handler(
+  async (): Promise<MoveNotice[]> => {
+    const person = await me();
+    return noticesAcrossBoards(env.DB, person, async (boardId) =>
+      (await moveNoticesOn(env, person.id, boardId)).list(),
+    );
+  },
+);
+
+export const dismissMoveNotice = createServerFn({ method: "POST" })
+  .validator(parseMoveNoticeInput)
+  .handler(async ({ data }): Promise<void> => {
+    const person = await me();
+    await (
+      await moveNoticesOn(env, person.id, data.boardId)
+    ).dismiss(data.moveId);
   });
 
 export const searchTasks = createServerFn({ method: "GET" })

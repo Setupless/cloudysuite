@@ -5,10 +5,17 @@ import type { SearchTerm } from "@cloudysuite/search";
 import { moveReceiver } from "./client";
 import { runDueEmails } from "./email/send";
 import { MIGRATIONS } from "./migrations";
+import { writeNoticeIndex } from "./move-notices";
 import type { MoveDelivery, ReceiveAnswer } from "./moves";
-import { type Actor, TaskStore } from "./store";
+import {
+  type Actor,
+  NOTICE_INDEX_RETRY_MS,
+  type NoticeReader,
+  TaskStore,
+} from "./store";
 import type {
   AssignmentEmailStatus,
+  BoardMoveNotice,
   ChangeResult,
   MoveDestination,
   MoveOutcome,
@@ -21,6 +28,7 @@ const MOVE_RETRY_MS = 60_000;
 // After this, a board that still hasn't answered no longer holds the task locked here.
 const MOVE_GIVE_UP_MS = 60 * 60 * 1000;
 const MOVES_PER_WAKE_UP = 5;
+const NOTICE_INDEX_BATCH = 30;
 
 // One board's tasks and their checklists. Every call is told who is asking, and the
 // store refuses what they may not do in the same call that would do it.
@@ -29,6 +37,8 @@ export class Board extends DurableObject<Env> {
   // Stops the alarm sending a move the person's request is still waiting on, so one
   // can't be refused while the other is accepted.
   readonly #sendingMoves = new Set<string>();
+  // One D1 write at a time, so an older one can't land after a newer one.
+  #noticeWrites: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -98,11 +108,12 @@ export class Board extends DurableObject<Env> {
     });
     if (begun.status !== "begun") return begun;
     await this.#scheduleNextWakeUp();
-    return this.#runMove(moveId);
+    return this.#runMove(moveId, true);
   }
 
-  // One step of a move out, whichever phase it has reached. See moves.ts.
-  async #runMove(moveId: string): Promise<MoveOutcome> {
+  // One step of a move out, whichever phase it has reached. See moves.ts. A refusal the
+  // person waits for shows in the move dialog, so only a later one leaves a note.
+  async #runMove(moveId: string, personWaits: boolean): Promise<MoveOutcome> {
     const move = this.#store.outgoingMove(moveId);
     if (!move) return { status: "pending" };
     const retryAt = () => Date.now() + MOVE_RETRY_MS;
@@ -120,8 +131,13 @@ export class Board extends DurableObject<Env> {
             task: move.task,
           });
           if (answer.status === "refused") {
-            this.#store.advanceOut(moveId, "refused", retryAt());
-            await this.#scheduleNextWakeUp();
+            this.#store.advanceOut(
+              moveId,
+              "refused",
+              retryAt(),
+              personWaits ? null : { setback: answer.reason, now: Date.now() },
+            );
+            await this.#afterNote();
             return { status: "refusedThere", reason: answer.reason };
           }
           this.#store.advanceOut(moveId, "added", retryAt());
@@ -146,11 +162,15 @@ export class Board extends DurableObject<Env> {
     } catch (error) {
       console.error("Could not finish moving a task. Trying again.", error);
       if (move.phase === "locked" && Date.now() >= move.giveUpAt) {
-        this.#store.advanceOut(moveId, "noAnswer", retryAt());
+        this.#store.advanceOut(moveId, "noAnswer", retryAt(), {
+          setback: "noAnswer",
+          now: Date.now(),
+        });
+        await this.#afterNote();
       } else {
         this.#store.postponeMove(moveId, retryAt());
+        await this.#scheduleNextWakeUp();
       }
-      await this.#scheduleNextWakeUp();
       // The task has already left if only the unlock failed, and the alarm finishes it.
       return this.#store.outgoingMove(moveId)?.phase === "added"
         ? { status: "moved" }
@@ -185,6 +205,48 @@ export class Board extends DurableObject<Env> {
     this.#store.dropMoveIn(moveId);
   }
 
+  moveNotices(reader: NoticeReader): BoardMoveNotice[] {
+    return this.#store.moveNotices(reader);
+  }
+
+  async dismissMoveNotice(reader: NoticeReader, moveId: string): Promise<void> {
+    this.#store.dismissMoveNotice(reader, moveId, Date.now());
+    await this.#afterNote();
+  }
+
+  async #afterNote(): Promise<void> {
+    await this.#scheduleNextWakeUp();
+    await this.#writeNoticeIndex();
+    await this.#scheduleNextWakeUp();
+  }
+
+  // Only a failure stops it early, and the alarm picks up what's left.
+  #writeNoticeIndex(): Promise<void> {
+    const run = this.#noticeWrites.then(async () => {
+      try {
+        for (;;) {
+          const writes = this.#store.noticeIndexWrites(
+            Date.now(),
+            NOTICE_INDEX_BATCH,
+          );
+          if (writes.length === 0) return;
+          await writeNoticeIndex(this.env.DB, writes);
+          this.#store.finishNoticeIndexWrites(writes);
+        }
+      } catch (error) {
+        console.error(
+          "Could not save a note about a move. Trying again.",
+          error,
+        );
+        this.#store.postponeNoticeIndexWrites(
+          Date.now() + NOTICE_INDEX_RETRY_MS,
+        );
+      }
+    });
+    this.#noticeWrites = run;
+    return run;
+  }
+
   // Call this before any other await, so it commits with the rows that need it.
   #scheduleNextWakeUp(): Promise<void> {
     const due = this.#store.nextWakeUpAt();
@@ -198,8 +260,9 @@ export class Board extends DurableObject<Env> {
     this.#store.purgeDeleted(Date.now());
     await this.#sendEmails();
     for (const moveId of this.#store.dueMoves(Date.now(), MOVES_PER_WAKE_UP)) {
-      await this.#runMove(moveId);
+      await this.#runMove(moveId, false);
     }
+    await this.#writeNoticeIndex();
     await this.#scheduleNextWakeUp();
   }
 

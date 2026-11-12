@@ -583,3 +583,25 @@ export const boardAccess = sqliteTable(
     index("board_access_user_id_idx").on(table.userId),
   ],
 );
+
+// Which boards hold a note for a person about a move that didn't happen, as
+// drive_move_notices does for drives. It holds no names, and the Board object writes
+// each row from its own notes.
+export const boardMoveNotices = sqliteTable(
+  "board_move_notices",
+  {
+    userId: text("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    boardId: text("board_id")
+      .$type<BoardId>()
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    moveId: text("move_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.boardId, table.moveId] }),
+    index("board_move_notices_board_id_idx").on(table.boardId),
+  ],
+);

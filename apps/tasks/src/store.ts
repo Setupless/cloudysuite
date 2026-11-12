@@ -27,11 +27,13 @@ import {
 import {
   ASSIGNMENT_EMAIL_WAIT_MS,
   type AssignmentEmailStatus,
+  type BoardMoveNotice,
   type ChangeResult,
   type ChecklistItem,
   LIMITS,
   type MoveDestination,
   type MoveOutcome,
+  type MoveSetback,
   type NotEmailedReason,
   type PlainDate,
   REFUSAL_MESSAGES,
@@ -49,6 +51,8 @@ const TASKS_PER_SEARCH = 50;
 // A claim found still sending after this came from a run that never finished.
 const SENDING_CHECK_MS = 60_000;
 
+export const NOTICE_INDEX_RETRY_MS = 60_000;
+
 type EmailRow = {
   task_id: string;
   email_id: string;
@@ -59,6 +63,17 @@ type EmailRow = {
   reason: string | null;
   tries: number;
 };
+
+// What D1's board_move_notices is still to be told about one note.
+export type NoticeIndexWrite = {
+  moveId: string;
+  boardId: BoardId;
+  userId: UserId;
+  present: boolean;
+};
+
+// Whoever asks for their own notes, whether or not they can still open the board.
+export type NoticeReader = { userId: UserId; canOpen: boolean };
 
 // Who is asking, from their grant, which can't cross RPC.
 export type Actor = {
@@ -641,6 +656,7 @@ export class TaskStore {
     if (actor.role !== "manager") return "noAccess";
     this.#db.transaction(() => {
       this.#db.exec("DELETE FROM tasks");
+      this.#db.exec("DELETE FROM move_notices");
       const arriving = this.#rows<{ id: string }>(
         "SELECT id FROM moves_in WHERE phase = 'locked'",
       );
@@ -677,11 +693,12 @@ export class TaskStore {
           task.assignee?.id === input.keepAssigneeId ? task.assignee : null,
       };
       this.#db.exec(
-        `INSERT INTO moves_out (id, task_id, to_board_id, to_kind, to_name, moved_by,
-           phase, task, try_at, give_up_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'locked', ?, ?, ?)`,
+        `INSERT INTO moves_out (id, task_id, from_board_id, to_board_id, to_kind,
+           to_name, moved_by, phase, task, try_at, give_up_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'locked', ?, ?, ?)`,
         input.moveId,
         input.id,
+        actor.boardId,
         input.toBoardId,
         input.to.kind,
         input.to.name,
@@ -718,8 +735,14 @@ export class TaskStore {
   }
 
   // Every change to a move out goes through here, and a step its phase doesn't allow
-  // changes nothing, so a late or repeated answer can't undo a later one.
-  advanceOut(moveId: string, event: OutgoingEvent, tryAt: number): void {
+  // changes nothing, so a late or repeated answer can't undo a later one. A note goes in
+  // with the step that unlocks the task, so it's written once or not at all.
+  advanceOut(
+    moveId: string,
+    event: OutgoingEvent,
+    tryAt: number,
+    note: { setback: MoveSetback; now: number } | null = null,
+  ): void {
     this.#db.transaction(() => {
       const [move] = this.#rows<{ phase: string; task_id: string }>(
         "SELECT phase, task_id FROM moves_out WHERE id = ?",
@@ -727,6 +750,7 @@ export class TaskStore {
       );
       const next = move && OUTGOING_STEPS[move.phase as OutgoingPhase][event];
       if (!move || !next) return;
+      if (note) this.#noteSetback(moveId, note.setback, note.now);
       // The other board holds a locked copy now, so this one can go.
       if (event === "added") {
         this.#db.exec("DELETE FROM tasks WHERE id = ?", move.task_id);
@@ -742,6 +766,93 @@ export class TaskStore {
         );
       }
     });
+  }
+
+  #noteSetback(moveId: string, setback: MoveSetback, now: number): void {
+    this.#db.exec(
+      `INSERT INTO move_notices (move_id, board_id, user_id, title, to_kind, to_name,
+         setback, noted_at, index_due_at)
+       SELECT id, from_board_id, moved_by, json_extract(task, '$.title'), to_kind,
+         to_name, ?, ?, ?
+       FROM moves_out WHERE id = ? AND from_board_id IS NOT NULL
+       ON CONFLICT (move_id) DO NOTHING`,
+      setback,
+      now,
+      now,
+      moveId,
+    );
+  }
+
+  moveNotices(reader: NoticeReader): BoardMoveNotice[] {
+    return this.#rows<{
+      move_id: string;
+      title: string;
+      to_kind: string;
+      to_name: string;
+      setback: string;
+      noted_at: number;
+    }>(
+      `SELECT move_id, title, to_kind, to_name, setback, noted_at FROM move_notices
+       WHERE user_id = ? AND dismissed = 0 ORDER BY noted_at DESC`,
+      reader.userId,
+    ).map((row) => ({
+      moveId: row.move_id,
+      title: reader.canOpen ? row.title : null,
+      to: { kind: row.to_kind as MoveDestination["kind"], name: row.to_name },
+      setback: row.setback as MoveSetback,
+      notedAt: row.noted_at,
+    }));
+  }
+
+  // Only the person it's for can dismiss it, and doing it twice changes nothing.
+  dismissMoveNotice(reader: NoticeReader, moveId: string, now: number): void {
+    this.#db.exec(
+      `UPDATE move_notices SET dismissed = 1, index_due_at = ?
+       WHERE move_id = ? AND user_id = ? AND dismissed = 0`,
+      now,
+      moveId,
+      reader.userId,
+    );
+  }
+
+  noticeIndexWrites(now: number, limit: number): NoticeIndexWrite[] {
+    return this.#rows<{
+      move_id: string;
+      board_id: string;
+      user_id: string;
+      dismissed: number;
+    }>(
+      `SELECT move_id, board_id, user_id, dismissed FROM move_notices
+       WHERE index_due_at <= ? ORDER BY index_due_at LIMIT ?`,
+      now,
+      limit,
+    ).map((row) => ({
+      moveId: row.move_id,
+      boardId: row.board_id as BoardId,
+      userId: row.user_id as UserId,
+      present: row.dismissed === 0,
+    }));
+  }
+
+  // A dismissal made while the write was on its way no longer matches, so it stays due.
+  finishNoticeIndexWrites(written: readonly NoticeIndexWrite[]): void {
+    this.#db.transaction(() => {
+      for (const { moveId, present } of written) {
+        this.#db.exec(
+          present
+            ? "UPDATE move_notices SET index_due_at = NULL WHERE move_id = ? AND dismissed = 0"
+            : "DELETE FROM move_notices WHERE move_id = ? AND dismissed = 1",
+          moveId,
+        );
+      }
+    });
+  }
+
+  postponeNoticeIndexWrites(retryAt: number): void {
+    this.#db.exec(
+      "UPDATE move_notices SET index_due_at = ? WHERE index_due_at IS NOT NULL",
+      retryAt,
+    );
   }
 
   dueMoves(now: number, limit: number): string[] {
@@ -852,16 +963,19 @@ export class TaskStore {
       purge: number | null;
       move: number | null;
       email: number | null;
+      notice: number | null;
     }>(
       `SELECT
          (SELECT MIN(deleted_at) FROM tasks WHERE deleted_at IS NOT NULL) AS purge,
          (SELECT MIN(try_at) FROM moves_out) AS move,
-         (SELECT MIN(try_at) FROM assignment_emails) AS email`,
+         (SELECT MIN(try_at) FROM assignment_emails) AS email,
+         (SELECT MIN(index_due_at) FROM move_notices) AS notice`,
     );
     const due = [
       row?.purge == null ? null : row.purge + UNDO_DELETE_MS,
       row?.move ?? null,
       row?.email ?? null,
+      row?.notice ?? null,
     ].filter((at): at is number => at !== null);
     return due.length > 0 ? Math.min(...due) : null;
   }

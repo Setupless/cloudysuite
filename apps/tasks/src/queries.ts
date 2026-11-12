@@ -14,6 +14,7 @@ import {
   listBoardTasks,
   listColleagues,
   listMyBoards,
+  listMoveNotices,
   listMyTasks,
   listPersonTasks,
   searchTasks,
@@ -71,6 +72,7 @@ export const tasksKeys = {
   settings: (boardId: BoardId) => ["tasks", "settings", boardId] as const,
   taskCount: (boardId: BoardId) => ["tasks", "taskCount", boardId] as const,
   colleagues: ["tasks", "colleagues"] as const,
+  moveNotices: ["tasks", "moveNotices"] as const,
   searches: ["tasks", "search"] as const,
   search: (text: string, boardId: BoardId | null) =>
     ["tasks", "search", text, boardId] as const,
@@ -98,6 +100,14 @@ export const assignmentEmailQuery = (
     queryFn: () => call(() => assignmentEmail({ data: { boardId, taskId } })),
     refetchInterval: (query) =>
       query.state.data?.state === "pending" ? EMAIL_CHECK_MS : false,
+  });
+
+// Every page shows these, and asks again as it opens, so a note written while the person
+// was elsewhere shows on the next page they go to.
+export const moveNoticesQuery = () =>
+  queryOptions({
+    queryKey: tasksKeys.moveNotices,
+    queryFn: () => call(() => listMoveNotices()),
   });
 
 export const boardsQuery = () =>
@@ -166,7 +176,12 @@ async function prefetch(fill: (client: QueryClient) => Promise<void>) {
 }
 
 export const prefetchBoards = () =>
-  prefetch((client) => client.prefetchQuery(boardsQuery()));
+  prefetch(async (client) => {
+    await Promise.all([
+      client.prefetchQuery(boardsQuery()),
+      client.prefetchQuery(moveNoticesQuery()),
+    ]);
+  });
 
 export const prefetchMyTasks = () =>
   prefetch((client) => client.prefetchQuery(myTasksQuery()));

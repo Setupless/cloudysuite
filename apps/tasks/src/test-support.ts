@@ -83,6 +83,22 @@ export function createBoardTest() {
   const faults = new Map<string, Map<string, Fault>>();
   const calls = new Map<string, BoardCall[]>();
   const email = createFakeEmail();
+  // Writes to D1's board_move_notices fail while this is on, as if D1 were down.
+  const d1Failures = { moveNotices: false };
+  const database = new Proxy(d1, {
+    get(target, property) {
+      if (property !== "prepare") return Reflect.get(target, property);
+      return (query: string) => {
+        if (
+          d1Failures.moveNotices &&
+          /^\s*(insert|delete)\b[\s\S]*board_move_notices/i.test(query)
+        ) {
+          throw new Error("D1 is unavailable");
+        }
+        return target.prepare(query);
+      };
+    },
+  });
   // Records every call that reaches an object through the binding, and applies faults.
   function reach(name: string) {
     const object = instanceOf(name).object;
@@ -108,7 +124,7 @@ export function createBoardTest() {
     });
   }
   const env = {
-    DB: d1,
+    DB: database,
     EMAIL: email.binding,
     BOARD: {
       idFromName: (name: string) => name,
@@ -180,6 +196,7 @@ export function createBoardTest() {
   return {
     env,
     d1,
+    d1Failures,
     email,
     directory,
     join,

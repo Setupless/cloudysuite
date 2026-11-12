@@ -490,6 +490,11 @@ test("with Tasks off, every function refuses in plain words", async () => {
       as(people.editor).retryAssignmentEmail({
         data: { boardId: MARKETING, taskId: task.id },
       }),
+    () => as(people.editor).listMoveNotices(),
+    () =>
+      as(people.editor).dismissMoveNotice({
+        data: { boardId: MARKETING, moveId: crypto.randomUUID() },
+      }),
   ];
   for (const call of calls) {
     const refusal = await refused(call());
@@ -505,8 +510,10 @@ test("with Tasks off, every function refuses in plain words", async () => {
     "countBoardTasks",
     "createPrivateTask",
     "createTeamBoard",
+    "dismissMoveNotice",
     "listBoardTasks",
     "listColleagues",
+    "listMoveNotices",
     "listMyBoards",
     "listMyTasks",
     "listPersonTasks",
