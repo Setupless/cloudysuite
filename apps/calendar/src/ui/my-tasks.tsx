@@ -54,6 +54,16 @@ export function useDueTasks(from: CivilDate | null, to: CivilDate) {
 export const listedTasks = (due: DueTasks | undefined): DueTask[] =>
   due?.status === "listed" ? due.tasks : [];
 
+export const unreachableBoards = (due: DueTasks | undefined) =>
+  due?.status === "listed" ? due.unreachable : 0;
+
+// Overview and Schedule say the same when tasks are missing, and show what did load.
+export const TASKS_FAILED =
+  "Your tasks couldn't be shown just now. Try again in a moment.";
+
+export const unreachableText = (count: number) =>
+  `We couldn't reach ${count === 1 ? "one of your boards" : `${count} of your boards`}, so some tasks may be missing.`;
+
 // The board's colour and name, or a lock and "Only you" for a private task, as in Tasks.
 export function BoardName({ board }: { board: DueTask["board"] }) {
   return board.kind === "personal" ? (

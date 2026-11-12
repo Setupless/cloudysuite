@@ -27,7 +27,14 @@ import { AnswerButtons } from "./invitation-parts";
 import { JoinButton } from "./join-button";
 import { meetingLink } from "./meeting-link";
 import { useMe } from "./me";
-import { DueTaskRow, listedTasks, useDueTasks } from "./my-tasks";
+import {
+  DueTaskRow,
+  listedTasks,
+  TASKS_FAILED,
+  unreachableBoards,
+  unreachableText,
+  useDueTasks,
+} from "./my-tasks";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
 import {
@@ -299,15 +306,12 @@ function Invitations({ zone, today }: { zone: TimeZone; today: CivilDate }) {
   );
 }
 
-const unreachableText = (count: number) =>
-  `We couldn't reach ${count === 1 ? "one of your boards" : `${count} of your boards`}, so some tasks may be missing.`;
-
 // The person's own open tasks, overdue, today, then tomorrow. It loads on its own and is
 // left out while Tasks is off or nothing is due, so it never holds up the rest.
 function TasksDue({ today }: { today: CivilDate }) {
   const { tasksHref, due } = useDueTasks(null, addDays(today, 2));
   const tasks = listedTasks(due.data);
-  const unreachable = due.data?.status === "listed" ? due.data.unreachable : 0;
+  const unreachable = unreachableBoards(due.data);
   if (!tasksHref || due.isPending || due.data?.status === "off") return null;
   if (!due.error && tasks.length === 0 && unreachable === 0) return null;
   return (
@@ -321,9 +325,7 @@ function TasksDue({ today }: { today: CivilDate }) {
         )}
       </h2>
       {due.error && (
-        <p className="px-1 py-3 text-sm text-secondary">
-          Your tasks couldn't be shown just now. Try again in a moment.
-        </p>
+        <p className="px-1 py-3 text-sm text-secondary">{TASKS_FAILED}</p>
       )}
       {unreachable > 0 && (
         <p className="px-1 py-3 text-sm text-secondary">

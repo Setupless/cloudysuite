@@ -38,7 +38,14 @@ import {
 } from "./event-form";
 import { dayTitle, monthTitle, shortDayTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
-import { listedTasks, shownTasks, useDueTasks } from "./my-tasks";
+import {
+  listedTasks,
+  shownTasks,
+  TASKS_FAILED,
+  unreachableBoards,
+  unreachableText,
+  useDueTasks,
+} from "./my-tasks";
 import { daySpanOf } from "./schedule-layout";
 import { type ShownEvent, shownEvents } from "./shown-event";
 import { type EventHandlers, TimeGrid } from "./time-grid";
@@ -135,6 +142,7 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
   );
   const { due } = useDueTasks(window.from, window.to);
   const tasks = useMemo(() => shownTasks(listedTasks(due.data)), [due.data]);
+  const unreachable = unreachableBoards(due.data);
   const at = `${place.view}/${place.date}`;
   const [openCard, setCard] = useState<OpenCard | null>(null);
   const card = openCard?.at === at ? openCard : null;
@@ -361,6 +369,16 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
               ? "There are too many events here to show them all."
               : "There are too many events here to show them all. Switch to a shorter view to see the rest."}
           </Notice>
+        </div>
+      )}
+      {due.error && (
+        <div className="px-4 pb-2">
+          <Notice tone="info">{TASKS_FAILED}</Notice>
+        </div>
+      )}
+      {unreachable > 0 && (
+        <div className="px-4 pb-2">
+          <Notice tone="info">{unreachableText(unreachable)}</Notice>
         </div>
       )}
       <div
