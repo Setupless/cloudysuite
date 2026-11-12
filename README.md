@@ -149,7 +149,7 @@ Apple Mail, Outlook, and other native mail apps aren't supported, because they n
 
 ### Search, labels, and rules
 
-- **Search takes Gmail's operators,** such as `from:` and `in:trash`, and groups results by conversation. It leaves out Spam and Trash until asked. Search text is parsed into words and never reaches the index as syntax, so no text can cause an error.
+- **Search takes some of Gmail's operators:** `from:`, `to:`, `subject:`, `is:unread`, `is:starred`, `has:attachment`, `in:`, `label:`, `before:`, and `after:`. Anything else, including `-word`, `OR`, and `cc:`, is searched as plain words. An operator with a value it can't use, such as `is:important`, gets a plain message saying what it can search. Results are grouped by conversation, and Spam and Trash are left out unless `in:` names one. Search text is parsed into words and never reaches the index as syntax, so no text can break a search.
 - **Labels belong to a mailbox,** so everyone with access sees and manages the same set. A label applies to a whole conversation, and a reply joins its conversation's labels. A label's list leaves out Spam and Trash. Anyone with access can delete a label. That takes it out of any rule that used it, and a rule left with nothing to do turns off.
 - **Rules belong to a mailbox.** Its managers edit them and its members can read them. They run on new inbound mail only, never on imported or sent mail, so an import can't re-sort a mailbox's history. Rules run from the top down, every rule that matches applies, and the highest rule that moves a message decides where it goes.
 - **A rule can't forward mail,** because that would make a mailbox an open relay. A rule can't delete permanently, because a bad rule must never lose mail. Its strongest action moves mail to Trash.
@@ -218,7 +218,7 @@ Turning Mail off clears nothing, so turning it back on restores the same device.
 
 ### Notifications
 
-A person turns notifications on for each device and can turn off any mailbox they share. A notification goes out for inbound mail that lands in the inbox, never for imported mail, sent mail, or Spam. It carries the sender and subject, encrypted so that the push service can't read them.
+A person turns notifications on for each device and can turn off any mailbox they share. On iPhone and iPad, notifications work only once Mail is on the Home Screen. Each person can have notifications on 10 devices, and turning them on for an 11th turns them off on the oldest. A notification goes out for inbound mail that lands in the inbox, never for imported mail, sent mail, or Spam. It carries the sender and subject, encrypted so that the push service can't read them.
 
 - **Web push is hand-written** with WebCrypto, RFC 8291 to encrypt and RFC 8292 to sign. A test checks it byte for byte against RFC 8291's published message. The organisation's signing keys are made on first use.
 - **Only known push services.** A browser supplies its own endpoint, and the Worker later sends a request to it, so an open list would let anyone signed in aim the Worker at any URL. `apps/mail/src/push/endpoint.ts` lists the hosts. A browser can start using a host the list lacks, as Chromium did with `jmt17.google.com`. It then shows a plain failure, and the fix is one line.
@@ -261,7 +261,7 @@ A person can upload an `.mbox` file, such as a Google Takeout export, into a mai
 
 1. The browser sends the file in 10 MB parts, up to 100 GB, and the Worker writes them to R2 as a multipart upload. An interrupted upload can resume.
 2. The mailbox's Durable Object records an import job with a byte offset and works through the file in small batches on its alarm.
-3. Each message goes through the same parsing and commit as inbound mail, in `apps/mail/src/ingest.ts`. Imported messages skip rules, spam filtering, and notifications, and keep their original dates.
+3. Each message goes through the same parsing and commit as inbound mail, in `apps/mail/src/ingest.ts`. Imported messages go to Archive, marked as read, with their original dates. They skip rules, spam filtering, and notifications.
 4. Each batch saves its messages and the new offset in one SQLite transaction, so a crash resumes from the last saved batch.
 5. A hash of each raw message prevents duplicates if a file is imported twice. The import screen lists any message it can't read.
 
@@ -284,7 +284,7 @@ Jev is a third-party service. With a key, CloudySuite sends message content to i
 - Jev keeps data for as long as it considers necessary, with no fixed period, and offers zero retention to enterprise customers. Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) before you turn it on.
 - Jev charges $0.042 per million input tokens, as of November 2026. The Organisation page shows this month's checks, tokens, and checks that couldn't finish.
 - CloudySuite calls `POST https://api.typesafe.ai/v1/systemone` with a plain `fetch` and the key as a bearer token, using the `jev-latest` alias and `noul` questions, with no SDK. It uses an alias because a copy of CloudySuite never updates itself, and a retired version would quietly end every check.
-- Saving a key checks it with `GET /v1/models`, which spends no tokens. A key Jev rejects isn't saved. A key that can't be checked right now is saved, and the screen says so. The key is stored in D1 and never returned to a browser.
+- Saving a key checks it with `GET /v1/models`, which spends no tokens. A key Jev refuses with a 401 isn't saved. After any other failure, the key is saved and the screen says it couldn't be checked. The key is stored in D1 and never returned to a browser.
 
 **What is sent.** For one inbound message, one request holds exactly this:
 
@@ -410,7 +410,7 @@ Calendar replaces Google Calendar. A person lands on Overview, and Schedule hold
 - **The toolbar has Go to today, previous and next, and a date title that opens a month picker.** There is no mini month in the sidebar, because the title picker does the same job without taking room from the calendar list.
 - **Unanswered invitations show dashed.** Events answered No and cancelled events are struck through.
 - **Keys.** N starts a new event and / goes to search, in Schedule and on Overview. Esc closes a dialog anywhere. In Schedule, T goes to today, D, W, and M switch views, the arrows move to the previous or next period, and Esc closes the open card, panel, or month picker.
-- **Search finds events by title, place, and notes,** across the calendars the person can see and hasn't hidden, past and future. Matching works like [Storage's](#search-and-starred). Events still to come show first, soonest first, then past events, newest first. A repeating event shows once, at its next date, or its last if the series has ended. Calendars are asked five at a time for up to 5 seconds, and a note says if any couldn't be searched. A result opens in Day view.
+- **Search finds events by title, place, and notes,** across the calendars the person can see and hasn't hidden, past and future. Each word must start a word, in any order, whatever the case or accents, as in [Storage](#search-and-starred). Calendar has no operators or quoted phrases, so anything typed is read as plain words. Events still to come show first, soonest first, then past events, newest first. A repeating event shows once, at its next date, or its last if the series has ended. Calendars are asked five at a time for up to 5 seconds, and a note says if any couldn't be searched. A result opens in Day view.
 - **A hidden calendar stays hidden for that person on every device,** because it is a flag on their own `calendar_access` row. It is left out of Schedule, search, and Overview, except that unanswered invitations always show on Overview, so none can be missed.
 
 ### Personal and team calendars
@@ -475,7 +475,7 @@ A message that carries an invitation, update, cancellation, or reply shows a car
 - An invitation in the calendar has Yes, Maybe, and No, which answer as Calendar does.
 - An invitation that isn't in the calendar, such as from a shared mailbox, imported mail, or mail that came while Calendar was off, has Add to my calendar. That overrides a removal, adds the email's version unanswered, and changes nothing when pressed again. A colleague's removed invitation comes back only from an email the sender check confirms. One that never reached the calendar offers nothing to add, because the copy follows the organiser's calendar.
 - An update says when the calendar holds a later version, or that the sender couldn't be confirmed.
-- A cancellation says whether the calendar marks it cancelled, with Remove from my calendar while it is there.
+- A cancellation of the whole event says whether the calendar marks it cancelled, with Remove from my calendar while it is there. A cancellation of some dates says whether the calendar marks that date cancelled, and has no Remove button.
 - A reply says who answered and how, and whether the answer is in the calendar.
 - With Calendar off, the card shows the email's details, says Calendar is off, and has no buttons, and Calendar refuses the card's actions.
 
@@ -564,7 +564,7 @@ The Deploy button treats a subdirectory as [the root of the new repository](http
 
 ## Develop
 
-[AGENTS.md](AGENTS.md) lists every command. One Worker routes every app by hostname, and agents work in parallel worktrees, so each checkout needs its own stable app hostnames without port numbers. [portless](https://github.com/vercel-labs/portless) provides them.
+[AGENTS.md](AGENTS.md) lists the everyday commands. One Worker routes every app by hostname, and agents work in parallel worktrees, so each checkout needs its own stable app hostnames without port numbers. [portless](https://github.com/vercel-labs/portless) provides them.
 
 1. Run `cp dev.vars.local.example .dev.vars` once in each checkout to get the local sign-in secret. A deployment doesn't use this file, because the wizard generates its secret.
 2. Run `bun run db:migrate:local`, `bun run db:seed:local`, and `bun run db:seed:user:local <email> <password> [admin|user]`.
