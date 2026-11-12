@@ -59,6 +59,7 @@ import {
   type ChangeResult,
   type EraseResult,
   type ChangeScope,
+  type CalendarGone,
   type CivilDate,
   type CreateResult,
   type DayRange,
@@ -124,7 +125,9 @@ export type ImportGroup = {
 };
 
 export type ImportResult =
-  { status: "done"; summary: ImportSummary } | { status: "noAccess" };
+  | { status: "done"; summary: ImportSummary }
+  | { status: "noAccess" }
+  | CalendarGone;
 
 type ImportOutcome =
   "added" | "updated" | "unchanged" | "organisedElsewhere" | SkipReason;
@@ -1240,6 +1243,7 @@ export class EventStore {
     outside: OutsideInviting,
     now: number,
   ): CreateResult {
+    if (this.#isErased()) return { status: "calendarGone" };
     if (!canEdit(actor)) return { status: "noAccess" };
     const planned = plannedPeople(
       draft.people,
@@ -1299,6 +1303,7 @@ export class EventStore {
     outside: OutsideInviting,
     now: number,
   ): UpdateResult {
+    if (this.#isErased()) return { status: "calendarGone" };
     if (!canEdit(actor)) return { status: "noAccess" };
     const series = this.#series(target.uid);
     if (!series) return { status: "gone" };
@@ -1502,6 +1507,7 @@ export class EventStore {
     scope: ChangeScope,
     now: number,
   ): ChangeResult {
+    if (this.#isErased()) return { status: "calendarGone" };
     if (!canEdit(actor)) return { status: "noAccess" };
     const series = this.#series(target.uid);
     if (!series) return { status: "gone" };
@@ -2751,6 +2757,7 @@ export class EventStore {
     groups: ImportGroup[],
     now: number,
   ): ImportResult {
+    if (this.#isErased()) return { status: "calendarGone" };
     if (!canEdit(actor)) return { status: "noAccess" };
     const importer: Organiser = {
       kind: "madeHere",
@@ -2886,12 +2893,20 @@ export class EventStore {
 
   // Only a manager, and only once D1 no longer has the calendar. Everyone invited to its
   // events hears they're off, so this keeps what that needs.
+  #isErased(): boolean {
+    return this.#rows("SELECT 1 AS found FROM erased").length > 0;
+  }
+
+  // Empties a deleted team calendar and refuses every change after it. Running it again
+  // changes nothing. Its queued cancellations, deliveries, and answers still go, and Try
+  // again still works on a cancellation that didn't.
   erase(actor: Actor, now: number): EraseResult {
     if (actor.role !== "manager") return { status: "noAccess" };
     const invited = this.#rows<PeopleRow>(
       "SELECT * FROM event_people WHERE reply IS NULL",
     );
     this.db.transaction(() => {
+      this.db.exec("INSERT OR IGNORE INTO erased (only) VALUES (1)");
       for (const row of invited) {
         const people = JSON.parse(row.attendees) as StoredAttendee[];
         this.#queueFor(row.uid as EventUid, people, [], actor, now);
