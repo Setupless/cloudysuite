@@ -686,13 +686,14 @@ test("with Calendar off, the card shows the invitation as plain details, and ref
     standing: { kind: "calendarOff" },
   });
   for (const action of [
-    inMail().answerInvitationFromMail({
-      data: { mailboxId: mailboxes.boss, messageId, answer: "yes" },
-    }),
-    inMail().addInvitationFromMail(target(messageId)),
-    inMail().removeInvitationFromMail(target(messageId)),
+    () =>
+      inMail().answerInvitationFromMail({
+        data: { mailboxId: mailboxes.boss, messageId, answer: "yes" },
+      }),
+    () => inMail().addInvitationFromMail(target(messageId)),
+    () => inMail().removeInvitationFromMail(target(messageId)),
   ]) {
-    expect(await refusalOf(action)).toEqual({
+    expect(await refusalOf(action())).toEqual({
       status: 403,
       message:
         "An admin turned Calendar off, so invitations can't be answered or added from Mail. Nothing was changed. Ask your admin to turn Calendar back on.",
