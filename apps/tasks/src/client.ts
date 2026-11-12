@@ -6,9 +6,17 @@ import {
   checkBoardAccess,
   type UserId,
 } from "@cloudysuite/access";
+import type { MoveDelivery, ReceiveAnswer } from "./moves";
 import type { Actor } from "./store";
 import { boardStub } from "./stub";
-import type { ChangeResult, Task, TaskChange, TaskId } from "./types";
+import type {
+  ChangeResult,
+  MoveDestination,
+  MoveOutcome,
+  Task,
+  TaskChange,
+  TaskId,
+} from "./types";
 
 export type BoardClient = {
   boardId: BoardId;
@@ -20,19 +28,27 @@ export type BoardClient = {
   change(change: TaskChange): Promise<ChangeResult>;
   countTasks(): Promise<number>;
   erase(): Promise<"done" | "noAccess">;
+  // Taking the other board's client means its access check has already passed.
+  moveTo(
+    id: TaskId,
+    to: BoardClient,
+    move: { to: MoveDestination; keepAssigneeId: UserId | null },
+  ): Promise<MoveOutcome>;
 };
+
+const actorOf = (grant: BoardGrant): Actor => ({
+  userId: grant.userId,
+  boardId: grant.boardId,
+  role: grant.role,
+  kind: grant.kind,
+});
 
 // The only way for user-facing code to reach a board. A grant cannot cross RPC, so D1's
 // part of the check happens here, on the caller's side, and every call tells the object
 // who is asking.
 export function openBoard(env: Env, grant: BoardGrant): BoardClient {
   const stub = boardStub(env, grant.boardId);
-  const actor: Actor = {
-    userId: grant.userId,
-    boardId: grant.boardId,
-    role: grant.role,
-    kind: grant.kind,
-  };
+  const actor = actorOf(grant);
   return {
     boardId: grant.boardId,
     role: grant.role,
@@ -45,6 +61,12 @@ export function openBoard(env: Env, grant: BoardGrant): BoardClient {
       (await stub.changeTask(actor, change)) as ChangeResult,
     countTasks: () => stub.countTasks(actor),
     erase: () => stub.erase(actor),
+    moveTo: async (id, to, move) =>
+      (await stub.moveTask(actor, {
+        id,
+        toBoardId: to.boardId,
+        ...move,
+      })) as MoveOutcome,
   };
 }
 
@@ -57,4 +79,28 @@ export async function openBoardAs(
 ): Promise<BoardClient | null> {
   const access = await checkBoardAccess(env.DB, userId, boardId);
   return access.allowed ? openBoard(env, access.grant) : null;
+}
+
+// For one board's object to carry a move into another, perhaps from its alarm after the
+// person has gone. Each delivery checks the mover's grant there again, so a deleted
+// board or lost Can edit refuses it. Unlocking and dropping only finish or undo a
+// delivery that grant allowed, and refusing them would leave the task locked.
+export function moveReceiver(env: Env, boardId: BoardId) {
+  const stub = boardStub(env, boardId);
+  return {
+    async add(movedBy: UserId, delivery: MoveDelivery): Promise<ReceiveAnswer> {
+      const access = await checkBoardAccess(env.DB, movedBy, boardId);
+      if (!access.allowed) return { status: "refused", reason: "noAccess" };
+      return (await stub.receiveMove(
+        actorOf(access.grant),
+        delivery,
+      )) as ReceiveAnswer;
+    },
+    unlock: async (moveId: string) => {
+      await stub.unlockMoveIn(moveId);
+    },
+    drop: async (moveId: string) => {
+      await stub.dropMoveIn(moveId);
+    },
+  };
 }

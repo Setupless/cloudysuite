@@ -63,6 +63,11 @@ export const tasksKeys = {
   colleagues: ["tasks", "colleagues"] as const,
 };
 
+// A task on its way to another board shows that, and the list asks again until it's gone.
+const MOVING_CHECK_MS = 10_000;
+const whileMoving = (tasks: { moving: unknown }[] | undefined) =>
+  tasks?.some((task) => task.moving) ? MOVING_CHECK_MS : false;
+
 export const boardsQuery = () =>
   queryOptions({
     queryKey: tasksKeys.boards,
@@ -73,12 +78,14 @@ export const myTasksQuery = () =>
   queryOptions({
     queryKey: tasksKeys.mine,
     queryFn: () => call(() => listMyTasks()),
+    refetchInterval: (query) => whileMoving(query.state.data?.tasks),
   });
 
 export const boardTasksQuery = (boardId: BoardId) =>
   queryOptions({
     queryKey: tasksKeys.board(boardId),
     queryFn: () => call(() => listBoardTasks({ data: { boardId } })),
+    refetchInterval: (query) => whileMoving(query.state.data?.tasks),
   });
 
 export const settingsQuery = (boardId: BoardId) =>
@@ -121,3 +128,9 @@ export const prefetchBoard = (boardId: string) =>
   prefetch((client) =>
     client.prefetchQuery(boardTasksQuery(boardId as BoardId)),
   );
+
+// Opens a task when the page loads, such as from "Moved to Product".
+export const validateTaskSearch = (
+  search: Record<string, unknown>,
+): { task?: string } =>
+  typeof search.task === "string" ? { task: search.task } : {};

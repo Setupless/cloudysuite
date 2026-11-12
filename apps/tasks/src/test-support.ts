@@ -33,6 +33,13 @@ export const ALICE: Person = {
 export const BOB: Person = { id: "user-bob" as UserId, name: "Bob Lee" };
 export const CAROL: Person = { id: "user-carol" as UserId, name: "Carol Diaz" };
 export const MARKETING = "1b3f4e30-ac2d-4f90-9e77-2c3d4e5f6071" as BoardId;
+export const PRODUCT = "2c4a5f41-bd3e-4a01-8f88-3d4e5f607182" as BoardId;
+
+// How a board's object answers another board, as if the network or the object failed.
+// "silent" fails before the call does anything, and "loseAnswer" after it has done it.
+export type Fault = "silent" | "loseAnswer";
+
+export type BoardCall = { method: string; args: unknown[] };
 
 let made = 0;
 export const newTaskId = () =>
@@ -62,11 +69,37 @@ export function createBoardTest() {
     string,
     { object: InstanceType<typeof Board>; alarm: number | null }
   >();
+  const faults = new Map<string, Map<string, Fault>>();
+  const calls = new Map<string, BoardCall[]>();
+  // Records every call that reaches an object through the binding, and applies faults.
+  function reach(name: string) {
+    const object = instanceOf(name).object;
+    return new Proxy(object, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function" || typeof property !== "string") {
+          return value;
+        }
+        return async (...args: unknown[]) => {
+          const fault = faults.get(name)?.get(property);
+          if (fault === "silent") throw new Error(`${name} is silent`);
+          const result = await value.apply(target, args);
+          calls.set(name, [
+            ...(calls.get(name) ?? []),
+            { method: property, args: structuredClone(args) },
+          ]);
+          if (fault === "loseAnswer")
+            throw new Error(`${name}'s answer was lost`);
+          return result;
+        };
+      },
+    });
+  }
   const env = {
     DB: d1,
     BOARD: {
       idFromName: (name: string) => name,
-      get: (name: string) => instanceOf(name).object,
+      get: reach,
     },
   } as unknown as Env;
 
@@ -108,13 +141,21 @@ export function createBoardTest() {
     [MARKETING],
   );
 
-  function join(person: Person, role: BoardRole) {
+  function join(person: Person, role: BoardRole, boardId = MARKETING) {
     directory.run(
       "INSERT INTO board_access (board_id, user_id, role) VALUES (?, ?, ?)",
-      [MARKETING, person.id, role],
+      [boardId, person.id, role],
     );
   }
   join(ALICE, "manager");
+  directory.run(
+    "INSERT INTO boards (id, kind, name, colour) VALUES (?, 'team', 'Product', 3)",
+    [PRODUCT],
+  );
+  directory.run(
+    "INSERT INTO board_access (board_id, user_id, role) VALUES (?, ?, 'manager')",
+    [PRODUCT, ALICE.id],
+  );
 
   async function as(person: Person, boardId: BoardId = MARKETING) {
     const board = await openBoardAs(env, person.id, boardId);
@@ -130,6 +171,16 @@ export function createBoardTest() {
     as,
     personalBoardOf: (person: Person) => ensurePersonalBoard(d1, person.id),
     alarmOf: (boardId: BoardId) => instanceOf(boardId).alarm,
+    // The object itself, for calls only another board's object makes.
+    objectOf: (boardId: BoardId) => instanceOf(boardId).object,
+    fail(boardId: BoardId, method: string, fault: Fault | null) {
+      const board = faults.get(boardId) ?? new Map<string, Fault>();
+      if (fault) board.set(method, fault);
+      else board.delete(method);
+      faults.set(boardId, board);
+    },
+    callsTo: (boardId: BoardId, method: string) =>
+      (calls.get(boardId) ?? []).filter((call) => call.method === method),
     // Runs a board's alarm as the runtime would, once it's due.
     runAlarm: async (boardId: BoardId) => {
       const instance = instanceOf(boardId);

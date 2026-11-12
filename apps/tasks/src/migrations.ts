@@ -25,4 +25,35 @@ export const MIGRATIONS: Migrations = [
     )`,
     `CREATE INDEX tasks_deleted ON tasks(deleted_at) WHERE deleted_at IS NOT NULL`,
   ],
+  [
+    // A task is locked while a locked move names it, so nothing else marks the lock. The
+    // states and their steps are in moves.ts. `task` is the task as it will arrive.
+    `CREATE TABLE moves_out (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      to_board_id TEXT NOT NULL,
+      to_kind TEXT NOT NULL,
+      to_name TEXT NOT NULL,
+      moved_by TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      task TEXT NOT NULL,
+      try_at INTEGER NOT NULL,
+      give_up_at INTEGER NOT NULL,
+      CHECK (phase IN ('locked', 'added', 'givenUp')),
+      CHECK (to_kind IN ('personal', 'team'))
+    )`,
+    `CREATE UNIQUE INDEX moves_out_one_lock ON moves_out(task_id) WHERE phase = 'locked'`,
+    `CREATE INDEX moves_out_due ON moves_out(try_at)`,
+    // Every move this board has heard of stays, so a late repeat of a finished or dropped
+    // one adds nothing. A locked copy is held here, out of every list, until it's unlocked.
+    `CREATE TABLE moves_in (
+      id TEXT PRIMARY KEY,
+      task_id TEXT,
+      phase TEXT NOT NULL,
+      task TEXT,
+      CHECK (phase IN ('locked', 'unlocked', 'dropped')),
+      CHECK ((task IS NOT NULL) = (phase = 'locked'))
+    ) WITHOUT ROWID`,
+    `CREATE UNIQUE INDEX moves_in_one_arrival ON moves_in(task_id) WHERE phase = 'locked'`,
+  ],
 ];

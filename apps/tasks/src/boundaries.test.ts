@@ -40,13 +40,21 @@ test("only the access-checked client imports the stub", () => {
   ]);
 });
 
+// These only finish or undo a move whose delivery was checked. See moveReceiver.
+const FINISHING_A_MOVE = ["unlockMoveIn", "dropMoveIn"];
+
 test("every Board method is told who is asking", () => {
   const source = readFileSync(join(import.meta.dir, "board.ts"), "utf8");
   const methods = [
     ...source.matchAll(
       /^ {2}(?:override )?(?:async )?([a-zA-Z][a-zA-Z0-9]*)\(([\s\S]*?)\)(?:: [^{]+)? \{$/gm,
     ),
-  ].filter(([, name]) => name !== "constructor" && name !== "alarm");
+  ].filter(
+    ([, name]) =>
+      name !== "constructor" &&
+      name !== "alarm" &&
+      !FINISHING_A_MOVE.includes(name as string),
+  );
   expect(methods.length).toBeGreaterThan(2);
   for (const [name, parameters] of methods.map(([, n, p]) => [n, p])) {
     expect([name, /\b_?actor: Actor\b/.test(parameters as string)]).toEqual([

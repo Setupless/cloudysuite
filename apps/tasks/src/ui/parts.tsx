@@ -1,9 +1,13 @@
+import type { BoardRole, UserId } from "@cloudysuite/access";
 import { Avatar } from "@cloudysuite/ui";
 import { IconCheck, IconLock } from "@tabler/icons-react";
-import type { BoardOfTask, Person, PlainDate } from "../types";
+import type { BoardOfTask, Person, PlainDate, TaskMoving } from "../types";
 import { dueText } from "./dates";
 
 export const FOCUS = "outline-accent focus-visible:outline-2";
+
+export const canEditWith = (role: BoardRole) =>
+  role === "manager" || role === "editor";
 
 // Written out in full, because Tailwind only makes the classes it finds in the source.
 const FILLS = [
@@ -111,3 +115,11 @@ export function TickButton({
     </button>
   );
 }
+
+// What a board shows on a task on its way to another.
+export const movingText = (moving: TaskMoving, me: UserId) =>
+  moving.kind === "team"
+    ? `Moving to ${moving.name}…`
+    : moving.by === me
+      ? "Moving to your private tasks…"
+      : `Moving to ${moving.name}'s private tasks…`;

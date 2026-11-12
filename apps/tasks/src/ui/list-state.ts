@@ -44,3 +44,7 @@ export const isEditing = (state: ListState, field: Editing) =>
   (typeof field === "string"
     ? state.editing === field
     : typeof state.editing === "object" && state.editing.item === field.item);
+
+// A page asked to open a task starts with it open.
+export const openingWith = (taskId: string | undefined): ListState =>
+  taskId ? { kind: "open", taskId: taskId as TaskId, editing: null } : BROWSING;

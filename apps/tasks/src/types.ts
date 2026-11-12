@@ -24,6 +24,12 @@ export type ChecklistItem = {
   done: boolean;
 };
 
+// Where a task is going, as its board shows it while it's locked. A private board is
+// named after its owner.
+export type MoveDestination = { kind: BoardKind; name: string };
+
+export type TaskMoving = MoveDestination & { by: UserId };
+
 export type Task = {
   id: TaskId;
   title: string;
@@ -35,6 +41,8 @@ export type Task = {
   createdBy: Person;
   createdAt: number;
   doneAt: number | null;
+  // Set while the task is on its way to another board. Nothing can change it meanwhile.
+  moving: TaskMoving | null;
 };
 
 // Counted in characters as a person sees them, after trimming a title or an item.
@@ -80,7 +88,8 @@ export type RefusalReason =
   | "itemEmpty"
   | "itemTooLong"
   | "itemGone"
-  | "tooLateToUndo";
+  | "tooLateToUndo"
+  | "moving";
 
 export const REFUSAL_MESSAGES: Record<RefusalReason, string> = {
   noAccess:
@@ -96,6 +105,7 @@ export const REFUSAL_MESSAGES: Record<RefusalReason, string> = {
   itemTooLong: `A checklist item can be up to ${LIMITS.checklistItem} characters. Make it shorter.`,
   itemGone: "That checklist item has been removed.",
   tooLateToUndo: "It's too late to undo. The task has been deleted.",
+  moving: "This task is being moved to another board. Try again in a minute.",
 };
 
 export type Refusal = {
@@ -240,3 +250,32 @@ export const NOT_A_PERSON_MESSAGE =
 export const PRIVATE_BOARD_MESSAGE =
   "Your private tasks are just for you. Nobody else can be added, and they can't be left or deleted.";
 export const BOARD_NAME_TOO_LONG_MESSAGE = `Use a name of ${MAX_BOARD_NAME_LENGTH} characters or fewer.`;
+
+// The other board is told who moves the task, and checks them again itself.
+export type MoveOutcome =
+  | { status: "moved" }
+  // The other board hasn't answered. The alarm keeps asking.
+  | { status: "pending" }
+  | Refusal
+  | { status: "refusedThere"; reason: "noAccess" | "busy" | "dropped" };
+
+// "private" is the person's own board, which the move makes if it's needed.
+export type MoveTarget = BoardId | "private";
+
+export type MoveAnswer = {
+  status: "moved" | "moving";
+  to: BoardOfTask;
+};
+
+export const ALREADY_THERE_MESSAGE = "The task is already on this board.";
+
+export const viewOnlyThereMessage = (name: string) =>
+  `You can view ${name} but not add tasks to it. Ask one of its managers for Can edit.`;
+
+export const refusedThereMessage = (
+  reason: Extract<MoveOutcome, { status: "refusedThere" }>["reason"],
+  name: string,
+) =>
+  reason === "noAccess"
+    ? `You can no longer add tasks to ${name}, so the task is still here.`
+    : `The task couldn't be moved to ${name} just now, so it is still here. Try again in a minute.`;

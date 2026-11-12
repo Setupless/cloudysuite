@@ -4,14 +4,15 @@ import {
   HydrationBoundary,
   useQuery,
 } from "@tanstack/react-query";
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { boardsQuery, myTasksQuery, settingsQuery } from "../queries";
 import type { BoardRole } from "@cloudysuite/access";
 import type { MyTask, TaskId } from "../types";
 import { dayOnDevice, longDayText } from "./dates";
-import { BROWSING, listReducer } from "./list-state";
+import { listReducer, openingWith } from "./list-state";
 import { NewTaskRow } from "./new-task-row";
-import { canEditWith, TaskPanel } from "./task-panel";
+import { canEditWith } from "./parts";
+import { TaskPanel } from "./task-panel";
 import {
   DoneFold,
   Empty,
@@ -51,13 +52,16 @@ function MinePanel({
   );
 }
 
-function MyTasks() {
+function MyTasks({ taskToOpen }: { taskToOpen: string | undefined }) {
   const me = useMe();
   const today = useToday();
   const mine = useQuery(myTasksQuery());
   const boards = useQuery(boardsQuery());
   const changes = useTaskChanges();
-  const [state, dispatch] = useReducer(listReducer, BROWSING);
+  const [state, dispatch] = useReducer(listReducer, taskToOpen, openingWith);
+  useEffect(() => {
+    if (taskToOpen) dispatch({ type: "open", taskId: taskToOpen as TaskId });
+  }, [taskToOpen]);
   useListKeys(state, dispatch, true);
 
   const roleOn = (task: MyTask): BoardRole =>
@@ -83,6 +87,7 @@ function MyTasks() {
       task={task}
       place={{ kind: "mine", board: task.board }}
       today={today}
+      me={me}
       open={state.kind === "open" && state.taskId === task.id}
       canTick={canEditWith(roleOn(task)) || task.assignee?.id === me}
       onOpen={() =>
@@ -172,8 +177,11 @@ function MyTasks() {
 }
 
 export function MyTasksScreen({
+  task,
   prefetched,
 }: {
+  // A task to open, such as one just moved to the person's private tasks.
+  task?: string;
   prefetched: DehydratedState | undefined;
 }) {
   // The groups follow the device's own day, which the server doesn't know, so the list
@@ -182,7 +190,7 @@ export function MyTasksScreen({
   return (
     <HydrationBoundary state={prefetched}>
       {hydrated ? (
-        <MyTasks />
+        <MyTasks taskToOpen={task} />
       ) : (
         <PageHeading title="My tasks" canAdd={null} onAdd={() => {}} />
       )}

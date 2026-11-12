@@ -7,11 +7,25 @@ import {
 } from "@cloudysuite/access";
 import type { SqlDriver } from "@cloudysuite/object-sql";
 import {
+  INCOMING_STEPS,
+  type IncomingEvent,
+  type IncomingPhase,
+  type MoveDelivery,
+  OUTGOING_STEPS,
+  type OutgoingEvent,
+  type OutgoingMove,
+  type OutgoingPhase,
+  type ReceiveAnswer,
+} from "./moves";
+import {
   type ChangeResult,
   type ChecklistItem,
   LIMITS,
+  type MoveDestination,
+  type MoveOutcome,
   type PlainDate,
   REFUSAL_MESSAGES,
+  type Refusal,
   type RefusalReason,
   type Task,
   type TaskChange,
@@ -58,7 +72,16 @@ type TaskRow = {
   created_at: number;
   done_at: number | null;
   deleted_at: number | null;
+  moving_kind: string | null;
+  moving_name: string | null;
+  moving_by: string | null;
 };
+
+// A task is locked while a locked move out names it.
+const TASKS = `SELECT tasks.*, moves_out.to_kind AS moving_kind,
+    moves_out.to_name AS moving_name, moves_out.moved_by AS moving_by
+  FROM tasks LEFT JOIN moves_out
+    ON moves_out.task_id = tasks.id AND moves_out.phase = 'locked'`;
 
 const taskOf = (row: TaskRow): Task => ({
   id: row.id as TaskId,
@@ -74,9 +97,17 @@ const taskOf = (row: TaskRow): Task => ({
   createdBy: { id: row.created_by_id as UserId, name: row.created_by_name },
   createdAt: row.created_at,
   doneAt: row.done_at,
+  moving:
+    row.moving_by === null
+      ? null
+      : {
+          kind: row.moving_kind as MoveDestination["kind"],
+          name: row.moving_name ?? "",
+          by: row.moving_by as UserId,
+        },
 });
 
-const refuse = (reason: RefusalReason): ChangeResult => ({
+const refuse = (reason: RefusalReason): Extract<ChangeResult, Refusal> => ({
   status: "refused",
   reason,
   message: REFUSAL_MESSAGES[reason],
@@ -195,17 +226,33 @@ export class TaskStore {
     this.#db = db;
   }
 
+  #rows<Row extends Record<string, string | number | null>>(
+    query: string,
+    ...bindings: (string | number | null)[]
+  ): Row[] {
+    return this.#db.exec<Row>(query, ...bindings).toArray();
+  }
+
   #row(id: TaskId): TaskRow | undefined {
-    return this.#db
-      .exec<TaskRow>("SELECT * FROM tasks WHERE id = ?", id)
-      .toArray()[0];
+    return this.#rows<TaskRow>(`${TASKS} WHERE tasks.id = ?`, id)[0];
+  }
+
+  // A task moving away, or a copy still arriving under this id, can't change.
+  #isHeld(id: TaskId, row: TaskRow | undefined): boolean {
+    return (
+      row?.moving_by != null ||
+      this.#rows(
+        "SELECT 1 AS found FROM moves_in WHERE task_id = ? AND phase = 'locked'",
+        id,
+      ).length > 0
+    );
   }
 
   // Anyone on the board sees every task on it.
   list(_actor: Actor): Task[] {
     return this.#db
       .exec<TaskRow>(
-        "SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY created_at, id",
+        `${TASKS} WHERE deleted_at IS NULL ORDER BY created_at, tasks.id`,
       )
       .toArray()
       .map(taskOf);
@@ -216,11 +263,11 @@ export class TaskStore {
   listMine(actor: Actor, doneSince: number): Task[] {
     return this.#db
       .exec<TaskRow>(
-        `SELECT * FROM tasks
+        `${TASKS}
          WHERE deleted_at IS NULL
            AND (status != 'done' OR done_at >= ?)
            AND (? = 'personal' OR assignee_id = ?)
-         ORDER BY created_at, id`,
+         ORDER BY created_at, tasks.id`,
         doneSince,
         actor.kind,
         actor.userId,
@@ -241,6 +288,7 @@ export class TaskStore {
       if (actor.kind === "personal" && namesSomeone(change)) {
         return refuse("privateBoard");
       }
+      if (this.#isHeld(change.id, row)) return refuse("moving");
       switch (change.kind) {
         case "create":
           return this.#create(actor, change, row, now);
@@ -281,11 +329,17 @@ export class TaskStore {
       createdBy: { id: actor.userId, name: change.creatorName },
       createdAt: now,
       doneAt: null,
+      moving: null,
     };
+    this.#insert(task);
+    return { status: "done", task };
+  }
+
+  #insert(task: Task): void {
     this.#db.exec(
       `INSERT INTO tasks (id, title, status, assignee_id, assignee_name, due, notes,
-         checklist, created_by_id, created_by_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         checklist, created_by_id, created_by_name, created_at, done_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       task.id,
       task.title,
       task.status,
@@ -297,8 +351,8 @@ export class TaskStore {
       task.createdBy.id,
       task.createdBy.name,
       task.createdAt,
+      task.doneAt,
     );
-    return { status: "done", task };
   }
 
   #delete(row: TaskRow | undefined, now: number): ChangeResult {
@@ -351,11 +405,208 @@ export class TaskStore {
     return row?.total ?? 0;
   }
 
-  // Empties a deleted board. Running it again changes nothing.
+  // Empties a deleted board. Running it again changes nothing. A task already on its way
+  // out carries on to the other board, and a copy still arriving goes with this one.
   erase(actor: Actor): "done" | "noAccess" {
     if (actor.role !== "manager") return "noAccess";
-    this.#db.exec("DELETE FROM tasks");
+    this.#db.transaction(() => {
+      this.#db.exec("DELETE FROM tasks");
+      const arriving = this.#rows<{ id: string }>(
+        "SELECT id FROM moves_in WHERE phase = 'locked'",
+      );
+      for (const { id } of arriving) this.#stepIn(id, { event: "drop" });
+    });
     return "done";
+  }
+
+  // The task is locked by the row this writes, in the same transaction as the checks.
+  beginMoveOut(
+    actor: Actor,
+    input: {
+      moveId: string;
+      id: TaskId;
+      toBoardId: BoardId;
+      to: MoveDestination;
+      // The assignee arrives only if the server function found them on the other board.
+      keepAssigneeId: UserId | null;
+      tryAt: number;
+      giveUpAt: number;
+    },
+  ):
+    | Exclude<MoveOutcome, { status: "moved" | "pending" }>
+    | { status: "begun" } {
+    return this.#db.transaction(() => {
+      if (levelOfRole(actor.role) !== "edit") return refuse("noAccess");
+      const row = this.#row(input.id);
+      if (!row || row.deleted_at !== null) return refuse("gone");
+      if (this.#isHeld(input.id, row)) return refuse("moving");
+      const task = taskOf(row);
+      const arriving: Task = {
+        ...task,
+        assignee:
+          task.assignee?.id === input.keepAssigneeId ? task.assignee : null,
+      };
+      this.#db.exec(
+        `INSERT INTO moves_out (id, task_id, to_board_id, to_kind, to_name, moved_by,
+           phase, task, try_at, give_up_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'locked', ?, ?, ?)`,
+        input.moveId,
+        input.id,
+        input.toBoardId,
+        input.to.kind,
+        input.to.name,
+        actor.userId,
+        JSON.stringify(arriving),
+        input.tryAt,
+        input.giveUpAt,
+      );
+      return { status: "begun" as const };
+    });
+  }
+
+  outgoingMove(moveId: string): OutgoingMove | null {
+    const [row] = this.#rows<{
+      phase: string;
+      to_board_id: string;
+      moved_by: string;
+      task: string;
+      give_up_at: number;
+    }>(
+      "SELECT phase, to_board_id, moved_by, task, give_up_at FROM moves_out WHERE id = ?",
+      moveId,
+    );
+    return row
+      ? {
+          moveId,
+          phase: row.phase as OutgoingPhase,
+          toBoardId: row.to_board_id as BoardId,
+          movedBy: row.moved_by as UserId,
+          task: JSON.parse(row.task) as Task,
+          giveUpAt: row.give_up_at,
+        }
+      : null;
+  }
+
+  // Every change to a move out goes through here, and a step its phase doesn't allow
+  // changes nothing, so a late or repeated answer can't undo a later one.
+  advanceOut(moveId: string, event: OutgoingEvent, tryAt: number): void {
+    this.#db.transaction(() => {
+      const [move] = this.#rows<{ phase: string; task_id: string }>(
+        "SELECT phase, task_id FROM moves_out WHERE id = ?",
+        moveId,
+      );
+      const next = move && OUTGOING_STEPS[move.phase as OutgoingPhase][event];
+      if (!move || !next) return;
+      // The other board holds a locked copy now, so this one can go.
+      if (event === "added") {
+        this.#db.exec("DELETE FROM tasks WHERE id = ?", move.task_id);
+      }
+      if (next === "ended") {
+        this.#db.exec("DELETE FROM moves_out WHERE id = ?", moveId);
+      } else {
+        this.#db.exec(
+          "UPDATE moves_out SET phase = ?, try_at = ? WHERE id = ?",
+          next,
+          tryAt,
+          moveId,
+        );
+      }
+    });
+  }
+
+  dueMoves(now: number, limit: number): string[] {
+    return this.#rows<{ id: string }>(
+      "SELECT id FROM moves_out WHERE try_at <= ? ORDER BY try_at LIMIT ?",
+      now,
+      limit,
+    ).map((row) => row.id);
+  }
+
+  postponeMove(moveId: string, tryAt: number): void {
+    this.#db.exec(
+      "UPDATE moves_out SET try_at = ? WHERE id = ?",
+      tryAt,
+      moveId,
+    );
+  }
+
+  #incomingPhase(moveId: string): IncomingPhase | "unheard" {
+    const [row] = this.#rows<{ phase: string }>(
+      "SELECT phase FROM moves_in WHERE id = ?",
+      moveId,
+    );
+    return (row?.phase as IncomingPhase | undefined) ?? "unheard";
+  }
+
+  // Every change to a move in goes through here, and a step its phase doesn't allow
+  // changes nothing.
+  #stepIn(
+    moveId: string,
+    step:
+      { event: "add"; task: Task } | { event: Exclude<IncomingEvent, "add"> },
+  ): void {
+    const next = INCOMING_STEPS[this.#incomingPhase(moveId)][step.event];
+    if (!next) return;
+    if (step.event === "add") {
+      this.#db.exec(
+        "INSERT INTO moves_in (id, task_id, phase, task) VALUES (?, ?, 'locked', ?)",
+        moveId,
+        step.task.id,
+        JSON.stringify(step.task),
+      );
+      return;
+    }
+    if (next === "unlocked") {
+      const [held] = this.#rows<{ task: string }>(
+        "SELECT task FROM moves_in WHERE id = ?",
+        moveId,
+      );
+      if (held) this.#insert(JSON.parse(held.task) as Task);
+    }
+    this.#db.exec(
+      `INSERT INTO moves_in (id, phase) VALUES (?, ?)
+       ON CONFLICT (id) DO UPDATE SET phase = excluded.phase, task = NULL`,
+      moveId,
+      next,
+    );
+  }
+
+  // `actor` is the mover's grant on this board, checked again for every delivery.
+  receiveMove(actor: Actor, delivery: MoveDelivery): ReceiveAnswer {
+    return this.#db.transaction((): ReceiveAnswer => {
+      const phase = this.#incomingPhase(delivery.moveId);
+      if (phase === "dropped") return { status: "refused", reason: "dropped" };
+      if (phase !== "unheard") return { status: "added" };
+      if (levelOfRole(actor.role) !== "edit") {
+        return { status: "refused", reason: "noAccess" };
+      }
+      const id = delivery.task.id;
+      // Only a task made with a borrowed id, or one whose last move here is still being
+      // dropped, can already be here.
+      if (this.#row(id) || this.#isHeld(id, undefined)) {
+        return { status: "refused", reason: "busy" };
+      }
+      this.#stepIn(delivery.moveId, {
+        event: "add",
+        task: {
+          ...delivery.task,
+          assignee: actor.kind === "personal" ? null : delivery.task.assignee,
+          moving: null,
+        },
+      });
+      return { status: "added" };
+    });
+  }
+
+  // The sender has deleted its own, so the copy becomes an ordinary task.
+  unlockMoveIn(moveId: string): void {
+    this.#db.transaction(() => this.#stepIn(moveId, { event: "unlock" }));
+  }
+
+  // The sender kept the task. A move this board never heard of is remembered as dropped,
+  // in case its delivery is still on the way.
+  dropMoveIn(moveId: string): void {
+    this.#db.transaction(() => this.#stepIn(moveId, { event: "drop" }));
   }
 
   // Removes for good every task whose Undo has passed. Running it again changes nothing.
@@ -367,11 +618,15 @@ export class TaskStore {
   }
 
   nextWakeUpAt(): number | null {
-    const [row] = this.#db
-      .exec<{ at: number | null }>(
-        "SELECT MIN(deleted_at) AS at FROM tasks WHERE deleted_at IS NOT NULL",
-      )
-      .toArray();
-    return row?.at == null ? null : row.at + UNDO_DELETE_MS;
+    const [row] = this.#rows<{ purge: number | null; move: number | null }>(
+      `SELECT
+         (SELECT MIN(deleted_at) FROM tasks WHERE deleted_at IS NOT NULL) AS purge,
+         (SELECT MIN(try_at) FROM moves_out) AS move`,
+    );
+    const due = [
+      row?.purge == null ? null : row.purge + UNDO_DELETE_MS,
+      row?.move ?? null,
+    ].filter((at): at is number => at !== null);
+    return due.length > 0 ? Math.min(...due) : null;
   }
 }

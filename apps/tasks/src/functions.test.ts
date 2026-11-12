@@ -9,8 +9,15 @@ import {
   PASSWORD,
   signIn,
 } from "../../auth/src/admin/test-kit";
-import { createBoardTest, date, MARKETING, newTaskId } from "./test-support";
 import {
+  createBoardTest,
+  date,
+  MARKETING,
+  newTaskId,
+  PRODUCT,
+} from "./test-support";
+import {
+  ALREADY_THERE_MESSAGE,
   LAST_MANAGER_MESSAGE,
   NO_ACCESS_MESSAGE,
   NOT_ON_BOARD_MESSAGE,
@@ -19,6 +26,7 @@ import {
   REFUSAL_MESSAGES,
   type SettingsChange,
   type TaskChangeInput,
+  viewOnlyThereMessage,
 } from "./types";
 
 // Outside Vite a server function never reaches its handler, so this runs the validator
@@ -53,6 +61,8 @@ beforeEach(async () => {
   const boards = createBoardTest();
   unreachable.clear();
   env.DB = kit.database;
+  // A move's receiver checks the mover again, in the same directory.
+  (boards.env as unknown as Record<string, unknown>).DB = kit.database;
   env.BOARD = {
     idFromName: (name: string) => name,
     get: (name: string) =>
@@ -433,6 +443,10 @@ test("with Tasks off, every function refuses in plain words", async () => {
         data: { id: newTaskId(), title: "x", due: null },
       }),
     () => as(people.editor).createTeamBoard({ data: { name: "Product" } }),
+    () =>
+      as(people.editor).moveTask({
+        data: { boardId: MARKETING, taskId: task.id, to: "private" },
+      }),
   ];
   for (const call of calls) {
     const refusal = await refused(call());
@@ -451,6 +465,7 @@ test("with Tasks off, every function refuses in plain words", async () => {
     "listColleagues",
     "listMyBoards",
     "listMyTasks",
+    "moveTask",
   ]);
 });
 
@@ -714,4 +729,96 @@ test("a person's own board has no settings", async () => {
       message: PRIVATE_BOARD_MESSAGE,
     });
   }
+});
+
+function addProduct(roles: Partial<Record<BoardRole | "outsider", BoardRole>>) {
+  kit.sqlite.run(
+    "INSERT INTO boards (id, kind, name, colour) VALUES (?, 'team', 'Product', 3)",
+    [PRODUCT],
+  );
+  for (const [who, role] of Object.entries(roles)) {
+    kit.sqlite.run(
+      "INSERT INTO board_access (board_id, user_id, role) VALUES (?, ?, ?)",
+      [PRODUCT, people[who as BoardRole], role],
+    );
+  }
+}
+
+const moveTask = (
+  userId: UserId,
+  taskId: string,
+  from: BoardId,
+  to: BoardId | "private",
+) => as(userId).moveTask({ data: { boardId: from, taskId, to } });
+
+const titlesOn = async (userId: UserId, boardId: BoardId) =>
+  (await as(userId).listBoardTasks({ data: { boardId } })).tasks.map(
+    (task) => ({ title: task.title, assignee: task.assignee?.id ?? null }),
+  );
+
+test("a private task moved to a team board leaves one task, there, with nobody assigned", async () => {
+  const task = await as(people.editor).createPrivateTask({
+    data: { id: newTaskId(), title: "Draft the plan", due: null },
+  });
+  expect(
+    await moveTask(people.editor, task.id, task.board.id, MARKETING),
+  ).toEqual({
+    status: "moved",
+    to: { id: MARKETING, kind: "team", name: "Marketing", colour: 2 },
+  });
+  expect(await titlesOn(people.editor, task.board.id)).toEqual([]);
+  expect(await titlesOn(people.editor, MARKETING)).toEqual([
+    { title: "Draft the plan", assignee: null },
+  ]);
+});
+
+test("a task moves to the person's private tasks, which the move makes, and back", async () => {
+  const task = await taskOf(create(people.editor));
+  const there = await moveTask(people.editor, task.id, MARKETING, "private");
+  expect(there.status).toBe("moved");
+  expect(there.to.kind).toBe("personal");
+  expect(await titlesOn(people.editor, MARKETING)).toEqual([]);
+  expect(await titlesOn(people.editor, there.to.id)).toHaveLength(1);
+  expect(
+    (await moveTask(people.editor, task.id, there.to.id, MARKETING)).status,
+  ).toBe("moved");
+  expect(await titlesOn(people.editor, there.to.id)).toEqual([]);
+  expect(await titlesOn(people.editor, MARKETING)).toHaveLength(1);
+});
+
+test("Can view on either board refuses the move, and the task stays", async () => {
+  addProduct({ editor: "viewer", viewer: "editor" });
+  const task = await taskOf(create(people.editor));
+  expect(
+    await refused(moveTask(people.viewer, task.id, MARKETING, PRODUCT)),
+  ).toEqual({ status: 403, message: REFUSAL_MESSAGES.noAccess });
+  expect(
+    await refused(moveTask(people.editor, task.id, MARKETING, PRODUCT)),
+  ).toEqual({ status: 403, message: viewOnlyThereMessage("Product") });
+  expect(
+    await refused(moveTask(people.editor, task.id, MARKETING, MARKETING)),
+  ).toEqual({ status: 409, message: ALREADY_THERE_MESSAGE });
+  expect(
+    await refused(moveTask(people.outsider, task.id, MARKETING, "private")),
+  ).toEqual({ status: 403, message: NO_ACCESS_MESSAGE });
+  expect(await titlesOn(people.editor, MARKETING)).toHaveLength(1);
+});
+
+test("an assignee on the receiving board stays assigned, and one who isn't arrives as nobody", async () => {
+  addProduct({ manager: "manager", editor: "viewer" });
+  const kept = await taskOf(
+    create(people.manager, { assigneeId: people.editor }),
+  );
+  const left = await taskOf(
+    create(people.manager, { title: "Other", assigneeId: people.viewer }),
+  );
+  for (const task of [kept, left]) {
+    expect(
+      (await moveTask(people.manager, task.id, MARKETING, PRODUCT)).status,
+    ).toBe("moved");
+  }
+  expect(await titlesOn(people.manager, PRODUCT)).toEqual([
+    { title: "Send the newsletter", assignee: people.editor },
+    { title: "Other", assignee: null },
+  ]);
 });
