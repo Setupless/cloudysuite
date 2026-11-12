@@ -15,10 +15,10 @@ const NOT_EMAILED_TEXT: Record<NotEmailedReason, (name: string) => string> = {
     "Mail was off, so the email didn't go. Try again once Mail is back on.",
   assigneeCantOpen: (name) =>
     `${name} can no longer open this board, so the email didn't go. Add them back, then try again.`,
-  assignerCantEdit: () =>
-    "Whoever assigned the task can no longer edit this board, so the email didn't go. Try again to send it yourself.",
-  noSender: () =>
-    "Emails go from the address of whoever assigned the task, which can't send now. Their mailbox may be gone, or their account suspended. Try again to send it from your own address.",
+  assignerCantEdit: (name) =>
+    `Whoever assigned the task can no longer edit this board, so the email didn't go. Ask a manager to give them Can edit again, then try again, or tell ${name} yourself.`,
+  noSender: (name) =>
+    `Emails go from the address of whoever assigned the task, which can't send now. Their mailbox may be gone, or their account suspended. Ask your admin, then try again, or tell ${name} yourself.`,
   noAddress: (name) =>
     `${name} has no email address, so the email didn't go. Ask your admin to give them a mailbox, then try again.`,
   checkUnavailable: () =>
