@@ -105,8 +105,7 @@ export function SearchBox({ ready }: { ready: boolean }) {
           if (event.key !== "Escape") return;
           // So Esc here doesn't also close the task panel behind it.
           event.stopPropagation();
-          if (text !== "") setText("");
-          else event.currentTarget.blur();
+          event.currentTarget.blur();
         }}
         placeholder={LABEL}
         aria-label={LABEL}
