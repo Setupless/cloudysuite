@@ -14,6 +14,9 @@ export function getRouter() {
   return createRouter({
     routeTree,
     scrollRestoration: true,
+    // A hover or touch runs the route's beforeLoad and loader early, so each must
+    // only read. A mutation belongs in a handler that a click or a submit starts.
+    defaultPreload: "intent",
     rewrite: {
       // The Worker has already checked the hostname by the time this runs, so
       // the first label is safe to trust. Every app gets a prefix, so
