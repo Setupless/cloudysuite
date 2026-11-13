@@ -5,7 +5,7 @@ import { APPS, type AppId } from "../../../src/routing";
 import { getActiveSession, type SessionUser } from "./auth";
 import { enrolUrl, parseReturnTo, safeReturnUrl, signInUrl } from "./origins";
 import { parsePlace } from "./place";
-import { createRememberedUser } from "./remembered-user";
+import { createRememberedUser, type Refusal } from "./remembered-user";
 import { getAuth, getViewer } from "./server";
 
 export type { SessionUser };
@@ -87,6 +87,37 @@ export function noticeRefusal(
   ...refused: Parameters<typeof remembered.noticeRefusal>
 ): void {
   if (!import.meta.env.SSR) remembered.noticeRefusal(...refused);
+}
+
+// What each app's query client does with a refused request. `signedOut` runs on a 401,
+// and every other refusal may mean the copy is out of date.
+export function answerRefusals(
+  failure: abstract new (...args: never[]) => Error & Refusal,
+  signedOut: () => void,
+) {
+  const notice = (error: Error, from: object, opening: boolean) => {
+    if (!(error instanceof failure)) return;
+    if (error.status === 401) signedOut();
+    else noticeRefusal(error, { from, opening });
+  };
+  return {
+    notice,
+    // A hover loads a page's data before anyone sees it, so only a refusal that a page
+    // shows counts. A page that opens on a refused load asks again.
+    query: (
+      error: Error,
+      query: { isActive: () => boolean; state: { data: unknown } },
+    ) => {
+      if (query.isActive())
+        notice(error, query, query.state.data === undefined);
+    },
+    mutation: (
+      error: Error,
+      _variables: unknown,
+      _result: unknown,
+      mutation: object,
+    ) => notice(error, mutation, false),
+  };
 }
 
 // Someone who signs out or in as another person in another tab or window comes back to

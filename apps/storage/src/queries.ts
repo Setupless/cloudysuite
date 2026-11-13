@@ -11,7 +11,7 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
-import { noticeRefusal } from "@cloudysuite/auth/session";
+import { answerRefusals } from "@cloudysuite/auth/session";
 import type { DriveId } from "@cloudysuite/access";
 import { isAppOffRefusal } from "../../../src/routing";
 import {
@@ -80,27 +80,12 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 
 // An expired session surfaces here first. The reload reaches the route's sign-in check,
 // which sends the person to sign in and back again.
-function noticeFailure(error: Error, from: object, opening: boolean) {
-  if (!(error instanceof StorageFailure)) return;
-  if (error.status === 401) window.location.reload();
-  else noticeRefusal(error, { from, opening });
-}
+const refused = answerRefusals(StorageFailure, () => window.location.reload());
 
 function createStorageQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({
-      // A hover loads a page's data before anyone sees it, so only a refusal that a
-      // page shows counts. A page that opens on a refused load asks again.
-      onError: (error, query) => {
-        if (query.isActive()) {
-          noticeFailure(error, query, query.state.data === undefined);
-        }
-      },
-    }),
-    mutationCache: new MutationCache({
-      onError: (error, _variables, _result, mutation) =>
-        noticeFailure(error, mutation, false),
-    }),
+    queryCache: new QueryCache({ onError: refused.query }),
+    mutationCache: new MutationCache({ onError: refused.mutation }),
     defaultOptions: {
       mutations: { networkMode: "always" },
       queries: {

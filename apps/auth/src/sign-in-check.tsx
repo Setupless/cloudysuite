@@ -7,6 +7,8 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { recheckRememberedUser } from "./session";
 
+const CHECK_WAIT_MS = 10_000;
+
 const refusedWith = (error: unknown) =>
   error instanceof Response ? error.status : null;
 
@@ -29,7 +31,19 @@ export function SignInCheck({
   useEffect(() => {
     if (!doubted) return;
     setChecking(true);
-    void recheckRememberedUser().then(setChecking);
+    let current = true;
+    // A check that never answers, or a page that was kept when it should have loaded
+    // again, would otherwise wait here for as long as the page stays open.
+    const givingUp = setTimeout(() => setChecking(false), CHECK_WAIT_MS);
+    void recheckRememberedUser().then((changing) => {
+      if (!current || changing) return;
+      clearTimeout(givingUp);
+      setChecking(false);
+    });
+    return () => {
+      current = false;
+      clearTimeout(givingUp);
+    };
   }, [error, doubted]);
   if (!doubted || !checking) return children;
   return (

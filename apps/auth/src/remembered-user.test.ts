@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import type { UserId } from "@cloudysuite/access";
 import { redirect } from "@tanstack/react-router";
 import { APP_OFF_HEADER } from "../../../src/routing";
-import { createRememberedUser } from "./remembered-user";
+import { createRememberedUser, STILL_HERE_MS } from "./remembered-user";
 import type { SignedIn } from "./session";
 
 const person = (id: string, changes: Partial<SignedIn> = {}): SignedIn => ({
@@ -263,4 +263,19 @@ test("refusals that arrive while the page loads again don't start it over", asyn
   );
   await settled();
   expect(seen).toEqual({ checks: 1, reloads: 1, refreshes: 0 });
+});
+
+test("a page kept after it started loading again checks again", async () => {
+  jest.useFakeTimers();
+  try {
+    const { copy, seen } = browserWith([person("grace"), person("grace")]);
+    copy.remember(ADA);
+    expect(await copy.recheck()).toBe(true);
+    // The person chose to stay on the page's prompt about leaving.
+    jest.advanceTimersByTime(STILL_HERE_MS);
+    expect(await copy.recheck()).toBe(true);
+    expect(seen).toEqual({ checks: 2, reloads: 2, refreshes: 0 });
+  } finally {
+    jest.useRealTimers();
+  }
 });

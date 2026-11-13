@@ -18,6 +18,8 @@ type Watched = {
 
 const APP_IDS = Object.keys(APPS) as AppId[];
 
+export const STILL_HERE_MS = 3000;
+
 const sameUser = (a: SignedIn, b: SignedIn): boolean =>
   a.id === b.id &&
   a.name === b.name &&
@@ -39,10 +41,16 @@ export function createRememberedUser(browser: Browser) {
   let leaving = false;
   const doubted = new WeakSet<object>();
 
-  // Refusals keep arriving while the page loads again, and each would start it over.
+  // Refusals keep arriving while the page loads again, and each would start it over. A
+  // page that is still here a moment later was kept, such as by choosing to stay on a
+  // prompt about an upload, so its copy is checked again from then on.
   function reload(): true {
-    if (!leaving) browser.reload();
+    if (leaving) return true;
     leaving = true;
+    browser.reload();
+    setTimeout(() => {
+      leaving = false;
+    }, STILL_HERE_MS);
     return true;
   }
 
