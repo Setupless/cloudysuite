@@ -12,4 +12,3 @@ export {
   prefetchTrash,
 } from "./queries";
 export { redirectToMyDrive } from "./redirect";
-export { requireStorageUser } from "./ui/session";

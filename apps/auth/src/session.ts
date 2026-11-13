@@ -45,6 +45,37 @@ export function requireUser(
   return requireUserOnServer({ data: { app, path: location.publicHref } });
 }
 
+// The browser's copy of who is signed in, so a click doesn't wait on the server. Every
+// server function checks the session itself, and a 401 reloads the page, so this copy
+// only ever decides what the shell shows. On the server it stays empty, because one
+// Worker serves many people.
+let remembered: SignedIn | undefined;
+
+export function rememberedUser(): SignedIn | undefined {
+  return remembered;
+}
+
+export function rememberUser(user: SignedIn): SignedIn {
+  if (!import.meta.env.SSR) remembered = user;
+  return user;
+}
+
+export async function requireRememberedUser(
+  app: AppId,
+  {
+    location,
+    matches,
+  }: { location: { publicHref: string }; matches: { invalid: boolean }[] },
+): Promise<SignedIn> {
+  if (import.meta.env.SSR) return requireUser(app, location);
+  // A page loads again after a change that can affect its own person, such as an admin
+  // requiring two-step sign-in, so that load asks the server.
+  if (!remembered || matches.some((match) => match.invalid)) {
+    remembered = await requireUser(app, location);
+  }
+  return remembered;
+}
+
 export const prepareSignIn = createServerFn({ method: "GET" })
   .validator(parseReturnTo)
   .handler(async ({ data }): Promise<{ returnTo: string }> => {

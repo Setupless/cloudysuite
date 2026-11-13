@@ -8,4 +8,3 @@ export {
   validateSearchPage,
   validateTaskSearch,
 } from "./queries";
-export { requireTasksUser } from "./ui/session";
