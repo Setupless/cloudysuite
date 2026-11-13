@@ -159,7 +159,7 @@ function InviteItem({ invite }: { invite: InviteRow }) {
           </p>
         </div>
         {invite.expired && <Badge tone="danger">Expired</Badge>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="quiet"
             icon={IconSend}

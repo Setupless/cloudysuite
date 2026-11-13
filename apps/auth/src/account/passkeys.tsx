@@ -144,7 +144,7 @@ function PasskeyRow({
             maxLength={60}
             autoFocus
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               type="submit"
               variant="action"
@@ -162,27 +162,31 @@ function PasskeyRow({
           </div>
         </form>
       ) : (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-start gap-3">
           <IconKey
             size={20}
             stroke={1.5}
-            className="text-secondary"
+            className="mt-0.5 shrink-0 text-secondary"
             aria-hidden
           />
-          <div className="min-w-0 grow">
-            <p className="font-medium">{name}</p>
-            {passkey.addedAt && <AddedDate date={passkey.addedAt} />}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <div className="min-w-0 grow">
+              <p className="font-medium">{name}</p>
+              {passkey.addedAt && <AddedDate date={passkey.addedAt} />}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="quiet" onClick={() => setMode("rename")}>
+                Rename
+              </Button>
+              <Button
+                variant="danger"
+                disabled={refusal !== null}
+                onClick={() => setMode("remove")}
+              >
+                Remove
+              </Button>
+            </div>
           </div>
-          <Button variant="quiet" onClick={() => setMode("rename")}>
-            Rename
-          </Button>
-          <Button
-            variant="danger"
-            disabled={refusal !== null}
-            onClick={() => setMode("remove")}
-          >
-            Remove
-          </Button>
         </div>
       )}
       {refusal && mode === "view" && (
