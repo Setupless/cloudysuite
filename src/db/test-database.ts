@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 const MIGRATIONS = join(import.meta.dir, "../../migrations");
 
-// What `env` from "cloudflare:workers" is under test. Bun keeps the first mock of that
-// module for the whole run, so every test support has to hand out this one object.
+// What `env` from "cloudflare:workers" is under test. Bun loads each module once per run,
+// so a module that read `env` when it first loaded keeps that object for the whole run.
+// Every test support has to hand out this one object.
 export const testWorkerEnv = {} as Env;
 
 // D1 refuses a query that binds more than this, which SQLite here would allow.

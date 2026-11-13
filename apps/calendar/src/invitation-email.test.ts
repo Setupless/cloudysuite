@@ -1,15 +1,7 @@
-import {
-  afterEach,
-  beforeEach,
-  expect,
-  mock,
-  setSystemTime,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import type { CalendarRole, UserId } from "@cloudysuite/access";
-import * as start from "@tanstack/react-start";
-import * as startServer from "@tanstack/react-start/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -40,24 +32,8 @@ import {
   type UnsentCancellation,
 } from "./types";
 
-// Outside Vite a server function never reaches its handler, so this runs the validator
-// and handler as the compiled server function would.
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
 let request: Request;
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-mock.module("@tanstack/react-start/server", () => ({
-  ...startServer,
-  getRequest: () => request,
-}));
+readRequestFrom(() => request);
 const functions = await import("./functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;
