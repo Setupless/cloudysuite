@@ -50,7 +50,7 @@ Do not guess or build around these. Ask the user first.
 - One Worker serves every app and routes by hostname.
 - The Worker's config, entry, and TanStack Start routes stay at the repository root, because the Deploy button needs them there. Each app's code goes in `apps/<app>`, and shared code goes in `packages/<name>`.
 - Route files in `src/routes/<app>` only render components from `apps/<app>`. `src/router.tsx` adds that prefix from the hostname.
-- A route's `beforeLoad` and `loader` only read. They must not clear saved data or navigate either, because hovering a link runs them early. `beforeLoad` receives `preload`. Keep `defaultPreloadStaleTime` at 0 so a click is as fresh as before preloading.
+- A route's `beforeLoad` and `loader` only read, because hovering a link runs them early. They must not clear saved data or call `navigate` or `location`. A thrown `redirect()` is fine, because a preload discards it. `beforeLoad` receives `preload`. Keep `defaultPreloadStaleTime` at 0, so a click after a hover shows the hovered data and then loads it again, as returning to a page does.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off. The only other exception is a `GET` of `/pwa/session` on the Mail host, which returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Production code runs on Workers, so it cannot use Bun APIs.
 - Each mailbox, each drive, each calendar, and each board is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
