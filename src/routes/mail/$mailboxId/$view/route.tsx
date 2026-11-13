@@ -1,7 +1,6 @@
 import { MailViewScreen } from "@cloudysuite/mail";
 import { prefetchThreads } from "@cloudysuite/mail/routes";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { ViewPending } from "@cloudysuite/mail/pending";
 
 export const Route = createFileRoute("/mail/$mailboxId/$view")({
   // The router reads a hand-typed ?q=2026 as a number.
@@ -23,5 +22,4 @@ export const Route = createFileRoute("/mail/$mailboxId/$view")({
       </MailViewScreen>
     );
   },
-  pendingComponent: ViewPending,
 });

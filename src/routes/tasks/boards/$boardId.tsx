@@ -1,7 +1,6 @@
 import { BoardScreen } from "@cloudysuite/tasks";
 import { prefetchBoard, validateBoardSearch } from "@cloudysuite/tasks/routes";
 import { createFileRoute } from "@tanstack/react-router";
-import { BoardPending } from "@cloudysuite/tasks/pending";
 
 export const Route = createFileRoute("/tasks/boards/$boardId")({
   validateSearch: validateBoardSearch,
@@ -17,5 +16,4 @@ export const Route = createFileRoute("/tasks/boards/$boardId")({
       />
     );
   },
-  pendingComponent: BoardPending,
 });

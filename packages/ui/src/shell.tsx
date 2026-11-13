@@ -6,7 +6,7 @@ import {
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import { type ReactNode, useId, useState } from "react";
-import { ProgressBar, useNavigationProgress } from "./navigation";
+import { ProgressBar, usePageChange } from "./navigation";
 
 export type ShellApp = {
   id: string;
@@ -92,7 +92,7 @@ export function AppShell({
 }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const personMenu = useId();
-  const progress = useNavigationProgress();
+  const { progress, change } = usePageChange();
 
   return (
     <div className="flex min-h-dvh bg-page text-text">
@@ -187,7 +187,7 @@ export function AppShell({
               Sign out
             </a>
           </div>
-          <ProgressBar progress={progress} />
+          <ProgressBar key={change} progress={progress} />
         </header>
         <main
           aria-busy={progress === "slow" || undefined}

@@ -167,7 +167,6 @@ test("the package does not export the stub or the store", () => {
     "./inbound",
     "./mail-card",
     "./mail-card-ui",
-    "./pending",
     "./routes",
   ]);
 });

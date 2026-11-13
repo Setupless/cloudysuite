@@ -1,4 +1,4 @@
-import { Bone, PageSkeleton } from "@cloudysuite/ui/skeleton";
+import { Bone, type PendingPage } from "@cloudysuite/ui";
 import { IconChevronRight } from "@tabler/icons-react";
 
 // What a page shows while it opens. Each matches the page's own loading state, so the
@@ -35,7 +35,7 @@ function Rows() {
 
 export function HomePending() {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-52px)] pb-4">
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
       <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
         <p className="mr-auto text-[21px] font-semibold">Home</p>
         <Bone className="h-[38px] w-24" />
@@ -52,13 +52,13 @@ export function HomePending() {
           <Bone key={index} className="h-[136px]" />
         ))}
       </div>
-    </PageSkeleton>
+    </div>
   );
 }
 
 function ListPending({ title }: { title: string }) {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-52px)] pb-4">
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
       <p className="flex items-center gap-[3px] px-4 pt-3 text-[13px] text-secondary">
         Home
         <IconChevronRight size={13} stroke={1.75} />
@@ -66,7 +66,7 @@ function ListPending({ title }: { title: string }) {
       </p>
       <Title>{title}</Title>
       <Rows />
-    </PageSkeleton>
+    </div>
   );
 }
 
@@ -78,11 +78,23 @@ export const RecentPending = () => <ListPending title="Recent" />;
 // A folder's or a file's name arrives with its contents.
 export function FolderPending() {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-52px)] pb-4">
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
       <div className="px-4 pt-3.5 pb-2.5">
         <Bone className="h-[26px] w-48" />
       </div>
       <Rows />
-    </PageSkeleton>
+    </div>
   );
 }
+
+export const STORAGE_PAGES: readonly PendingPage[] = [
+  { to: "/storage", skeleton: HomePending },
+  { to: "/storage/shared", skeleton: SharedPending },
+  { to: "/storage/starred", skeleton: StarredPending },
+  { to: "/storage/trash", skeleton: TrashPending },
+  { to: "/storage/recent", skeleton: RecentPending },
+  { to: "/storage/my-files", skeleton: FolderPending },
+  { to: "/storage/drive/$driveId", skeleton: FolderPending },
+  { to: "/storage/drive/$driveId/$folderId", skeleton: FolderPending },
+  { to: "/storage/file/$driveId/$fileId", skeleton: FolderPending },
+];

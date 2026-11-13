@@ -1,7 +1,6 @@
 import { StarredScreen } from "@cloudysuite/storage";
 import { prefetchStarred } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
-import { StarredPending } from "@cloudysuite/storage/pending";
 
 const validateSearch = (search: Record<string, unknown>): { file?: string } =>
   typeof search.file === "string" ? { file: search.file } : {};
@@ -16,5 +15,4 @@ export const Route = createFileRoute("/storage/starred")({
       prefetched={Route.useLoaderData()}
     />
   ),
-  pendingComponent: StarredPending,
 });

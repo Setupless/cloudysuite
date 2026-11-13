@@ -3,7 +3,8 @@ import { SuiteShell } from "@cloudysuite/auth/shell";
 import {
   NAV_ITEM,
   NAV_ITEM_ACTIVE,
-  useDestinationParam,
+  PageArea,
+  useChosenParam,
 } from "@cloudysuite/ui";
 import {
   IconHome,
@@ -26,6 +27,7 @@ import { call, directoryQuery, refreshStorage } from "../queries";
 import { formatBytes } from "./format";
 import { StorageMeter } from "./storage-meter";
 import { FolderLink, NameDialog, useFolderPrefetch } from "./page-parts";
+import { STORAGE_PAGES } from "./pending";
 import { SearchBox } from "./search-box";
 import { teamColour } from "./team-colour";
 import { UploadTray } from "./upload-tray";
@@ -33,9 +35,16 @@ import { UploadTray } from "./upload-tray";
 const itemClass = (active: boolean) =>
   `${NAV_ITEM} ${active ? NAV_ITEM_ACTIVE : ""}`;
 
+// The drive of the folder or file being opened, or of the one on screen.
+function useChosenDrive(): string | undefined {
+  const folder = useChosenParam("/storage/drive/$driveId", "driveId");
+  const file = useChosenParam("/storage/file/$driveId/$fileId", "driveId");
+  return folder ?? file;
+}
+
 function useInMyFiles(directory: Directory | undefined) {
   const { pathname } = useLocation();
-  const driveId = useDestinationParam("driveId");
+  const driveId = useChosenDrive();
   return (
     pathname.endsWith("/my-files") ||
     (driveId !== undefined && driveId === directory?.myDriveId)
@@ -50,7 +59,7 @@ function Navigation({
   onNewTeamFolder: () => void;
 }) {
   const { pathname } = useLocation();
-  const driveId = useDestinationParam("driveId");
+  const driveId = useChosenDrive();
   const isHome = ["", "/storage"].includes(pathname.replace(/\/$/, ""));
   const isMyFiles = useInMyFiles(directory);
   const prefetchMyFiles = useFolderPrefetch(directory?.myDriveId ?? null, null);
@@ -174,7 +183,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
       }
       sidebarFooter={directory && <SidebarMeters directory={directory} />}
     >
-      {children}
+      <PageArea pages={STORAGE_PAGES}>{children}</PageArea>
       <UploadTray />
       {naming && (
         <NameDialog

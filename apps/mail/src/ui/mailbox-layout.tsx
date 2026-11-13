@@ -1,10 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import {
-  NAV_ITEM,
-  NAV_ITEM_ACTIVE,
-  useDestinationParam,
-} from "@cloudysuite/ui";
+import { NAV_ITEM, NAV_ITEM_ACTIVE, useChosenParam } from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconArchive,
@@ -107,7 +103,6 @@ function MailNavigation({
   mailboxes: MailboxEntry[];
   current: MailboxEntry | undefined;
 }) {
-  const chosenMailbox = useDestinationParam("mailboxId") ?? mailboxId;
   return (
     <>
       {FOLDER_ORDER.map((folder) => (
@@ -198,8 +193,8 @@ function MailNavigation({
               to="/mail/$mailboxId/$view"
               params={{ mailboxId: mailbox.id, view: "inbox" }}
               title={mailbox.address ?? undefined}
-              aria-current={mailbox.id === chosenMailbox ? "true" : undefined}
-              className={`${NAV_ITEM} ${mailbox.id === chosenMailbox ? NAV_ITEM_ACTIVE : ""}`}
+              aria-current={mailbox.id === mailboxId ? "true" : undefined}
+              className={`${NAV_ITEM} ${mailbox.id === mailboxId ? NAV_ITEM_ACTIVE : ""}`}
             >
               {mailbox.kind === "shared" ? (
                 <IconUsers size={18} stroke={1.75} aria-hidden />
@@ -230,7 +225,12 @@ function MailboxShell({
     ...mailboxesQuery(),
     refetchInterval: () => (queryClient.isMutating() ? false : REFRESH_MS),
   });
-  const current = mailboxes.find((mailbox) => mailbox.id === mailboxId);
+  // The sidebar follows a mailbox from the click, so its folders, labels, and mark
+  // all belong to the one being opened. The page stays with the one on screen.
+  const chosen =
+    (useChosenParam("/mail/$mailboxId/$view", "mailboxId") as
+      MailboxId | undefined) ?? mailboxId;
+  const current = mailboxes.find((mailbox) => mailbox.id === chosen);
   const offline = useOffline();
   return (
     <SuiteShell
@@ -241,7 +241,7 @@ function MailboxShell({
       headerContent={<SearchBox mailboxId={mailboxId} />}
       navigation={
         <MailNavigation
-          mailboxId={mailboxId}
+          mailboxId={chosen}
           mailboxes={mailboxes}
           current={current}
         />

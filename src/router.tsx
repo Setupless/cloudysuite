@@ -1,4 +1,3 @@
-import { SKELETON_DELAY_MS, SKELETON_MIN_MS } from "@cloudysuite/ui/skeleton";
 import { createRouter } from "@tanstack/react-router";
 import { isAppId, isGatePath, OFFLINE_SHELL_PATH } from "./routing";
 import { routeTree } from "./routeTree.gen";
@@ -39,8 +38,6 @@ export function getRouter() {
         return url;
       },
     },
-    defaultPendingMs: SKELETON_DELAY_MS,
-    defaultPendingMinMs: SKELETON_MIN_MS,
   });
 }
 

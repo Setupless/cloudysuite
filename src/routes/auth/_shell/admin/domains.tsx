@@ -1,7 +1,6 @@
 import { DomainsPage } from "@cloudysuite/auth";
 import { getDomains } from "@cloudysuite/auth/admin";
 import { createFileRoute } from "@tanstack/react-router";
-import { AdminPending } from "@cloudysuite/auth/pending";
 
 export const Route = createFileRoute("/auth/_shell/admin/domains")({
   validateSearch: (search): { adding?: string } =>
@@ -13,5 +12,4 @@ export const Route = createFileRoute("/auth/_shell/admin/domains")({
       adding={Route.useSearch().adding ?? null}
     />
   ),
-  pendingComponent: AdminPending,
 });

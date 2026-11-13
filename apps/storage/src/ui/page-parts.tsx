@@ -1,6 +1,11 @@
 import type { DriveId } from "@cloudysuite/access";
-import { Button, Modal, Notice, TextField } from "@cloudysuite/ui";
-import { skeletonShown } from "@cloudysuite/ui/skeleton";
+import {
+  Button,
+  Modal,
+  Notice,
+  skeletonShown,
+  TextField,
+} from "@cloudysuite/ui";
 import {
   IconChevronRight,
   IconPlus,

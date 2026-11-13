@@ -1,8 +1,6 @@
-import { Bone, PageSkeleton } from "@cloudysuite/ui/skeleton";
+import { Bone, type PendingPage } from "@cloudysuite/ui";
 
-// What a page shows while it opens. Schedule has none: its week and view live in the
-// address, so a skeleton would also stand in for a week change and take the arrow
-// button someone just pressed off the screen.
+// What a page shows while it opens.
 
 function SectionBones({ rows }: { rows: number }) {
   return (
@@ -23,7 +21,7 @@ function SectionBones({ rows }: { rows: number }) {
 
 export function OverviewPending() {
   return (
-    <PageSkeleton className="pb-6">
+    <div className="pb-6">
       <div className="flex items-center gap-3 px-4 pt-3 pb-2.5">
         <p className="pl-1 text-[21px] leading-[34px] font-semibold">
           Overview
@@ -42,19 +40,24 @@ export function OverviewPending() {
         </div>
         <SectionBones rows={1} />
       </div>
-    </PageSkeleton>
+    </div>
   );
 }
 
 export function SearchPending() {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-52px)] pb-4">
+    <div className="min-h-[calc(100dvh-52px)] pb-4">
       <p className="px-4 pt-3.5 pb-2.5 text-[21px] font-semibold">Search</p>
       <div className="flex flex-col gap-3 px-4 pt-3">
         {[0, 1, 2].map((row) => (
           <Bone key={row} className="h-9" />
         ))}
       </div>
-    </PageSkeleton>
+    </div>
   );
 }
+
+export const CALENDAR_PAGES: readonly PendingPage[] = [
+  { to: "/calendar", skeleton: OverviewPending },
+  { to: "/calendar/search", skeleton: SearchPending },
+];

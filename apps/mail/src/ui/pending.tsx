@@ -1,7 +1,7 @@
-import { Bone, PageSkeleton } from "@cloudysuite/ui/skeleton";
+import { Bone, type PendingPage } from "@cloudysuite/ui";
 
 // What a page shows while it opens. "App and notifications" and "Import mail" have
-// none, because they bring their own sidebar, and a skeleton would replace this one.
+// none, because they bring their own sidebar.
 
 function MessageLines({ rows }: { rows: number }) {
   return (
@@ -21,7 +21,7 @@ function MessageLines({ rows }: { rows: number }) {
 
 export function ViewPending() {
   return (
-    <PageSkeleton className="flex min-h-0 min-w-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col border-line lg:w-[370px] lg:flex-none lg:border-r">
         <div className="flex items-center gap-3 px-4 pt-3.5 pb-2.5">
           <Bone className="h-6 w-24" />
@@ -30,24 +30,14 @@ export function ViewPending() {
         <MessageLines rows={9} />
       </div>
       <div className="min-w-0 flex-1 bg-panel max-lg:hidden" />
-    </PageSkeleton>
-  );
-}
-
-export function ThreadPending() {
-  return (
-    <PageSkeleton className="flex flex-col gap-3 px-6 py-5">
-      <Bone className="h-5 w-1/2" />
-      <Bone className="h-3 w-4/5" />
-      <Bone className="h-3 w-3/5" />
-    </PageSkeleton>
+    </div>
   );
 }
 
 // Labels, Rules, and Blocked and allowed.
 export function SettingsPending() {
   return (
-    <PageSkeleton className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4 lg:p-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4 lg:p-6">
       <Bone className="h-7 w-32" />
       <div className="flex flex-col gap-3 rounded border border-line p-5">
         <Bone className="h-5 w-40" />
@@ -55,6 +45,14 @@ export function SettingsPending() {
         <Bone className="h-10" />
       </div>
       <MessageLines rows={3} />
-    </PageSkeleton>
+    </div>
   );
 }
+
+export const MAIL_PAGES: readonly PendingPage[] = [
+  { to: "/mail/$mailboxId/labels", skeleton: SettingsPending },
+  { to: "/mail/$mailboxId/rules", skeleton: SettingsPending },
+  { to: "/mail/$mailboxId/senders", skeleton: SettingsPending },
+  // A conversation opening from the list keeps the list on screen.
+  { to: "/mail/$mailboxId/$view", under: true, skeleton: ViewPending },
+];

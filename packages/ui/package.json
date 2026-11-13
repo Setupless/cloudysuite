@@ -3,10 +3,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
-  "exports": {
-    ".": "./src/index.tsx",
-    "./skeleton": "./src/skeleton.tsx"
-  },
+  "exports": "./src/index.tsx",
   "dependencies": {
     "@tabler/icons-react": "3.50.0",
     "@tanstack/react-router": "1.170.46",

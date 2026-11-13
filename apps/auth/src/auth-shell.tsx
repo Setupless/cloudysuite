@@ -1,4 +1,4 @@
-import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
+import { NAV_ITEM, NAV_ITEM_ACTIVE, PageArea } from "@cloudysuite/ui";
 import {
   IconAt,
   IconBuilding,
@@ -10,6 +10,7 @@ import type { Icon } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { SignedIn } from "./session";
+import { AUTH_PAGES } from "./pending";
 import { SuiteShell } from "./shell";
 
 const ADMIN_LINKS: { to: string; label: string; icon: Icon }[] = [
@@ -63,7 +64,7 @@ export function AuthShell({
         </>
       }
     >
-      {children}
+      <PageArea pages={AUTH_PAGES}>{children}</PageArea>
     </SuiteShell>
   );
 }

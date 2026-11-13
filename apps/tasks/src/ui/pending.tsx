@@ -1,4 +1,4 @@
-import { Bone, PageSkeleton } from "@cloudysuite/ui/skeleton";
+import { Bone, type PendingPage } from "@cloudysuite/ui";
 
 // What a page shows while it opens: its heading, then rows of tasks.
 
@@ -20,7 +20,7 @@ function Heading({ title }: { title: string | null }) {
 
 function TaskList({ title }: { title: string | null }) {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-3.25rem)] *:max-w-[912px]">
+    <div className="min-h-[calc(100dvh-3.25rem)] *:max-w-[912px]">
       <Heading title={title} />
       <div className="px-4">
         <Bone className="mx-1 mt-4 mb-2 h-4 w-24" />
@@ -34,7 +34,7 @@ function TaskList({ title }: { title: string | null }) {
           </span>
         ))}
       </div>
-    </PageSkeleton>
+    </div>
   );
 }
 
@@ -44,7 +44,7 @@ export const BoardPending = () => <TaskList title={null} />;
 
 export function SearchPending() {
   return (
-    <PageSkeleton className="min-h-[calc(100dvh-3.25rem)] pb-6 *:max-w-[912px]">
+    <div className="min-h-[calc(100dvh-3.25rem)] pb-6 *:max-w-[912px]">
       <div className="flex min-h-[62px] items-center px-4 pt-3 pb-3">
         <p className="pl-1 text-[21px] leading-[34px] font-semibold">Search</p>
       </div>
@@ -53,6 +53,13 @@ export function SearchPending() {
           <Bone key={row} className="h-9" />
         ))}
       </div>
-    </PageSkeleton>
+    </div>
   );
 }
+
+export const TASKS_PAGES: readonly PendingPage[] = [
+  { to: "/tasks", skeleton: MyTasksPending },
+  { to: "/tasks/boards/$boardId", skeleton: BoardPending },
+  { to: "/tasks/people/$userId", skeleton: BoardPending },
+  { to: "/tasks/search", skeleton: SearchPending },
+];
