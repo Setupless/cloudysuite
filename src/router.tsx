@@ -17,6 +17,10 @@ export function getRouter() {
     // A hover or touch runs the route's beforeLoad and loader early, so each must
     // only read. A mutation belongs in a handler that a click or a submit starts.
     defaultPreload: "intent",
+    // The default 30 seconds lets a click skip the loader and show what a hover
+    // loaded, however old. At 0 the click shows the hovered page at once and loads
+    // its data again, as it did before preloading.
+    defaultPreloadStaleTime: 0,
     rewrite: {
       // The Worker has already checked the hostname by the time this runs, so
       // the first label is safe to trust. Every app gets a prefix, so
