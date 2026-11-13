@@ -1,5 +1,11 @@
 import type { DriveId } from "@cloudysuite/access";
-import { Button, Modal, Notice, TextField } from "@cloudysuite/ui";
+import {
+  Button,
+  Modal,
+  Notice,
+  skeletonShown,
+  TextField,
+} from "@cloudysuite/ui";
 import {
   IconChevronRight,
   IconPlus,
@@ -23,6 +29,7 @@ import type { Destination } from "./upload-queue";
 import { destinationName } from "./upload-queue";
 import { focusDetails } from "./details-focus";
 import { MoveNotices } from "./move-notices";
+import { FileRows } from "./pending";
 import { useUploads } from "./uploads-context";
 
 // A pointer passing over a list on its way elsewhere doesn't stop this long.
@@ -399,10 +406,11 @@ export function Loading({
   className?: string;
   children: ReactNode;
 }) {
+  const [fadeIn] = useState(() => !skeletonShown());
   return (
     <div
       role="status"
-      className={`${className ?? ""} transition-opacity delay-300 duration-200 starting:opacity-0`}
+      className={`${className ?? ""} ${fadeIn ? "transition-opacity delay-300 duration-200 starting:opacity-0" : ""}`}
     >
       <span className="sr-only">Loading…</span>
       {children}
@@ -412,21 +420,10 @@ export function Loading({
 
 export const BONE = "animate-pulse rounded bg-field";
 
-const ROW_WIDTHS = ["w-2/5", "w-1/3", "w-1/2", "w-1/4", "w-2/5", "w-1/3"];
-
 export function LoadingRows() {
   return (
     <Loading className="flex flex-col px-4 pt-2">
-      {ROW_WIDTHS.map((width, index) => (
-        <span
-          key={index}
-          aria-hidden
-          className="flex items-center gap-[9px] border-b border-line px-0.5 py-[9px]"
-        >
-          <span className={`size-[18px] flex-none ${BONE}`} />
-          <span className={`h-3 ${width} ${BONE}`} />
-        </span>
-      ))}
+      <FileRows />
     </Loading>
   );
 }

@@ -4,6 +4,7 @@ import {
   NameDialog,
   NAV_ITEM,
   NAV_ITEM_ACTIVE,
+  PageArea,
   useToast,
 } from "@cloudysuite/ui";
 import type { CalendarId, UserId } from "@cloudysuite/access";
@@ -32,6 +33,7 @@ import type { CalendarEntry } from "../types";
 import { CalendarSettings } from "./calendar-settings";
 import { calendarBorder, calendarFill } from "./colours";
 import { MeProvider } from "./me";
+import { CALENDAR_PAGES } from "./pending";
 import { TasksAddressProvider } from "./my-tasks";
 import { SearchBox } from "./search-box";
 
@@ -181,7 +183,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
         />
       }
     >
-      {children}
+      <PageArea pages={CALENDAR_PAGES}>{children}</PageArea>
       {settingsEntry && (
         <CalendarSettings
           entry={settingsEntry}

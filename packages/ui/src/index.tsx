@@ -11,7 +11,9 @@ import {
 
 export * from "./linkify";
 export * from "./name-dialog";
+export { PageArea, type PendingPage, useChosenParam } from "./navigation";
 export * from "./shell";
+export { Bone, skeletonShown } from "./skeleton";
 export * from "./team-settings";
 export * from "./toast";
 

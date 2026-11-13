@@ -1,7 +1,12 @@
 import type { BoardId, UserId } from "@cloudysuite/access";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { NameDialog, NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
+import {
+  NameDialog,
+  NAV_ITEM,
+  NAV_ITEM_ACTIVE,
+  PageArea,
+} from "@cloudysuite/ui";
 import { IconDots, IconHome, IconPlus } from "@tabler/icons-react";
 import {
   type DehydratedState,
@@ -16,6 +21,7 @@ import { boardsQuery, call, tasksKeys } from "../queries";
 import type { BoardEntry } from "../types";
 import { BoardSettingsDialog } from "./board-settings";
 import { BoardSwatch } from "./parts";
+import { TASKS_PAGES } from "./pending";
 import { SearchBox } from "./search-box";
 import { MeProvider } from "./task-page";
 
@@ -116,7 +122,7 @@ function Shell({ user, children }: { user: SignedIn; children: ReactNode }) {
         />
       }
     >
-      {children}
+      <PageArea pages={TASKS_PAGES}>{children}</PageArea>
       {settingsEntry && (
         <BoardSettingsDialog
           key={settingsEntry.id}
