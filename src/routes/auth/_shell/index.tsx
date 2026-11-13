@@ -1,6 +1,7 @@
 import { AccountPage } from "@cloudysuite/auth";
 import { getAccount } from "@cloudysuite/auth/account";
 import { createFileRoute } from "@tanstack/react-router";
+import { AccountPending } from "@cloudysuite/auth/pending";
 
 export const Route = createFileRoute("/auth/_shell/")({
   loader: () => getAccount(),
@@ -10,4 +11,5 @@ export const Route = createFileRoute("/auth/_shell/")({
       account={Route.useLoaderData()}
     />
   ),
+  pendingComponent: AccountPending,
 });

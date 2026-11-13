@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.tsx",
+    "./pending": "./src/ui/pending.tsx",
     "./calendar": "./src/calendar.ts",
     "./inbound": "./src/inbound.ts",
     "./mail-card": "./src/mail-card.ts",

@@ -1,6 +1,10 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
+import {
+  NAV_ITEM,
+  NAV_ITEM_ACTIVE,
+  useDestinationParam,
+} from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconArchive,
@@ -103,6 +107,7 @@ function MailNavigation({
   mailboxes: MailboxEntry[];
   current: MailboxEntry | undefined;
 }) {
+  const chosenMailbox = useDestinationParam("mailboxId") ?? mailboxId;
   return (
     <>
       {FOLDER_ORDER.map((folder) => (
@@ -193,8 +198,8 @@ function MailNavigation({
               to="/mail/$mailboxId/$view"
               params={{ mailboxId: mailbox.id, view: "inbox" }}
               title={mailbox.address ?? undefined}
-              aria-current={mailbox.id === mailboxId ? "true" : undefined}
-              className={`${NAV_ITEM} ${mailbox.id === mailboxId ? NAV_ITEM_ACTIVE : ""}`}
+              aria-current={mailbox.id === chosenMailbox ? "true" : undefined}
+              className={`${NAV_ITEM} ${mailbox.id === chosenMailbox ? NAV_ITEM_ACTIVE : ""}`}
             >
               {mailbox.kind === "shared" ? (
                 <IconUsers size={18} stroke={1.75} aria-hidden />

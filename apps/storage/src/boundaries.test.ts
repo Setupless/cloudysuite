@@ -107,6 +107,7 @@ test("the package does not export the stub or the store", () => {
     "./api",
     "./download",
     "./drive",
+    "./pending",
     "./routes",
   ]);
 });

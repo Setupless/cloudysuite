@@ -1,6 +1,7 @@
 import { FileScreen } from "@cloudysuite/storage";
 import { prefetchFile } from "@cloudysuite/storage/routes";
 import { createFileRoute } from "@tanstack/react-router";
+import { FolderPending } from "@cloudysuite/storage/pending";
 
 export const Route = createFileRoute("/storage/file/$driveId/$fileId")({
   loader: ({ params }) => prefetchFile(params.driveId, params.fileId),
@@ -15,4 +16,5 @@ export const Route = createFileRoute("/storage/file/$driveId/$fileId")({
       />
     );
   },
+  pendingComponent: FolderPending,
 });

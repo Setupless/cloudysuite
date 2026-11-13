@@ -163,6 +163,7 @@
       "name": "@cloudysuite/ui",
       "dependencies": {
         "@tabler/icons-react": "3.50.0",
+        "@tanstack/react-router": "1.170.46",
         "react": "19.3.1",
       },
     },

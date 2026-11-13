@@ -91,6 +91,7 @@ test("the package does not export the stub or the store", () => {
     ".",
     "./board",
     "./in-calendar",
+    "./pending",
     "./routes",
   ]);
 });

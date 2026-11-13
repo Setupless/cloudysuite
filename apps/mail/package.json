@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.tsx",
+    "./pending": "./src/ui/pending.tsx",
     "./access": "./src/access.ts",
     "./client": "./src/client.ts",
     "./import": "./src/import/index.ts",

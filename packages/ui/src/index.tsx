@@ -11,6 +11,7 @@ import {
 
 export * from "./linkify";
 export * from "./name-dialog";
+export { useDestinationParam } from "./navigation";
 export * from "./shell";
 export * from "./team-settings";
 export * from "./toast";

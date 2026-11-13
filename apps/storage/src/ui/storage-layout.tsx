@@ -1,6 +1,10 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
+import {
+  NAV_ITEM,
+  NAV_ITEM_ACTIVE,
+  useDestinationParam,
+} from "@cloudysuite/ui";
 import {
   IconHome,
   IconPlus,
@@ -15,12 +19,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import {
-  Link,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { createTeamFolder, type Directory } from "../functions";
 import { call, directoryQuery, refreshStorage } from "../queries";
@@ -36,7 +35,7 @@ const itemClass = (active: boolean) =>
 
 function useInMyFiles(directory: Directory | undefined) {
   const { pathname } = useLocation();
-  const { driveId } = useParams({ strict: false });
+  const driveId = useDestinationParam("driveId");
   return (
     pathname.endsWith("/my-files") ||
     (driveId !== undefined && driveId === directory?.myDriveId)
@@ -51,7 +50,7 @@ function Navigation({
   onNewTeamFolder: () => void;
 }) {
   const { pathname } = useLocation();
-  const { driveId } = useParams({ strict: false });
+  const driveId = useDestinationParam("driveId");
   const isHome = ["", "/storage"].includes(pathname.replace(/\/$/, ""));
   const isMyFiles = useInMyFiles(directory);
   const prefetchMyFiles = useFolderPrefetch(directory?.myDriveId ?? null, null);
