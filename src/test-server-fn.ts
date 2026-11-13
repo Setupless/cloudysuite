@@ -35,9 +35,10 @@ mock.module("@tanstack/react-start/server", () => ({
 }));
 
 // `request` is the one the server functions read their cookies from.
-// Files share this module in one run, so the request is dropped when the file that set
-// it ends. A later file that forgets to set its own then fails instead of reading this
-// file's cookies.
+// Call this at the top level of a test file. Files share this module in one run, so the
+// request is dropped when the file that set it ends, and a later file that forgets to set
+// its own fails instead of reading this file's cookies. Inside a describe the request is
+// dropped when that describe ends, and inside a hook it is dropped at once.
 export function readRequestFrom(request: () => Request) {
   currentRequest = request;
   afterAll(() => {
