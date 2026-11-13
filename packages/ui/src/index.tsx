@@ -81,7 +81,7 @@ export function Spinner({ size = 18 }: { size?: number }) {
     <IconLoader2
       size={size}
       stroke={1.75}
-      className="animate-spin"
+      className="shrink-0 animate-spin"
       aria-hidden
     />
   );
@@ -120,7 +120,12 @@ export function Button({
     >
       {pending && ButtonIcon && <Spinner size={size} />}
       {!pending && ButtonIcon && (
-        <ButtonIcon size={size} stroke={1.75} aria-hidden />
+        <ButtonIcon
+          size={size}
+          stroke={1.75}
+          className="shrink-0"
+          aria-hidden
+        />
       )}
       {pending && !ButtonIcon ? (
         // The spinner sits over the label so the button keeps its width, and the
