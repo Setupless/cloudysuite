@@ -34,7 +34,8 @@ const isAppOff = (thrown: unknown): boolean =>
 export function createRememberedUser(browser: Browser) {
   let copy: Promise<SignedIn> | undefined;
   let watched: Watched | undefined;
-  let checking: Promise<boolean> | undefined;
+  let asking: Promise<boolean> | undefined;
+  let waiting: Promise<boolean> | undefined;
   let leaving = false;
   const doubted = new WeakSet<object>();
 
@@ -84,11 +85,20 @@ export function createRememberedUser(browser: Browser) {
     return true;
   }
 
+  // What raised the doubt may be newer than a question already out, such as a role
+  // changed just after a tab return, so each recheck waits for one asked after it.
+  // Doubts raised together still share one question.
   function recheck(): Promise<boolean> {
-    checking ??= check().finally(() => {
-      checking = undefined;
-    });
-    return checking;
+    waiting ??= (async () => {
+      const changing = await asking?.catch(() => false);
+      waiting = undefined;
+      if (changing) return true;
+      asking = check().finally(() => {
+        asking = undefined;
+      });
+      return asking;
+    })();
+    return waiting;
   }
 
   return {

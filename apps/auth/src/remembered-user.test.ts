@@ -154,6 +154,33 @@ test("returning to and refusing at the same time asks the server once", async ()
   expect(seen.checks).toBe(1);
 });
 
+test("a refusal after the return's check went out waits for a newer answer", async () => {
+  const answers: ((user: SignedIn) => void)[] = [];
+  let refreshes = 0;
+  const copy = createRememberedUser({
+    ask: () => new Promise((resolve) => answers.push(resolve)),
+    reload: () => {},
+    online: () => true,
+  });
+  copy.watch({
+    app: "auth",
+    path: () => "/admin/people",
+    refresh: async () => refreshes++,
+  });
+  copy.remember(ADA);
+  const returned = copy.recheck();
+  await settled();
+  const refused = copy.recheck();
+  // The server read the role before an admin changed it.
+  answers.shift()?.(ADA);
+  expect(await returned).toBe(false);
+  await settled();
+  answers.shift()?.(person("ada", { role: "user" }));
+  expect(await refused).toBe(true);
+  expect(refreshes).toBe(1);
+  expect(answers).toEqual([]);
+});
+
 test("losing one calendar shows the refusal without loading again", async () => {
   const { copy, seen } = browserWith([person("ada"), person("ada")]);
   copy.remember(ADA);

@@ -1,6 +1,5 @@
 import { expect, mock, test } from "bun:test";
 import { QueryObserver } from "@tanstack/react-query";
-import * as start from "@tanstack/react-start";
 import { testWorkerEnv } from "../../../src/db/test-database";
 
 mock.module("cloudflare:workers", () => ({
@@ -14,20 +13,6 @@ mock.module("cloudflare:workers", () => ({
     }
   },
 }));
-
-// Nothing here reaches a server function. Bun loads each module once for the whole run,
-// so the apps' server functions load here as the tests that call them expect.
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      async ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
 
 const { prefetchShared, sharedQuery, StorageFailure, storageQueryClient } =
   await import("./queries");

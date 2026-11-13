@@ -1,5 +1,6 @@
 import {
   dehydrate,
+  type FetchQueryOptions,
   infiniteQueryOptions,
   MutationCache,
   noop,
@@ -218,11 +219,27 @@ function noticeFailure(error: Error, from: object, opening: boolean) {
   }
 }
 
+// A click that reads something no page shows, such as the rules before a label is
+// deleted, has a person waiting on the answer as much as a page does. A hover may have
+// started the same request, so the click answers the refusal itself.
+export async function fetchForClick<Data, Key extends QueryKey>(
+  client: QueryClient,
+  query: FetchQueryOptions<Data, Error, Data, Key>,
+): Promise<Data> {
+  try {
+    return await client.fetchQuery(query);
+  } catch (thrown) {
+    if (thrown instanceof Error) noticeFailure(thrown, thrown, false);
+    throw thrown;
+  }
+}
+
 function createMailQueryClient() {
   return new QueryClient({
     queryCache: new QueryCache({
       // A hover loads a page's data before anyone sees it, so only a refusal that a
-      // page shows counts. A page that opens on a refused load asks again.
+      // page shows counts. A page that opens on a refused load asks again, and a click
+      // that reads without showing goes through `fetchForClick`.
       onError: (error, query) => {
         if (query.isActive()) {
           noticeFailure(error, query, query.state.data === undefined);
