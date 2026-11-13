@@ -119,13 +119,19 @@ test("coming back as the same person changes nothing", async () => {
   expect(seen).toEqual({ checks: 1, reloads: 0, refreshes: 0 });
 });
 
-test("coming back after signing out loads the page so the server can send them on", async () => {
+test("coming back after signing out runs the page's own check, as a click would", async () => {
   const { copy, seen } = browserWith([
     redirect({ href: "https://auth.example.com/sign-in" }),
   ]);
   copy.remember(ADA);
   expect(await copy.recheck()).toBe(true);
-  expect(seen.reloads).toBe(1);
+  expect(seen).toEqual({ checks: 1, reloads: 0, refreshes: 1 });
+  let asked = false;
+  await copy.require(async () => {
+    asked = true;
+    return ADA;
+  });
+  expect(asked).toBe(true);
 });
 
 test("coming back with no connection keeps the page as it is", async () => {
@@ -178,7 +184,7 @@ test("a refusal after two-step sign-in became required sends the person on", asy
     { from: {}, opening: true },
   );
   await settled();
-  expect(seen.reloads).toBe(1);
+  expect(seen).toEqual({ checks: 1, reloads: 0, refreshes: 1 });
 });
 
 test("an app turned off sends a page that couldn't open to the off page", async () => {

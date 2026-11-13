@@ -89,8 +89,13 @@ function noticeFailure(error: Error, from: object, opening: boolean) {
 function createStorageQueryClient() {
   return new QueryClient({
     queryCache: new QueryCache({
-      onError: (error, query) =>
-        noticeFailure(error, query, query.state.data === undefined),
+      // A hover loads a page's data before anyone sees it, so only a refusal that a
+      // page shows counts. A page that opens on a refused load asks again.
+      onError: (error, query) => {
+        if (query.isActive()) {
+          noticeFailure(error, query, query.state.data === undefined);
+        }
+      },
     }),
     mutationCache: new MutationCache({
       onError: (error, _variables, _result, mutation) =>

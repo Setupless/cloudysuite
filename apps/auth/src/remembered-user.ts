@@ -64,9 +64,13 @@ export function createRememberedUser(browser: Browser) {
     try {
       fresh = await browser.ask(watched.app, watched.path());
     } catch (thrown) {
-      // Signed out, or told to add a second way to sign in. The server's own check on
-      // the next full load sends the person where they need to go.
-      if (isRedirect(thrown)) return reload();
+      // Signed out, or told to add a second way to sign in. Without the copy, the
+      // route's own check runs as a click's would, and sends the person on.
+      if (isRedirect(thrown)) {
+        copy = undefined;
+        await watched.refresh();
+        return true;
+      }
       // An open page stays where it is. Its next load asks the server, whose refusal
       // sends the person to the page that says the app is off.
       if (isAppOff(thrown) && copy === held) copy = undefined;
