@@ -206,8 +206,11 @@ export function DomainsPage({
       <Section title="Your domains">
         <ul className="flex flex-col gap-1.5">
           {view.emailDomains.map((name) => (
-            <li key={name} className="flex items-center gap-2">
-              <span className="flex-1">{name}</span>
+            <li
+              key={name}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1"
+            >
+              <span className="min-w-0 grow break-words">{name}</span>
               {name === view.appDomain && <Badge>Also runs your apps</Badge>}
             </li>
           ))}

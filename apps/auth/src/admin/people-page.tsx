@@ -150,9 +150,9 @@ function InviteItem({ invite }: { invite: InviteRow }) {
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{invite.email}</p>
-          <p className="truncate text-sm text-secondary">
+        <div className="min-w-0 grow">
+          <p className="font-medium break-words">{invite.email}</p>
+          <p className="text-sm break-words text-secondary">
             {invite.mailboxAddress
               ? `Will sign in as ${invite.mailboxAddress}`
               : "No new mailbox"}
@@ -598,19 +598,21 @@ function PersonItem({
 }) {
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-center gap-3">
         <Avatar person={person} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">
-            {person.name}
-            {isYou && <span className="text-secondary"> (you)</span>}
-          </p>
-          <p className="truncate text-sm text-secondary">{person.email}</p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {person.role === "admin" && <Badge>Admin</Badge>}
-          {person.suspended && <Badge tone="danger">Suspended</Badge>}
-          {!person.hasSecondWay && <Badge>Password only</Badge>}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div className="min-w-0 grow">
+            <p className="truncate font-medium">
+              {person.name}
+              {isYou && <span className="text-secondary"> (you)</span>}
+            </p>
+            <p className="text-sm break-words text-secondary">{person.email}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 empty:hidden">
+            {person.role === "admin" && <Badge>Admin</Badge>}
+            {person.suspended && <Badge tone="danger">Suspended</Badge>}
+            {!person.hasSecondWay && <Badge>Password only</Badge>}
+          </div>
         </div>
       </div>
       <MyFilesLimit person={person} />

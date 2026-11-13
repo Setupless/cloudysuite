@@ -92,7 +92,7 @@ function MailboxCard({
       <ul className="flex flex-col gap-1">
         {mailbox.addresses.map(({ address, kind }) => (
           <li key={address} className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate">
+            <span className="min-w-0 flex-1 break-words">
               {address}
               {kind === "primary" && (
                 <span className="text-secondary"> (main address)</span>
@@ -146,7 +146,7 @@ function MailboxCard({
       <ul className="flex flex-col gap-1">
         {mailbox.access.map((access) => (
           <li key={access.userId} className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate">
+            <span className="min-w-0 flex-1 break-words">
               {access.name}{" "}
               <span className="text-secondary">
                 ({access.role === "manager" ? "manager" : "member"})
