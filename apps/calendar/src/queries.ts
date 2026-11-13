@@ -9,8 +9,10 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
+import { answerRefusals } from "@cloudysuite/auth/session";
 import type { CalendarId } from "@cloudysuite/access";
 import type { PlainDate } from "@cloudysuite/tasks/in-calendar";
+import { isAppOffRefusal } from "../../../src/routing";
 import {
   countCalendarEvents,
   getCalendars,
@@ -43,6 +45,7 @@ export class CalendarFailure extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly appOff = false,
   ) {
     super(message);
   }
@@ -62,6 +65,7 @@ async function asFailure(thrown: unknown): Promise<CalendarFailure> {
   return new CalendarFailure(
     thrown.status,
     typeof body?.message === "string" ? body.message : SOMETHING_WENT_WRONG,
+    isAppOffRefusal(thrown, "calendar"),
   );
 }
 
@@ -82,16 +86,12 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 
 // An expired session surfaces here first. The reload reaches the route's sign-in check,
 // which sends the person to sign in and back again.
-function reloadIfSignedOut(error: Error) {
-  if (error instanceof CalendarFailure && error.status === 401) {
-    window.location.reload();
-  }
-}
+const refused = answerRefusals(CalendarFailure, () => window.location.reload());
 
 function createCalendarQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
-    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    queryCache: new QueryCache({ onError: refused.query }),
+    mutationCache: new MutationCache({ onError: refused.mutation }),
     defaultOptions: {
       mutations: { networkMode: "always" },
       queries: {

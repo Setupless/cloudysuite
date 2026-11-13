@@ -1,5 +1,6 @@
 import {
   dehydrate,
+  type FetchQueryOptions,
   infiniteQueryOptions,
   MutationCache,
   noop,
@@ -9,6 +10,8 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
+import { answerRefusals } from "@cloudysuite/auth/session";
+import { isAppOffRefusal } from "../../../src/routing";
 import { MailFailure, NotSavedOnDevice } from "./failure";
 import {
   findThreadOfMessage,
@@ -57,6 +60,7 @@ export async function asMailFailure(thrown: unknown): Promise<MailFailure> {
   return new MailFailure(
     thrown.status,
     typeof body?.message === "string" ? body.message : SOMETHING_WENT_WRONG,
+    isAppOffRefusal(thrown, "mail"),
   );
 }
 
@@ -206,16 +210,30 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 // An expired session surfaces here first. What was saved for this person goes first,
 // because the next person to use this browser may be someone else. The reload reaches
 // the route's sign-in check, which sends the person to sign in and back again.
-function reloadIfSignedOut(error: Error) {
-  if (error instanceof MailFailure && error.status === 401) {
-    void clearDevice().finally(() => window.location.reload());
+const refused = answerRefusals(MailFailure, () => {
+  void clearDevice().finally(() => window.location.reload());
+});
+
+// A click that reads something no page shows, such as the rules before a label is
+// deleted, has a person waiting on the answer as much as a page does. A hover may have
+// started the same request, so the click answers the refusal itself.
+export async function fetchForClick<Data, Key extends QueryKey>(
+  client: QueryClient,
+  query: FetchQueryOptions<Data, Error, Data, Key>,
+): Promise<Data> {
+  try {
+    return await client.fetchQuery(query);
+  } catch (thrown) {
+    if (thrown instanceof Error) refused.notice(thrown, thrown, false);
+    throw thrown;
   }
 }
 
 function createMailQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
-    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    // A click that reads without showing goes through `fetchForClick`.
+    queryCache: new QueryCache({ onError: refused.query }),
+    mutationCache: new MutationCache({ onError: refused.mutation }),
     defaultOptions: {
       // Offline, a read goes to this device's saved mail and an action is refused
       // out loud. Query's default would quietly pause both, and run the actions later.
