@@ -1,15 +1,12 @@
 import type { BoardId } from "@cloudysuite/access";
 import type { UserId } from "@cloudysuite/access";
 import type { TaskId } from "./types";
+import { pageData, pageQueryClient } from "@cloudysuite/page-data";
 import {
-  dehydrate,
   keepPreviousData,
   MutationCache,
-  noop,
   QueryCache,
   QueryClient,
-  type QueryExecuteOptions,
-  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import {
@@ -95,16 +92,8 @@ function createTasksQueryClient() {
   });
 }
 
-let browserClient: QueryClient | undefined;
-
-// The browser keeps one for the page, which the route loaders fill and the screens read.
-// The server makes a new one each time: a shared one would leak one person's tasks into
-// the next person's page.
-export function tasksQueryClient(): QueryClient {
-  if (import.meta.env.SSR) return createTasksQueryClient();
-  browserClient ??= createTasksQueryClient();
-  return browserClient;
-}
+export const tasksQueryClient = pageQueryClient(createTasksQueryClient);
+const firstData = pageData(tasksQueryClient);
 
 export const tasksKeys = {
   all: ["tasks"] as const,
@@ -208,51 +197,19 @@ export const personTasksQuery = (userId: UserId) =>
     refetchInterval: (query) => whileMoving(query.state.data?.tasks),
   });
 
-// In the browser a navigation starts the page's first requests and doesn't wait for them,
-// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
-// is asked for, so preloading a page twice asks once: what it holds shows at once, and
-// the page's own query asks again as it opens.
-function startInBrowser<Data, Key extends QueryKey>(
-  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
-) {
-  void tasksQueryClient()
-    .query({ ...query, staleTime: "static" })
-    .catch(noop);
-  return undefined;
-}
-
 // The first HTML holds the data, so the page draws it as soon as the browser knows what
 // day it is.
-async function prefetch(fill: (client: QueryClient) => Promise<void>) {
-  const client = new QueryClient();
-  await fill(client);
-  return dehydrate(client);
-}
+export const prefetchBoards = () =>
+  firstData((load) => [
+    load.query(boardsQuery()),
+    load.query(moveNoticesQuery()),
+  ]);
 
-export async function prefetchBoards() {
-  if (!import.meta.env.SSR) {
-    startInBrowser(boardsQuery());
-    startInBrowser(moveNoticesQuery());
-    return undefined;
-  }
-  return prefetch(async (client) => {
-    await Promise.all([
-      client.prefetchQuery(boardsQuery()),
-      client.prefetchQuery(moveNoticesQuery()),
-    ]);
-  });
-}
+export const prefetchMyTasks = () =>
+  firstData((load) => [load.query(myTasksQuery())]);
 
-export async function prefetchMyTasks() {
-  if (!import.meta.env.SSR) return startInBrowser(myTasksQuery());
-  return prefetch((client) => client.prefetchQuery(myTasksQuery()));
-}
-
-export async function prefetchBoard(boardId: string) {
-  const query = boardTasksQuery(boardId as BoardId);
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  return prefetch((client) => client.prefetchQuery(query));
-}
+export const prefetchBoard = (boardId: string) =>
+  firstData((load) => [load.query(boardTasksQuery(boardId as BoardId))]);
 
 const textOf = (value: unknown) =>
   typeof value === "string" && value !== "" ? value : undefined;

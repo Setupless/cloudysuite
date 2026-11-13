@@ -1,17 +1,14 @@
 import {
-  dehydrate,
   infiniteQueryOptions,
   keepPreviousData,
   MutationCache,
-  noop,
   type Query,
   QueryCache,
   QueryClient,
-  type QueryExecuteOptions,
-  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import type { DriveId } from "@cloudysuite/access";
+import { pageData, pageQueryClient } from "@cloudysuite/page-data";
 import {
   getDirectory,
   getFile,
@@ -100,16 +97,8 @@ function createStorageQueryClient() {
   });
 }
 
-let browserClient: QueryClient | undefined;
-
-// The browser keeps one for the page, which the route loaders fill and the screens read.
-// The server makes a new one each time: a shared one would leak one person's files into
-// the next person's page.
-export function storageQueryClient(): QueryClient {
-  if (import.meta.env.SSR) return createStorageQueryClient();
-  browserClient ??= createStorageQueryClient();
-  return browserClient;
-}
+export const storageQueryClient = pageQueryClient(createStorageQueryClient);
+const firstData = pageData(storageQueryClient);
 
 export const storageKeys = {
   all: ["storage"] as const,
@@ -247,108 +236,49 @@ export const starIdsQuery = (driveId: DriveId) =>
     queryFn: () => call(() => getStarIds({ data: { driveId } })),
   });
 
-// In the browser a navigation starts the page's first requests and doesn't wait for them,
-// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
-// is asked for, so preloading a page twice asks once: what it holds shows at once, and
-// the page's own query asks again as it opens.
-function startInBrowser<Data, Key extends QueryKey>(
-  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
-) {
-  void storageQueryClient()
-    .query({ ...query, staleTime: "static" })
-    .catch(noop);
-  return undefined;
-}
-
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A
 // failed prefetch leaves the query empty, and the page shows the failure.
-export async function prefetchDirectory() {
-  if (!import.meta.env.SSR) {
-    startInBrowser(directoryQuery());
-    startInBrowser(moveNoticesQuery());
-    return undefined;
-  }
-  const client = new QueryClient();
-  await Promise.all([
-    client.prefetchQuery(directoryQuery()),
-    client.prefetchQuery(moveNoticesQuery()),
+export const prefetchDirectory = () =>
+  firstData((load) => [
+    load.query(directoryQuery()),
+    load.query(moveNoticesQuery()),
   ]);
-  return dehydrate(client);
-}
 
-export async function prefetchHome() {
-  if (!import.meta.env.SSR) return startInBrowser(recentQuery(4));
-  const client = new QueryClient();
-  await client.prefetchQuery(recentQuery(4));
-  return dehydrate(client);
-}
+export const prefetchHome = () =>
+  firstData((load) => [load.query(recentQuery(4))]);
 
-export async function prefetchRecent() {
-  if (!import.meta.env.SSR) return startInBrowser(recentQuery(50));
-  const client = new QueryClient();
-  await client.prefetchQuery(recentQuery(50));
-  return dehydrate(client);
-}
+export const prefetchRecent = () =>
+  firstData((load) => [load.query(recentQuery(50))]);
 
-export async function prefetchShared() {
-  if (!import.meta.env.SSR) return startInBrowser(sharedQuery());
-  const client = new QueryClient();
-  await client.prefetchQuery(sharedQuery());
-  return dehydrate(client);
-}
+export const prefetchShared = () =>
+  firstData((load) => [load.query(sharedQuery())]);
 
 // The page asks only for a search that reads. A date in the search needs the reader's
 // time zone, which the browser knows and the server doesn't.
-export async function prefetchSearch(text: string) {
+export function prefetchSearch(text: string) {
   const parsed = parseSearch(text, "UTC");
-  if (!import.meta.env.SSR) {
-    return parsed.ok ? startInBrowser(searchQuery(text)) : undefined;
-  }
-  const client = new QueryClient();
-  if (
+  const reads =
     parsed.ok &&
-    parsed.query.changedAfter === null &&
-    parsed.query.changedBefore === null
-  ) {
-    await client.prefetchQuery(searchQuery(text));
-  }
-  return dehydrate(client);
+    (!import.meta.env.SSR ||
+      (parsed.query.changedAfter === null &&
+        parsed.query.changedBefore === null));
+  return firstData((load) => (reads ? [load.query(searchQuery(text))] : []));
 }
 
-export async function prefetchStarred() {
-  if (!import.meta.env.SSR) return startInBrowser(starredQuery());
-  const client = new QueryClient();
-  await client.prefetchQuery(starredQuery());
-  return dehydrate(client);
-}
+export const prefetchStarred = () =>
+  firstData((load) => [load.query(starredQuery())]);
 
-export async function prefetchFile(driveId: string, fileId: string) {
-  const query = fileQuery(driveId as DriveId, fileId as ItemId);
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  const client = new QueryClient();
-  await client.prefetchQuery(query);
-  return dehydrate(client);
-}
+export const prefetchFile = (driveId: string, fileId: string) =>
+  firstData((load) => [
+    load.query(fileQuery(driveId as DriveId, fileId as ItemId)),
+  ]);
 
-export async function prefetchTrash() {
-  if (!import.meta.env.SSR) return startInBrowser(trashQuery());
-  const client = new QueryClient();
-  await client.prefetchQuery(trashQuery());
-  return dehydrate(client);
-}
+export const prefetchTrash = () =>
+  firstData((load) => [load.query(trashQuery())]);
 
-export async function prefetchFolder(driveId: string, folderId?: string) {
-  const query = folderQuery(
-    driveId as DriveId,
-    (folderId ?? null) as ItemId | null,
-  );
-  if (!import.meta.env.SSR) {
-    void storageQueryClient()
-      .infiniteQuery({ ...query, staleTime: "static" })
-      .catch(noop);
-    return undefined;
-  }
-  const client = new QueryClient();
-  await client.prefetchInfiniteQuery(query);
-  return dehydrate(client);
-}
+export const prefetchFolder = (driveId: string, folderId?: string) =>
+  firstData((load) => [
+    load.infinite(
+      folderQuery(driveId as DriveId, (folderId ?? null) as ItemId | null),
+    ),
+  ]);

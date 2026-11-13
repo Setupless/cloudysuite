@@ -15,6 +15,7 @@
     "@cloudysuite/auth": "workspace:*",
     "@cloudysuite/mail": "workspace:*",
     "@cloudysuite/object-sql": "workspace:*",
+    "@cloudysuite/page-data": "workspace:*",
     "@cloudysuite/search": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",

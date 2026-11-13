@@ -3,9 +3,9 @@ import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
 import { NameDialog, NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
 import { IconDots, IconHome, IconPlus } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -163,10 +163,10 @@ export function TasksLayout({
   children: ReactNode;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <MeProvider id={user.id as UserId}>
         <Shell user={user}>{children}</Shell>
       </MeProvider>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

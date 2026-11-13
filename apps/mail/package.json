@@ -24,6 +24,7 @@
     "@cloudysuite/calendar": "workspace:*",
     "@cloudysuite/jev": "workspace:*",
     "@cloudysuite/object-sql": "workspace:*",
+    "@cloudysuite/page-data": "workspace:*",
     "@cloudysuite/transfer": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",

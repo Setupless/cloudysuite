@@ -1,9 +1,6 @@
 import { Notice, useHydrated } from "@cloudysuite/ui";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { useEffect, useReducer } from "react";
 import { boardsQuery, myTasksQuery, settingsQuery } from "../queries";
 import type { BoardRole } from "@cloudysuite/access";
@@ -188,12 +185,12 @@ export function MyTasksScreen({
   // waits for the browser. Its tasks are already here by then.
   const hydrated = useHydrated();
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       {hydrated ? (
         <MyTasks taskToOpen={task} />
       ) : (
         <PageHeading title="My tasks" canAdd={null} onAdd={() => {}} />
       )}
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

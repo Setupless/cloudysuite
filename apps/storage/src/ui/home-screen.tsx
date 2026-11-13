@@ -1,8 +1,8 @@
 import { Avatar, useHydrated } from "@cloudysuite/ui";
 import { IconFolder } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -194,8 +194,8 @@ export function HomeScreen({
   mailHref: string | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Home mailHref={mailHref} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

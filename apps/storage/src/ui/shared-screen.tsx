@@ -1,9 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { sharedQuery } from "../queries";
 import { parseItemId } from "../types";
@@ -85,8 +82,8 @@ export function SharedScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Shared me={me} file={file} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

@@ -12,13 +12,8 @@ import {
 import { type ReactNode, useId, useState } from "react";
 import type { CardEvent, InvitationCard } from "../mail-card";
 import { todayIn } from "../schedule";
-import { parseTimeZone } from "../time";
-import {
-  type Answer,
-  GIVEN_ANSWERS,
-  type GivenAnswer,
-  type TimeZone,
-} from "../types";
+import { deviceZone } from "../time";
+import { type Answer, GIVEN_ANSWERS, type GivenAnswer } from "../types";
 import { repeatText, whenText, withLinks } from "./event-text";
 import { JoinButton } from "./join-button";
 import { ANSWER_BUTTONS } from "./people-text";
@@ -34,10 +29,6 @@ export type CardActions = {
 };
 
 const FOCUS = "outline-accent focus-visible:outline-2";
-
-const deviceZone = () =>
-  parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
-  ("UTC" as TimeZone);
 
 function LinkedText({ text }: { text: string }) {
   return withLinks(text).map((segment, index) =>

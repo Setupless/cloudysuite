@@ -1,0 +1,11 @@
+{
+  "name": "@cloudysuite/page-data",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": "./src/index.tsx",
+  "dependencies": {
+    "@tanstack/react-query": "5.105.0",
+    "react": "19.3.1"
+  }
+}

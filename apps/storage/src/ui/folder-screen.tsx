@@ -3,9 +3,9 @@ import { parseDriveId } from "@cloudysuite/access";
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { Button } from "@cloudysuite/ui";
 import { IconFolder } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -262,7 +262,7 @@ export function FolderScreen({
     );
   }
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Folder
         key={`${driveId}/${folderId}`}
         me={me}
@@ -270,7 +270,7 @@ export function FolderScreen({
         folderId={folderId}
         selectedId={file ? parseItemId(file) : null}
       />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }
 

@@ -1,8 +1,8 @@
 import { Button, Notice, Section, TextField } from "@cloudysuite/ui";
 import { IconBan, IconCheck, IconX } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -263,8 +263,8 @@ export function SendersPage({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Senders mailboxId={mailboxId as MailboxId} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

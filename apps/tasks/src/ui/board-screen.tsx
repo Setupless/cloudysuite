@@ -1,11 +1,8 @@
 import type { BoardId, UserId } from "@cloudysuite/access";
 import { Avatar, Notice, useHydrated, useToast } from "@cloudysuite/ui";
 import { IconX } from "@tabler/icons-react";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useReducer } from "react";
 import {
@@ -304,7 +301,7 @@ export function BoardScreen({
   const boardId = raw as BoardId;
   const hydrated = useHydrated();
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       {/* A new board starts with nothing open. */}
       {hydrated ? (
         <Board
@@ -316,6 +313,6 @@ export function BoardScreen({
       ) : (
         <Heading boardId={boardId} />
       )}
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

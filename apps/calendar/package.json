@@ -17,6 +17,7 @@
     "@cloudysuite/auth": "workspace:*",
     "@cloudysuite/mail": "workspace:*",
     "@cloudysuite/object-sql": "workspace:*",
+    "@cloudysuite/page-data": "workspace:*",
     "@cloudysuite/search": "workspace:*",
     "@cloudysuite/tasks": "workspace:*",
     "@cloudysuite/ui": "workspace:*",

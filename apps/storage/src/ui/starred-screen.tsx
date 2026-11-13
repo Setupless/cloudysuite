@@ -1,10 +1,7 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { Notice } from "@cloudysuite/ui";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { starredQuery } from "../queries";
 import { parseItemId } from "../types";
@@ -92,8 +89,8 @@ export function StarredScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Starred me={me} file={file} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

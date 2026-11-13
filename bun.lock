@@ -59,6 +59,7 @@
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/page-data": "workspace:*",
         "@cloudysuite/search": "workspace:*",
         "@cloudysuite/tasks": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
@@ -81,6 +82,7 @@
         "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/jev": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/page-data": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
@@ -100,6 +102,7 @@
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/page-data": "workspace:*",
         "@cloudysuite/search": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
@@ -120,6 +123,7 @@
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/page-data": "workspace:*",
         "@cloudysuite/search": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
@@ -152,6 +156,13 @@
     },
     "packages/object-sql": {
       "name": "@cloudysuite/object-sql",
+    },
+    "packages/page-data": {
+      "name": "@cloudysuite/page-data",
+      "dependencies": {
+        "@tanstack/react-query": "5.105.0",
+        "react": "19.3.1",
+      },
     },
     "packages/search": {
       "name": "@cloudysuite/search",
@@ -249,6 +260,8 @@
     "@cloudysuite/mail": ["@cloudysuite/mail@workspace:apps/mail"],
 
     "@cloudysuite/object-sql": ["@cloudysuite/object-sql@workspace:packages/object-sql"],
+
+    "@cloudysuite/page-data": ["@cloudysuite/page-data@workspace:packages/page-data"],
 
     "@cloudysuite/search": ["@cloudysuite/search@workspace:packages/search"],
 

@@ -9,9 +9,9 @@ import {
   IconUserCircle,
   IconUsers,
 } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -209,8 +209,8 @@ export function StorageLayout({
   children: ReactNode;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Shell user={user}>{children}</Shell>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

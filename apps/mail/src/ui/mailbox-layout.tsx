@@ -18,9 +18,9 @@ import {
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -261,11 +261,11 @@ export function MailboxLayout({
   children: ReactNode;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <MailboxShell user={user} mailboxId={mailboxId as MailboxId}>
         {children}
       </MailboxShell>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }
 
