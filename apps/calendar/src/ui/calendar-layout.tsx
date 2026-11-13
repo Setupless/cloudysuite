@@ -14,9 +14,9 @@ import {
   IconHome,
   IconPlus,
 } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -215,12 +215,12 @@ export function CalendarLayout({
   children: ReactNode;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <MeProvider id={user.id as UserId}>
         <TasksAddressProvider href={user.apps.tasks}>
           <Shell user={user}>{children}</Shell>
         </TasksAddressProvider>
       </MeProvider>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

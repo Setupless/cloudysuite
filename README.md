@@ -644,6 +644,7 @@ These limits come from the Cloudflare docs and shape the product:
 - Each mailbox, each drive, each calendar, and each board is one SQLite-backed Durable Object. Attachments and files go in R2. D1 holds the organisation directory: domains, users, addresses, mailbox access, drives, drive access, calendars, calendar access, boards, and board access.
 - The rule that every mailbox, drive, calendar, or board query checks the signed-in user's access lives in one place, because several people can share one.
 - The Worker uses Smart Placement, because one page load makes several D1 queries one after another, and running the Worker near the database saves a long trip on each.
+- A page's first HTML waits at most 50 ms for its data, so a quick load shows the whole page at once. Slower data streams into the same response, and the page shows its own loading state until the data arrives. Screens draw streamed data from Query's cache rather than from a streamed `Suspense` boundary, because React holds a streamed boundary's placeholder for at least 300 ms after the first paint, even when the data arrives sooner.
 
 ### Repository layout
 

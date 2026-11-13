@@ -5,9 +5,9 @@ import {
   IconTrash,
   IconTrashX,
 } from "@tabler/icons-react";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useIsMutating,
   useMutation,
   useQuery,
@@ -286,8 +286,8 @@ export function TrashScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Trash />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

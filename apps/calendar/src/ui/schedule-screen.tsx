@@ -4,11 +4,8 @@ import {
   IconChevronRight,
   IconPlus,
 } from "@tabler/icons-react";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -480,8 +477,8 @@ export function ScheduleScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Schedule search={search} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

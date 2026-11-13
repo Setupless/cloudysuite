@@ -1,15 +1,12 @@
 import {
-  dehydrate,
   keepPreviousData,
   MutationCache,
-  noop,
   QueryCache,
   QueryClient,
-  type QueryExecuteOptions,
-  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import type { CalendarId } from "@cloudysuite/access";
+import { pageData, pageQueryClient } from "@cloudysuite/page-data";
 import type { PlainDate } from "@cloudysuite/tasks/in-calendar";
 import {
   countCalendarEvents,
@@ -106,16 +103,8 @@ function createCalendarQueryClient() {
   });
 }
 
-let browserClient: QueryClient | undefined;
-
-// The browser keeps one for the page, which the route loaders fill and the screens read.
-// The server makes a new one each time: a shared one would leak one person's calendars
-// into the next person's page.
-export function calendarQueryClient(): QueryClient {
-  if (import.meta.env.SSR) return createCalendarQueryClient();
-  browserClient ??= createCalendarQueryClient();
-  return browserClient;
-}
+export const calendarQueryClient = pageQueryClient(createCalendarQueryClient);
+const firstData = pageData(calendarQueryClient);
 
 export const calendarKeys = {
   all: ["calendar"] as const,
@@ -237,45 +226,21 @@ export const searchQuery = (text: string, zone: TimeZone) =>
     placeholderData: keepPreviousData,
   });
 
-// In the browser a navigation starts the page's first requests and doesn't wait for them,
-// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
-// is asked for, so preloading a page twice asks once: what it holds shows at once, and
-// the page's own query asks again as it opens.
-function startInBrowser<Data, Key extends QueryKey>(
-  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
-) {
-  void calendarQueryClient()
-    .query({ ...query, staleTime: "static" })
-    .catch(noop);
-  return undefined;
-}
-
 // The first HTML holds the events, so the page draws them as soon as it can. Without a
 // date in the address, the server's own day stands in for the reader's, which is the
 // same day for most of the day in most places. When it isn't, the page asks again.
-export async function prefetchSchedule(search: ScheduleSearch) {
+export function prefetchSchedule(search: ScheduleSearch) {
   const today = todayIn(import.meta.env.SSR ? UTC : deviceZone(), Date.now());
-  const query = eventsQuery(visibleDays(placeOf(search, today)));
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  const client = new QueryClient();
-  await client.prefetchQuery(query);
-  return dehydrate(client);
+  const days = visibleDays(placeOf(search, today));
+  return firstData((load) => [load.query(eventsQuery(days))]);
 }
 
 // The server's own day stands in for the reader's here too, for the same reason.
-export async function prefetchOverview() {
+export function prefetchOverview() {
   const today = todayIn(import.meta.env.SSR ? UTC : deviceZone(), Date.now());
-  const query = eventsQuery(todayWindow(today));
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  const client = new QueryClient();
-  await client.prefetchQuery(query);
-  return dehydrate(client);
+  return firstData((load) => [load.query(eventsQuery(todayWindow(today)))]);
 }
 
 // The first HTML holds the sidebar's calendars, so a reload shows them at once.
-export async function prefetchCalendars() {
-  if (!import.meta.env.SSR) return startInBrowser(calendarsQuery());
-  const client = new QueryClient();
-  await client.prefetchQuery(calendarsQuery());
-  return dehydrate(client);
-}
+export const prefetchCalendars = () =>
+  firstData((load) => [load.query(calendarsQuery())]);

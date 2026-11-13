@@ -1,12 +1,9 @@
+import { pageData, pageQueryClient } from "@cloudysuite/page-data";
 import {
-  dehydrate,
   infiniteQueryOptions,
   MutationCache,
-  noop,
   QueryCache,
   QueryClient,
-  type QueryExecuteOptions,
-  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import { MailFailure, NotSavedOnDevice } from "./failure";
@@ -235,66 +232,24 @@ function createMailQueryClient() {
   });
 }
 
-let browserClient: QueryClient | undefined;
-
-// The browser keeps one for the page, which the route loaders fill and the screens read.
-// The server makes a new one each time: a shared one would leak one person's mail into
-// the next person's page.
-export function mailQueryClient(): QueryClient {
-  if (import.meta.env.SSR) return createMailQueryClient();
-  browserClient ??= createMailQueryClient();
-  return browserClient;
-}
-
-// In the browser a navigation starts the page's first requests and doesn't wait for them,
-// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
-// is asked for, so preloading a page twice asks once: what it holds shows at once, and
-// the page's own query asks again as it opens.
-function startInBrowser<Data, Key extends QueryKey>(
-  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
-) {
-  void mailQueryClient()
-    .query({ ...query, staleTime: "static" })
-    .catch(noop);
-  return undefined;
-}
+export const mailQueryClient = pageQueryClient(createMailQueryClient);
+const firstData = pageData(mailQueryClient);
 
 // The first HTML holds the mail, so a reload shows the list and not a skeleton.
 // A failed prefetch leaves the query empty, and the page shows the failure.
-export async function prefetchMailboxes() {
-  if (!import.meta.env.SSR) return startInBrowser(mailboxesQuery());
-  const client = new QueryClient();
-  await client.prefetchQuery(mailboxesQuery());
-  return dehydrate(client);
-}
+export const prefetchMailboxes = () =>
+  firstData((load) => [load.query(mailboxesQuery())]);
 
-export async function prefetchRules(mailboxId: string) {
-  const query = rulesQuery(mailboxId as MailboxId);
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  const client = new QueryClient();
-  await client.prefetchQuery(query);
-  return dehydrate(client);
-}
+export const prefetchRules = (mailboxId: string) =>
+  firstData((load) => [load.query(rulesQuery(mailboxId as MailboxId))]);
 
-export async function prefetchSenders(mailboxId: string) {
-  const query = sendersQuery(mailboxId as MailboxId);
-  if (!import.meta.env.SSR) return startInBrowser(query);
-  const client = new QueryClient();
-  await client.prefetchQuery(query);
-  return dehydrate(client);
-}
+export const prefetchSenders = (mailboxId: string) =>
+  firstData((load) => [load.query(sendersQuery(mailboxId as MailboxId))]);
 
 export async function prefetchThreads(mailboxId: string, viewRaw: string) {
   const view = parseViewParam(viewRaw);
   if (!view) return undefined;
-  const query = threadsQuery(mailboxId as MailboxId, view);
-  if (!import.meta.env.SSR) {
-    void mailQueryClient()
-      .infiniteQuery({ ...query, staleTime: "static" })
-      .catch(noop);
-    return undefined;
-  }
-  const client = new QueryClient();
-  await client.prefetchInfiniteQuery(query);
-  return dehydrate(client);
+  return firstData((load) => [
+    load.infinite(threadsQuery(mailboxId as MailboxId, view)),
+  ]);
 }

@@ -1,10 +1,7 @@
 import { type DriveId, parseDriveId } from "@cloudysuite/access";
 import type { SignedIn } from "@cloudysuite/auth/session";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { fileQuery } from "../queries";
@@ -106,8 +103,8 @@ export function FileScreen({
   const fileId = parseItemId(rawFileId);
   if (!driveId || !fileId) return <Problem message={CANNOT_OPEN} />;
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <File me={me} driveId={driveId} fileId={fileId} />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

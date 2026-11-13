@@ -1,9 +1,9 @@
 import { Button, Modal } from "@cloudysuite/ui";
 import { IconKeyboard, IconPencil } from "@tabler/icons-react";
 import { useHotkey } from "@tanstack/react-hotkeys";
+import { PrefetchedData } from "@cloudysuite/page-data";
 import {
   type DehydratedState,
-  HydrationBoundary,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -521,7 +521,7 @@ export function MailViewScreen({
     );
   }
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <MailView
         key={`${viewRaw}:${q ?? ""}`}
         mailboxId={mailboxId as MailboxId}
@@ -529,6 +529,6 @@ export function MailViewScreen({
       >
         {children}
       </MailView>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

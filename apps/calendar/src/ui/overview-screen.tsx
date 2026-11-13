@@ -13,11 +13,8 @@ import {
   IconPlus,
   IconUsers,
 } from "@tabler/icons-react";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -756,8 +753,8 @@ export function OverviewScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <Overview />
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }

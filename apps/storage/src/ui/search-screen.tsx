@@ -1,10 +1,7 @@
 import { Notice, useHydrated } from "@cloudysuite/ui";
 import { IconFolder } from "@tabler/icons-react";
-import {
-  type DehydratedState,
-  HydrationBoundary,
-  useQuery,
-} from "@tanstack/react-query";
+import { PrefetchedData } from "@cloudysuite/page-data";
+import { type DehydratedState, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { SearchRow } from "../across-drives";
@@ -193,12 +190,12 @@ export function SearchScreen({
   prefetched: DehydratedState | undefined;
 }) {
   return (
-    <HydrationBoundary state={prefetched}>
+    <PrefetchedData state={prefetched}>
       <div className="min-h-[calc(100dvh-52px)] pb-4">
         <Breadcrumb trail={[]} current="Search" />
         <PageTop title="Search" />
         <Results text={text} />
       </div>
-    </HydrationBoundary>
+    </PrefetchedData>
   );
 }
