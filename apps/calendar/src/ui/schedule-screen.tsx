@@ -25,8 +25,8 @@ import {
   todayIn,
   visibleDays,
 } from "../schedule";
-import { parseTimeZone } from "../time";
-import type { CivilDate, EventUid, TimeZone } from "../types";
+import { deviceZone } from "../time";
+import type { CivilDate, EventUid } from "../types";
 import { TitlePicker } from "./date-picker";
 import { EventCard, EventPanel } from "./event-details";
 import { DeleteEventDialog, EventDialog, type Opening } from "./event-dialog";
@@ -96,10 +96,6 @@ export function focusFirst(
     }
   });
 }
-
-export const deviceZone = () =>
-  parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
-  ("UTC" as TimeZone);
 
 function useNow(): number {
   const [now, setNow] = useState(Date.now);

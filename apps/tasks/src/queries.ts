@@ -4,7 +4,12 @@ import type { TaskId } from "./types";
 import {
   dehydrate,
   keepPreviousData,
+  MutationCache,
+  noop,
+  QueryCache,
   QueryClient,
+  type QueryExecuteOptions,
+  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import {
@@ -63,6 +68,43 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
     error.status >= 400 &&
     error.status < 500
   ) && failures < 2;
+
+// An expired session surfaces here first. The reload reaches the route's sign-in check,
+// which sends the person to sign in and back again.
+function reloadIfSignedOut(error: Error) {
+  if (error instanceof TasksFailure && error.status === 401) {
+    window.location.reload();
+  }
+}
+
+function createTasksQueryClient() {
+  return new QueryClient({
+    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
+    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    defaultOptions: {
+      mutations: { networkMode: "always" },
+      queries: {
+        networkMode: "always",
+        // Only long enough that the first HTML's data isn't fetched again as the page
+        // wakes up.
+        staleTime: 2_000,
+        retry: retryUnlessRefused,
+        refetchOnWindowFocus: true,
+      },
+    },
+  });
+}
+
+let browserClient: QueryClient | undefined;
+
+// The browser keeps one for the page, which the route loaders fill and the screens read.
+// The server makes a new one each time: a shared one would leak one person's tasks into
+// the next person's page.
+export function tasksQueryClient(): QueryClient {
+  if (import.meta.env.SSR) return createTasksQueryClient();
+  browserClient ??= createTasksQueryClient();
+  return browserClient;
+}
 
 export const tasksKeys = {
   all: ["tasks"] as const,
@@ -166,30 +208,51 @@ export const personTasksQuery = (userId: UserId) =>
     refetchInterval: (query) => whileMoving(query.state.data?.tasks),
   });
 
+// In the browser a navigation starts the page's first requests and doesn't wait for them,
+// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
+// is asked for, so preloading a page twice asks once: what it holds shows at once, and
+// the page's own query asks again as it opens.
+function startInBrowser<Data, Key extends QueryKey>(
+  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
+) {
+  void tasksQueryClient()
+    .query({ ...query, staleTime: "static" })
+    .catch(noop);
+  return undefined;
+}
+
 // The first HTML holds the data, so the page draws it as soon as the browser knows what
 // day it is.
 async function prefetch(fill: (client: QueryClient) => Promise<void>) {
-  if (!import.meta.env.SSR) return undefined;
   const client = new QueryClient();
   await fill(client);
   return dehydrate(client);
 }
 
-export const prefetchBoards = () =>
-  prefetch(async (client) => {
+export async function prefetchBoards() {
+  if (!import.meta.env.SSR) {
+    startInBrowser(boardsQuery());
+    startInBrowser(moveNoticesQuery());
+    return undefined;
+  }
+  return prefetch(async (client) => {
     await Promise.all([
       client.prefetchQuery(boardsQuery()),
       client.prefetchQuery(moveNoticesQuery()),
     ]);
   });
+}
 
-export const prefetchMyTasks = () =>
-  prefetch((client) => client.prefetchQuery(myTasksQuery()));
+export async function prefetchMyTasks() {
+  if (!import.meta.env.SSR) return startInBrowser(myTasksQuery());
+  return prefetch((client) => client.prefetchQuery(myTasksQuery()));
+}
 
-export const prefetchBoard = (boardId: string) =>
-  prefetch((client) =>
-    client.prefetchQuery(boardTasksQuery(boardId as BoardId)),
-  );
+export async function prefetchBoard(boardId: string) {
+  const query = boardTasksQuery(boardId as BoardId);
+  if (!import.meta.env.SSR) return startInBrowser(query);
+  return prefetch((client) => client.prefetchQuery(query));
+}
 
 const textOf = (value: unknown) =>
   typeof value === "string" && value !== "" ? value : undefined;
