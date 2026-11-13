@@ -352,7 +352,8 @@ test("repeats that take too long to work out say the answer is incomplete", asyn
   expect((await alice.search(termsOf("ancient one"), SYDNEY)).complete).toBe(
     true,
   );
-});
+  // Each search walks the whole step budget, which takes about 5 s on CI's runners.
+}, 30_000);
 
 test("events from before search existed are found, and stay in step afterwards", () => {
   const { db } = createSqlDriver();
