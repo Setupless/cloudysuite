@@ -23,7 +23,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { calendarsQuery, eventsQuery, invitationsQuery } from "../queries";
 import { keyOf, searchOf, todayIn } from "../schedule";
-import { addDays } from "../time";
+import { addDays, deviceZone } from "../time";
 import type { CivilDate, TimeZone } from "../types";
 import { calendarBorder, calendarFill, calendarTint } from "./colours";
 import { EventDialog } from "./event-dialog";
@@ -44,12 +44,7 @@ import {
 } from "./my-tasks";
 import { comingLine, peopleSummary } from "./people-text";
 import { daySpanOf } from "./schedule-layout";
-import {
-  deviceZone,
-  focusedElement,
-  focusFirst,
-  unlessDialog,
-} from "./schedule-screen";
+import { focusedElement, focusFirst, unlessDialog } from "./schedule-screen";
 import {
   type ShownEvent,
   shownEvents,

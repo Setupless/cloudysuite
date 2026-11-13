@@ -2,8 +2,13 @@ import {
   dehydrate,
   infiniteQueryOptions,
   keepPreviousData,
+  MutationCache,
+  noop,
   type Query,
+  QueryCache,
   QueryClient,
+  type QueryExecuteOptions,
+  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
 import type { DriveId } from "@cloudysuite/access";
@@ -68,6 +73,43 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
     error.status >= 400 &&
     error.status < 500
   ) && failures < 2;
+
+// An expired session surfaces here first. The reload reaches the route's sign-in check,
+// which sends the person to sign in and back again.
+function reloadIfSignedOut(error: Error) {
+  if (error instanceof StorageFailure && error.status === 401) {
+    window.location.reload();
+  }
+}
+
+function createStorageQueryClient() {
+  return new QueryClient({
+    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
+    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    defaultOptions: {
+      mutations: { networkMode: "always" },
+      queries: {
+        networkMode: "always",
+        // Only long enough that the first HTML's files aren't fetched again as the page
+        // wakes up. Opening a folder after that asks the server.
+        staleTime: 2_000,
+        retry: retryUnlessRefused,
+        refetchOnWindowFocus: true,
+      },
+    },
+  });
+}
+
+let browserClient: QueryClient | undefined;
+
+// The browser keeps one for the page, which the route loaders fill and the screens read.
+// The server makes a new one each time: a shared one would leak one person's files into
+// the next person's page.
+export function storageQueryClient(): QueryClient {
+  if (import.meta.env.SSR) return createStorageQueryClient();
+  browserClient ??= createStorageQueryClient();
+  return browserClient;
+}
 
 export const storageKeys = {
   all: ["storage"] as const,
@@ -205,10 +247,27 @@ export const starIdsQuery = (driveId: DriveId) =>
     queryFn: () => call(() => getStarIds({ data: { driveId } })),
   });
 
+// In the browser a navigation starts the page's first requests and doesn't wait for them,
+// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
+// is asked for, so preloading a page twice asks once: what it holds shows at once, and
+// the page's own query asks again as it opens.
+function startInBrowser<Data, Key extends QueryKey>(
+  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
+) {
+  void storageQueryClient()
+    .query({ ...query, staleTime: "static" })
+    .catch(noop);
+  return undefined;
+}
+
 // The first HTML holds the files, so a reload shows the page and not a skeleton. A
 // failed prefetch leaves the query empty, and the page shows the failure.
 export async function prefetchDirectory() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) {
+    startInBrowser(directoryQuery());
+    startInBrowser(moveNoticesQuery());
+    return undefined;
+  }
   const client = new QueryClient();
   await Promise.all([
     client.prefetchQuery(directoryQuery()),
@@ -218,31 +277,34 @@ export async function prefetchDirectory() {
 }
 
 export async function prefetchHome() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(recentQuery(4));
   const client = new QueryClient();
   await client.prefetchQuery(recentQuery(4));
   return dehydrate(client);
 }
 
 export async function prefetchRecent() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(recentQuery(50));
   const client = new QueryClient();
   await client.prefetchQuery(recentQuery(50));
   return dehydrate(client);
 }
 
 export async function prefetchShared() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(sharedQuery());
   const client = new QueryClient();
   await client.prefetchQuery(sharedQuery());
   return dehydrate(client);
 }
 
+// The page asks only for a search that reads. A date in the search needs the reader's
+// time zone, which the browser knows and the server doesn't.
 export async function prefetchSearch(text: string) {
-  if (!import.meta.env.SSR) return undefined;
-  const client = new QueryClient();
-  // The server doesn't know the reader's time zone, which a date in the search needs.
   const parsed = parseSearch(text, "UTC");
+  if (!import.meta.env.SSR) {
+    return parsed.ok ? startInBrowser(searchQuery(text)) : undefined;
+  }
+  const client = new QueryClient();
   if (
     parsed.ok &&
     parsed.query.changedAfter === null &&
@@ -254,31 +316,39 @@ export async function prefetchSearch(text: string) {
 }
 
 export async function prefetchStarred() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(starredQuery());
   const client = new QueryClient();
   await client.prefetchQuery(starredQuery());
   return dehydrate(client);
 }
 
 export async function prefetchFile(driveId: string, fileId: string) {
-  if (!import.meta.env.SSR) return undefined;
+  const query = fileQuery(driveId as DriveId, fileId as ItemId);
+  if (!import.meta.env.SSR) return startInBrowser(query);
   const client = new QueryClient();
-  await client.prefetchQuery(fileQuery(driveId as DriveId, fileId as ItemId));
+  await client.prefetchQuery(query);
   return dehydrate(client);
 }
 
 export async function prefetchTrash() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(trashQuery());
   const client = new QueryClient();
   await client.prefetchQuery(trashQuery());
   return dehydrate(client);
 }
 
 export async function prefetchFolder(driveId: string, folderId?: string) {
-  if (!import.meta.env.SSR) return undefined;
-  const client = new QueryClient();
-  await client.prefetchInfiniteQuery(
-    folderQuery(driveId as DriveId, (folderId ?? null) as ItemId | null),
+  const query = folderQuery(
+    driveId as DriveId,
+    (folderId ?? null) as ItemId | null,
   );
+  if (!import.meta.env.SSR) {
+    void storageQueryClient()
+      .infiniteQuery({ ...query, staleTime: "static" })
+      .catch(noop);
+    return undefined;
+  }
+  const client = new QueryClient();
+  await client.prefetchInfiniteQuery(query);
   return dehydrate(client);
 }
