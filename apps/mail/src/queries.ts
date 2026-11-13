@@ -9,6 +9,8 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
+import { noticeRefusal } from "@cloudysuite/auth/session";
+import { isAppOffRefusal } from "../../../src/routing";
 import { MailFailure, NotSavedOnDevice } from "./failure";
 import {
   findThreadOfMessage,
@@ -57,6 +59,7 @@ export async function asMailFailure(thrown: unknown): Promise<MailFailure> {
   return new MailFailure(
     thrown.status,
     typeof body?.message === "string" ? body.message : SOMETHING_WENT_WRONG,
+    isAppOffRefusal(thrown, "mail"),
   );
 }
 
@@ -206,16 +209,25 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 // An expired session surfaces here first. What was saved for this person goes first,
 // because the next person to use this browser may be someone else. The reload reaches
 // the route's sign-in check, which sends the person to sign in and back again.
-function reloadIfSignedOut(error: Error) {
-  if (error instanceof MailFailure && error.status === 401) {
+function noticeFailure(error: Error, from: object, opening: boolean) {
+  if (!(error instanceof MailFailure)) return;
+  if (error.status === 401) {
     void clearDevice().finally(() => window.location.reload());
+  } else {
+    noticeRefusal(error, { from, opening });
   }
 }
 
 function createMailQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
-    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    queryCache: new QueryCache({
+      onError: (error, query) =>
+        noticeFailure(error, query, query.state.data === undefined),
+    }),
+    mutationCache: new MutationCache({
+      onError: (error, _variables, _result, mutation) =>
+        noticeFailure(error, mutation, false),
+    }),
     defaultOptions: {
       // Offline, a read goes to this device's saved mail and an action is refused
       // out loud. Query's default would quietly pause both, and run the actions later.

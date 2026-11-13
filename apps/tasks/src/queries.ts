@@ -1,5 +1,6 @@
 import type { BoardId } from "@cloudysuite/access";
 import type { UserId } from "@cloudysuite/access";
+import { isAppOffRefusal } from "../../../src/routing";
 import type { TaskId } from "./types";
 import {
   dehydrate,
@@ -12,6 +13,7 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
+import { noticeRefusal } from "@cloudysuite/auth/session";
 import {
   assignmentEmail,
   boardSettings,
@@ -34,6 +36,7 @@ export class TasksFailure extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly appOff = false,
   ) {
     super(message);
   }
@@ -51,6 +54,7 @@ async function asFailure(thrown: unknown): Promise<TasksFailure> {
   return new TasksFailure(
     thrown.status,
     typeof body?.message === "string" ? body.message : SOMETHING_WENT_WRONG,
+    isAppOffRefusal(thrown, "tasks"),
   );
 }
 
@@ -71,16 +75,22 @@ export const retryUnlessRefused = (failures: number, error: Error): boolean =>
 
 // An expired session surfaces here first. The reload reaches the route's sign-in check,
 // which sends the person to sign in and back again.
-function reloadIfSignedOut(error: Error) {
-  if (error instanceof TasksFailure && error.status === 401) {
-    window.location.reload();
-  }
+function noticeFailure(error: Error, from: object, opening: boolean) {
+  if (!(error instanceof TasksFailure)) return;
+  if (error.status === 401) window.location.reload();
+  else noticeRefusal(error, { from, opening });
 }
 
 function createTasksQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
-    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
+    queryCache: new QueryCache({
+      onError: (error, query) =>
+        noticeFailure(error, query, query.state.data === undefined),
+    }),
+    mutationCache: new MutationCache({
+      onError: (error, _variables, _result, mutation) =>
+        noticeFailure(error, mutation, false),
+    }),
     defaultOptions: {
       mutations: { networkMode: "always" },
       queries: {

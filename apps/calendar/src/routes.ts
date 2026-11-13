@@ -6,3 +6,4 @@ export {
   prefetchOverview,
 } from "./queries";
 export { parseScheduleSearch } from "./schedule";
+export { requireCalendarUser } from "./ui/session";

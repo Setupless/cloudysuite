@@ -5,6 +5,7 @@ export { RecentScreen } from "./ui/recent-screen";
 export { SearchScreen } from "./ui/search-screen";
 export { SharedScreen } from "./ui/shared-screen";
 export { StarredScreen } from "./ui/starred-screen";
+export { requireStorageUser } from "./ui/session";
 export { StorageLayout } from "./ui/storage-layout";
 export { StorageRoot } from "./ui/storage-root";
 export { StorageRouteError } from "./ui/storage-route-error";

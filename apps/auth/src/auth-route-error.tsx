@@ -1,16 +1,33 @@
+import { Page, Working } from "@cloudysuite/ui";
+import { IconCloud } from "@tabler/icons-react";
 import {
   ErrorComponent,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { recheckRememberedUser } from "./session";
 
-// A session that ended while this page was open surfaces here, from the page's own
-// server call. The reload reaches the shell's sign-in check, which sends the person to
-// sign in and back again.
+const refusedWith = (error: unknown) =>
+  error instanceof Response ? error.status : null;
+
+// A page's own server call finds out first when the session ended, or when this page's
+// copy of the person is out of date: another person signed in, their role changed, or
+// two-step sign-in became required. Each of those ends on the page the server picks.
 export function AuthRouteError({ error }: ErrorComponentProps) {
-  const signedOut = error instanceof Response && error.status === 401;
+  const status = refusedWith(error);
+  const [checking, setChecking] = useState(status === 401 || status === 403);
   useEffect(() => {
-    if (signedOut) window.location.reload();
-  }, [signedOut]);
-  return signedOut ? null : <ErrorComponent error={error} />;
+    if (status === 401) {
+      window.location.reload();
+    } else if (status === 403) {
+      setChecking(true);
+      void recheckRememberedUser().then(setChecking);
+    }
+  }, [error, status]);
+  if (!checking) return <ErrorComponent error={error} />;
+  return (
+    <Page icon={IconCloud} title="One moment">
+      <Working>Checking your sign-in…</Working>
+    </Page>
+  );
 }

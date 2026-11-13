@@ -1,6 +1,6 @@
 import {
-  rememberedUser,
   rememberUser,
+  requireRememberedUser,
   requireUser,
   type SignedIn,
 } from "@cloudysuite/auth/session";
@@ -26,24 +26,24 @@ async function fromDevice(): Promise<SignedIn> {
   return owner.user;
 }
 
+// A hover must change nothing on this device, so it only asks the server, and not at
+// all while offline. A click can share a hover's question, so it decides what the
+// answer means for this device only once the answer arrives: it clears the device for
+// someone who signed out, and falls back to the saved owner with no connection.
 export async function requireMailUser(
   location: { publicHref: string },
   preload = false,
 ): Promise<SignedIn> {
   if (import.meta.env.SSR) return requireUser("mail", location);
-  const remembered = rememberedUser();
-  if (remembered) return remembered;
-  // A hover must change nothing on this device, so it only asks the server, and not at
-  // all while offline. It never clears the device or reads the saved owner. The click
-  // that follows does both.
   if (preload) {
     if (isOffline())
       throw new Error("Offline, so there is nothing to preload.");
-    return rememberUser(await requireUser("mail", location));
+    return requireRememberedUser("mail", location);
   }
-  if (!navigator.onLine) return rememberUser(await fromDevice());
   try {
-    return rememberUser(await requireUser("mail", location));
+    return await requireRememberedUser("mail", location, () =>
+      navigator.onLine ? requireUser("mail", location) : fromDevice(),
+    );
   } catch (thrown) {
     // A page the service worker started offline finds out here that its person left.
     if (isRedirect(thrown)) {
@@ -51,6 +51,8 @@ export async function requireMailUser(
       if (session.kind === "signed-out") await clearDevice();
     }
     if (!isConnectionFailure(thrown)) throw thrown;
-    return rememberUser(await fromDevice());
+    const owner = await fromDevice();
+    rememberUser(owner);
+    return owner;
   }
 }

@@ -4,15 +4,14 @@ import {
   CalendarRouteError,
 } from "@cloudysuite/calendar";
 import {
-  requireRememberedUser,
-  type SignedIn,
-} from "@cloudysuite/auth/session";
-import { prefetchCalendars } from "@cloudysuite/calendar/routes";
+  prefetchCalendars,
+  requireCalendarUser,
+} from "@cloudysuite/calendar/routes";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/calendar")({
-  beforeLoad: async (load): Promise<{ user: SignedIn }> => ({
-    user: await requireRememberedUser("calendar", load),
+  beforeLoad: async ({ location }) => ({
+    user: await requireCalendarUser(location),
   }),
   loader: () => prefetchCalendars(),
   errorComponent: CalendarRouteError,

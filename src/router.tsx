@@ -1,14 +1,23 @@
-import { rememberUser, type SignedIn } from "@cloudysuite/auth/session";
+import {
+  rememberUser,
+  type SignedIn,
+  watchRememberedUser,
+} from "@cloudysuite/auth/session";
 import { createRouter } from "@tanstack/react-router";
-import { isAppId, isGatePath, OFFLINE_SHELL_PATH } from "./routing";
+import { type AppId, isAppId, isGatePath, OFFLINE_SHELL_PATH } from "./routing";
 import { routeTree } from "./routeTree.gen";
 
-function appPrefix(url: URL): string | null {
+function appOf(url: URL): AppId | null {
   if (isGatePath(url.pathname) || url.pathname === OFFLINE_SHELL_PATH) {
     return null;
   }
   const label = url.hostname.split(".")[0]?.toLowerCase() ?? "";
-  return isAppId(label) ? `/${label}` : null;
+  return isAppId(label) ? label : null;
+}
+
+function appPrefix(url: URL): string | null {
+  const app = appOf(url);
+  return app && `/${app}`;
 }
 
 export function getRouter() {
@@ -32,6 +41,8 @@ export function getRouter() {
     }),
     hydrate: ({ user }) => {
       if (user) rememberUser(user);
+      const app = appOf(new URL(window.location.href));
+      if (app) watchRememberedUser(app, router);
     },
     rewrite: {
       // The Worker has already checked the hostname by the time this runs, so
