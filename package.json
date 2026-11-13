@@ -15,7 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:seed:local": "bun scripts/seed-local.mjs",
-    "check": "bun fmt --check && oxlint && bun scripts/check-theme.mjs && bun test && vite build && bun scripts/check-pwa-build.mjs && wrangler types --env-file dev.vars.local.example && tsc --noEmit",
+    "check": "bun fmt --check && oxlint && bun scripts/check-theme.mjs && bun test --isolate && vite build && bun scripts/check-pwa-build.mjs && wrangler types --env-file dev.vars.local.example && tsc --noEmit",
     "db:seed:user:local": "bun apps/auth/scripts/seed-user-local.mjs"
   },
   "dependencies": {

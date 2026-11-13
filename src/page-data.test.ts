@@ -1,11 +1,17 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  mock,
+  setSystemTime,
+  test,
+} from "bun:test";
 import {
   createMemoryHistory,
   createRootRoute,
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import * as start from "@tanstack/react-start";
 import { testWorkerEnv } from "./db/test-database";
 
 mock.module("cloudflare:workers", () => ({
@@ -20,27 +26,11 @@ mock.module("cloudflare:workers", () => ({
   },
 }));
 
-// Nothing here reaches a server function. Bun loads each module once for the whole run,
-// so the apps' server functions load here as the tests that call them expect.
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      async ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-
 const calendar = await import("../apps/calendar/src/queries");
-const { parseScheduleSearch, placeOf, todayIn, visibleDays } =
-  await import("../apps/calendar/src/schedule");
-const { deviceZone } = await import("../apps/calendar/src/time");
-const { todayWindow } = await import("../apps/calendar/src/ui/today-plan");
+const { parseScheduleSearch } = await import("../apps/calendar/src/schedule");
 const storage = await import("../apps/storage/src/queries");
 const tasks = await import("../apps/tasks/src/queries");
+const mail = await import("../apps/mail/src/queries");
 
 type QueryClient = ReturnType<typeof storage.storageQueryClient>;
 type QueryKey = readonly unknown[];
@@ -50,7 +40,19 @@ const clients = [
   calendar.calendarQueryClient(),
   storage.storageQueryClient(),
   tasks.tasksQueryClient(),
+  mail.mailQueryClient(),
 ];
+
+// A reader in Auckland, where Monday 16 November has begun. UTC is still on Sunday the
+// 15th, a week earlier, so a loader that asks for UTC's days asks for the wrong week.
+const READER_ZONE = "Pacific/Auckland";
+const NOW = new Date("2026-11-15T11:00:00Z");
+const hostZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+beforeEach(() => {
+  process.env.TZ = READER_ZONE;
+  setSystemTime(NOW);
+});
 
 // Every request a client starts goes to a server that never answers, so a navigation
 // that waited for one would never finish.
@@ -71,6 +73,8 @@ function holdEveryRequest(): QueryKey[] {
 }
 
 afterEach(() => {
+  setSystemTime();
+  process.env.TZ = hostZone;
   for (const client of clients) {
     Reflect.deleteProperty(client, "query");
     client.clear();
@@ -112,96 +116,149 @@ const DRIVE = "0d4b2c8e-7a19-4e36-b5f2-8c6a9e1d3b70";
 const FOLDER = "9a7e3c1d-2b5f-4d8a-a6c4-1e0f8b3d5c92";
 const FILE = "5b3d1f7a-8c2e-4a6b-9d0f-2e4c6a8b0d13";
 const BOARD = "4e2a6c8b-1d3f-4a5e-9b7c-6d8f0a2c4e13";
+const MAILBOX = "6f1d2c1e-8a0b-4d7e-9c55-0a1b2c3d4e5f";
 const WEEK = parseScheduleSearch({ date: "2026-11-13" });
 
-const pages: [string, () => Promise<unknown>, () => QueryKey[]][] = [
-  [
-    "Calendar's sidebar",
-    calendar.prefetchCalendars,
-    () => [calendar.calendarKeys.calendars],
-  ],
-  [
-    "Calendar's Overview",
-    calendar.prefetchOverview,
-    () => [
-      calendar.calendarKeys.events(
-        todayWindow(todayIn(deviceZone(), Date.now())),
-      ),
+type Page = {
+  name: string;
+  client: () => QueryClient;
+  load: () => Promise<unknown>;
+  // What the page asks for, named without calling the code under test.
+  keys: () => QueryKey[];
+};
+
+const pagesOf = (
+  client: Page["client"],
+  rows: [string, Page["load"], Page["keys"]][],
+): Page[] => rows.map(([name, load, keys]) => ({ name, client, load, keys }));
+
+const days = (from: string, to: string) =>
+  calendar.calendarKeys.events({ from, to } as never);
+
+const pages: Page[] = [
+  ...pagesOf(calendar.calendarQueryClient, [
+    [
+      "Calendar's sidebar",
+      calendar.prefetchCalendars,
+      () => [calendar.calendarKeys.calendars],
     ],
-  ],
-  [
-    "Calendar's Schedule",
-    () => calendar.prefetchSchedule(WEEK),
-    () => [
-      calendar.calendarKeys.events(
-        visibleDays(placeOf(WEEK, todayIn(deviceZone(), Date.now()))),
-      ),
+    [
+      "Calendar's Overview",
+      calendar.prefetchOverview,
+      () => [days("2026-11-16", "2026-11-23")],
     ],
-  ],
-  [
-    "Storage's sidebar",
-    storage.prefetchDirectory,
-    () => [storage.storageKeys.directory, storage.storageKeys.moveNotices],
-  ],
-  [
-    "Storage's Home",
-    storage.prefetchHome,
-    () => [storage.storageKeys.recent(4)],
-  ],
-  [
-    "Storage's Recent",
-    storage.prefetchRecent,
-    () => [storage.storageKeys.recent(50)],
-  ],
-  [
-    "Storage's Shared",
-    storage.prefetchShared,
-    () => [storage.storageKeys.shared],
-  ],
-  [
-    "Storage's Starred",
-    storage.prefetchStarred,
-    () => [storage.storageKeys.starred],
-  ],
-  ["Storage's Trash", storage.prefetchTrash, () => [storage.storageKeys.trash]],
-  [
-    "a Storage search with a date",
-    () => storage.prefetchSearch("report after:2026-01-01"),
-    () => [storage.storageKeys.search("report after:2026-01-01")],
-  ],
-  [
-    "a drive",
-    () => storage.prefetchFolder(DRIVE),
-    () => [storage.storageKeys.folder(DRIVE as never, null)],
-  ],
-  [
-    "a folder",
-    () => storage.prefetchFolder(DRIVE, FOLDER),
-    () => [storage.storageKeys.folder(DRIVE as never, FOLDER as never)],
-  ],
-  [
-    "a file",
-    () => storage.prefetchFile(DRIVE, FILE),
-    () => [storage.storageKeys.file(DRIVE as never, FILE as never)],
-  ],
-  [
-    "Tasks' sidebar",
-    tasks.prefetchBoards,
-    () => [tasks.tasksKeys.boards, tasks.tasksKeys.moveNotices],
-  ],
-  ["My tasks", tasks.prefetchMyTasks, () => [tasks.tasksKeys.mine]],
-  [
-    "a board",
-    () => tasks.prefetchBoard(BOARD),
-    () => [tasks.tasksKeys.board(BOARD as never)],
-  ],
+    [
+      "Calendar's Schedule on the reader's today",
+      () => calendar.prefetchSchedule(parseScheduleSearch({})),
+      () => [days("2026-11-16", "2026-11-23")],
+    ],
+    [
+      "Calendar's Schedule on a date",
+      () => calendar.prefetchSchedule(WEEK),
+      () => [days("2026-11-09", "2026-11-16")],
+    ],
+  ]),
+  ...pagesOf(storage.storageQueryClient, [
+    [
+      "Storage's sidebar",
+      storage.prefetchDirectory,
+      () => [storage.storageKeys.directory, storage.storageKeys.moveNotices],
+    ],
+    [
+      "Storage's Home",
+      storage.prefetchHome,
+      () => [storage.storageKeys.recent(4)],
+    ],
+    [
+      "Storage's Recent",
+      storage.prefetchRecent,
+      () => [storage.storageKeys.recent(50)],
+    ],
+    [
+      "Storage's Shared",
+      storage.prefetchShared,
+      () => [storage.storageKeys.shared],
+    ],
+    [
+      "Storage's Starred",
+      storage.prefetchStarred,
+      () => [storage.storageKeys.starred],
+    ],
+    [
+      "Storage's Trash",
+      storage.prefetchTrash,
+      () => [storage.storageKeys.trash],
+    ],
+    [
+      "a Storage search with a date",
+      () => storage.prefetchSearch("report after:2026-01-01"),
+      () => [storage.storageKeys.search("report after:2026-01-01")],
+    ],
+    [
+      "a drive",
+      () => storage.prefetchFolder(DRIVE),
+      () => [storage.storageKeys.folder(DRIVE as never, null)],
+    ],
+    [
+      "a folder",
+      () => storage.prefetchFolder(DRIVE, FOLDER),
+      () => [storage.storageKeys.folder(DRIVE as never, FOLDER as never)],
+    ],
+    [
+      "a file",
+      () => storage.prefetchFile(DRIVE, FILE),
+      () => [storage.storageKeys.file(DRIVE as never, FILE as never)],
+    ],
+  ]),
+  ...pagesOf(tasks.tasksQueryClient, [
+    [
+      "Tasks' sidebar",
+      tasks.prefetchBoards,
+      () => [tasks.tasksKeys.boards, tasks.tasksKeys.moveNotices],
+    ],
+    ["My tasks", tasks.prefetchMyTasks, () => [tasks.tasksKeys.mine]],
+    [
+      "a board",
+      () => tasks.prefetchBoard(BOARD),
+      () => [tasks.tasksKeys.board(BOARD as never)],
+    ],
+  ]),
+  ...pagesOf(mail.mailQueryClient, [
+    [
+      "Mail's mailbox list",
+      mail.prefetchMailboxes,
+      () => [mail.mailKeys.mailboxes],
+    ],
+    [
+      "a mail folder",
+      () => mail.prefetchThreads(MAILBOX, "inbox"),
+      () => [mail.mailKeys.threadsIn(MAILBOX as never, { folder: "inbox" })],
+    ],
+    [
+      "a mail label",
+      () => mail.prefetchThreads(MAILBOX, "label-3"),
+      () => [
+        mail.mailKeys.threadsIn(MAILBOX as never, { labelId: 3 as never }),
+      ],
+    ],
+    [
+      "a mailbox's rules",
+      () => mail.prefetchRules(MAILBOX),
+      () => [mail.mailKeys.rules(MAILBOX as never)],
+    ],
+    [
+      "a mailbox's senders",
+      () => mail.prefetchSenders(MAILBOX),
+      () => [mail.mailKeys.senders(MAILBOX as never)],
+    ],
+  ]),
 ];
 
 test.each(pages)(
-  "opening %s in the browser asks for its data and doesn't wait for it",
-  async (_, loader, keys) => {
+  "opening $name in the browser asks for its data and doesn't wait for it",
+  async ({ load, keys }) => {
     const asked = holdEveryRequest();
-    const router = browserRouter(loader);
+    const router = browserRouter(load);
     await router.load();
 
     await within(router.navigate({ href: "/page" }), "The navigation");
@@ -212,22 +269,36 @@ test.each(pages)(
   },
 );
 
-test("preloading a page again, or one whose data the browser holds, asks nothing more", async () => {
-  const asked = holdEveryRequest();
-  const router = browserRouter(storage.prefetchShared);
-  await router.load();
+test.each(pages)(
+  "preloading $name again asks nothing more",
+  async ({ load, keys }) => {
+    const asked = holdEveryRequest();
+    const router = browserRouter(load);
+    await router.load();
 
-  await within(router.preloadRoute({ to: "/page" }), "The first preload");
-  await within(router.preloadRoute({ to: "/page" }), "The second preload");
-  expect(asked).toEqual([storage.storageKeys.shared]);
+    await within(router.preloadRoute({ to: "/page" }), "The first preload");
+    await within(router.preloadRoute({ to: "/page" }), "The second preload");
 
-  // Held data shows at once and the page asks again as it opens, so even old data isn't
-  // asked for by a preload.
-  const held = browserRouter(storage.prefetchTrash);
-  storage.storageQueryClient().setQueryData(storage.storageKeys.trash, [], {
-    updatedAt: Date.now() - 60 * 60 * 1000,
-  });
-  await held.load();
-  await within(held.preloadRoute({ to: "/page" }), "The preload");
-  expect(asked).toEqual([storage.storageKeys.shared]);
-});
+    expect(asked).toEqual(keys());
+  },
+);
+
+// Held data shows at once and the page asks again as it opens, so even old data isn't
+// asked for by a preload.
+test.each(pages)(
+  "preloading $name doesn't refresh data the browser holds",
+  async ({ client, load, keys }) => {
+    const asked = holdEveryRequest();
+    for (const key of keys()) {
+      client().setQueryData(key, [], {
+        updatedAt: Date.now() - 60 * 60 * 1000,
+      });
+    }
+    const router = browserRouter(load);
+    await router.load();
+
+    await within(router.preloadRoute({ to: "/page" }), "The preload");
+
+    expect(asked).toEqual([]);
+  },
+);

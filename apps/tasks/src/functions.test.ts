@@ -1,8 +1,7 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import type { BoardId, BoardRole, UserId } from "@cloudysuite/access";
-import * as start from "@tanstack/react-start";
-import * as startServer from "@tanstack/react-start/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { runServerFunctions } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -31,24 +30,8 @@ import {
   viewOnlyThereMessage,
 } from "./types";
 
-// Outside Vite a server function never reaches its handler, so this runs the validator
-// and handler as the compiled server function would.
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      async ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
 let request: Request;
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-mock.module("@tanstack/react-start/server", () => ({
-  ...startServer,
-  getRequest: () => request,
-}));
+runServerFunctions(() => request);
 const functions = await import("./functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;
@@ -600,15 +583,18 @@ test("only a manager adds people, takes them off, changes what they can do, or c
 });
 
 test("the last manager can't leave or step down, even when two managers step down at once", async () => {
+  // Each starts as it is awaited. One that was already refused with no one waiting on
+  // it would surface as an error the test never meant to raise.
   for (const attempt of [
-    settle(people.manager, { kind: "leave" }),
-    settle(people.manager, {
-      kind: "setRole",
-      userId: people.manager,
-      role: "editor",
-    }),
+    () => settle(people.manager, { kind: "leave" }),
+    () =>
+      settle(people.manager, {
+        kind: "setRole",
+        userId: people.manager,
+        role: "editor",
+      }),
   ]) {
-    expect(await refused(attempt)).toEqual({
+    expect(await refused(attempt())).toEqual({
       status: 409,
       message: LAST_MANAGER_MESSAGE,
     });
