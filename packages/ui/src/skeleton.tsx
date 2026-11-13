@@ -17,10 +17,8 @@ export function SkeletonCover({ children }: { children: ReactNode }) {
     covers += 1;
     let mounted = true;
     const fades = cover.current?.getAnimations().map((fade) => fade.finished);
-    Promise.all(fades ?? []).then(
-      () => mounted && setDrawn(true),
-      () => {},
-    );
+    // A cancelled fade has left the layer opaque too, so it takes clicks either way.
+    Promise.allSettled(fades ?? []).then(() => mounted && setDrawn(true));
     return () => {
       covers -= 1;
       mounted = false;
