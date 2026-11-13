@@ -1,7 +1,7 @@
 import { beforeEach, expect, setSystemTime, test } from "bun:test";
 import type { CalendarId, CalendarRole, UserId } from "@cloudysuite/access";
 import { testWorkerEnv } from "../../../src/db/test-database";
-import { runServerFunctions } from "../../../src/test-server-fn";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import { handOver } from "../../auth/src/admin/handover";
 import {
   createKit,
@@ -34,7 +34,7 @@ import {
 import { draftOf, formOf, scopesFor } from "./ui/event-form";
 
 let request: Request;
-runServerFunctions(() => request);
+readRequestFrom(() => request);
 const functions = {
   ...(await import("./functions")),
   ...(await import("./search-functions")),

@@ -13,7 +13,7 @@ import {
   type UserId,
 } from "@cloudysuite/access";
 import { testWorkerEnv } from "../../../src/db/test-database";
-import { runServerFunctions } from "../../../src/test-server-fn";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -60,7 +60,7 @@ import { meetingLink } from "./ui/meeting-link";
 // Workers runtime.
 
 let request: Request;
-runServerFunctions(() => request);
+readRequestFrom(() => request);
 const functions = await import("./functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;

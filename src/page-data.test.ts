@@ -284,7 +284,8 @@ test.each(pages)(
 );
 
 // Held data shows at once and the page asks again as it opens, so even old data isn't
-// asked for by a preload.
+// asked for by a preload. A loader that awaits its data and keeps `staleTime: "static"`
+// passes here, because held data answers it at once. The first two checks catch it.
 test.each(pages)(
   "preloading $name doesn't refresh data the browser holds",
   async ({ client, load, keys }) => {

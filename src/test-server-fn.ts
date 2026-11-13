@@ -1,3 +1,7 @@
+// bunfig.toml preloads this file, so every test run replaces `createServerFn` before any
+// test file loads a module that builds a server function. Bun shares one module registry
+// across files, so a file that built the real ones first would leave every later file
+// with server functions that need Vite's request context.
 import { mock } from "bun:test";
 import * as start from "@tanstack/react-start";
 import * as startServer from "@tanstack/react-start/server";
@@ -16,12 +20,19 @@ const createServerFn = () => ({
   handler: (run: Handler) => () => run({}),
 });
 
-// Call before importing a module that builds server functions. `request` is the one
-// the server function reads its cookies from.
-export function runServerFunctions(request: () => Request) {
-  mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-  mock.module("@tanstack/react-start/server", () => ({
-    ...startServer,
-    getRequest: request,
-  }));
+let currentRequest: () => Request = () => {
+  throw new Error(
+    "No request for this server function to read. Call readRequestFrom(() => request) in the test file.",
+  );
+};
+
+mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
+mock.module("@tanstack/react-start/server", () => ({
+  ...startServer,
+  getRequest: () => currentRequest(),
+}));
+
+// `request` is the one the server functions read their cookies from.
+export function readRequestFrom(request: () => Request) {
+  currentRequest = request;
 }

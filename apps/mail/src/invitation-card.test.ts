@@ -8,7 +8,7 @@ import {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
-import { runServerFunctions } from "../../../src/test-server-fn";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -59,7 +59,7 @@ import type { MessageId } from "./types";
 // that share one directory, and the card is read through Mail's own server functions.
 
 let request: Request;
-runServerFunctions(() => request);
+readRequestFrom(() => request);
 const card = await import("./invitation-functions");
 const calendarFunctions = await import("../../calendar/src/functions");
 

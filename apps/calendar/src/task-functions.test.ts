@@ -1,7 +1,7 @@
 import { beforeEach, expect, setSystemTime, afterEach, test } from "bun:test";
 import type { BoardId, UserId } from "@cloudysuite/access";
 import { testWorkerEnv } from "../../../src/db/test-database";
-import { runServerFunctions } from "../../../src/test-server-fn";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -18,7 +18,7 @@ import {
 import type { Person, TaskId } from "../../tasks/src/types";
 
 let request: Request;
-runServerFunctions(() => request);
+readRequestFrom(() => request);
 const { listDueTasks, setTaskStatus } = await import("./task-functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;
