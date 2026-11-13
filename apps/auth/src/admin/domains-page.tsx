@@ -121,7 +121,9 @@ function Guide({
 
       {!checks && pending === "check" && (
         <div className="rounded bg-sidebar p-3">
-          <Working>Checking {name}…</Working>
+          <Working>
+            <span className="min-w-0">Checking {name}…</span>
+          </Working>
         </div>
       )}
       {checks && (
@@ -161,7 +163,7 @@ function Guide({
             })
           }
         >
-          Add {name}
+          <span className="wrap-anywhere">Add {name}</span>
         </Button>
         <Button variant="quiet" disabled={pending === "add"} onClick={onCancel}>
           Cancel
@@ -210,7 +212,7 @@ export function DomainsPage({
               key={name}
               className="flex flex-wrap items-center gap-x-2 gap-y-1"
             >
-              <span className="min-w-0 grow break-words">{name}</span>
+              <span className="min-w-0 grow">{name}</span>
               {name === view.appDomain && <Badge>Also runs your apps</Badge>}
             </li>
           ))}

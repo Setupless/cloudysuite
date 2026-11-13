@@ -169,8 +169,8 @@ function PasskeyRow({
             className="text-secondary"
             aria-hidden
           />
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-medium">{name}</p>
+          <div className="min-w-0 grow">
+            <p className="font-medium">{name}</p>
             {passkey.addedAt && <AddedDate date={passkey.addedAt} />}
           </div>
           <Button variant="quiet" onClick={() => setMode("rename")}>

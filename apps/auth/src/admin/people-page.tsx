@@ -151,43 +151,45 @@ function InviteItem({ invite }: { invite: InviteRow }) {
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 grow">
-          <p className="font-medium break-words">{invite.email}</p>
-          <p className="text-sm break-words text-secondary">
+          <p className="font-medium">{invite.email}</p>
+          <p className="text-sm text-secondary">
             {invite.mailboxAddress
               ? `Will sign in as ${invite.mailboxAddress}`
               : "No new mailbox"}
           </p>
         </div>
         {invite.expired && <Badge tone="danger">Expired</Badge>}
-        <Button
-          variant="quiet"
-          icon={IconSend}
-          pending={pending === "resend"}
-          disabled={pending !== null}
-          onClick={() =>
-            run("resend", async () => {
-              const outcome = await resendInvite({ data: { id: invite.id } });
-              if (!outcome.ok) return outcome.message;
-              setDelivery(outcome);
-              await router.invalidate();
-            })
-          }
-        >
-          Send again
-        </Button>
-        <Button
-          variant="danger"
-          pending={pending === "cancel"}
-          disabled={pending !== null}
-          onClick={() =>
-            run("cancel", async () => {
-              await cancelInvite({ data: { id: invite.id } });
-              await router.invalidate();
-            })
-          }
-        >
-          Cancel invite
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="quiet"
+            icon={IconSend}
+            pending={pending === "resend"}
+            disabled={pending !== null}
+            onClick={() =>
+              run("resend", async () => {
+                const outcome = await resendInvite({ data: { id: invite.id } });
+                if (!outcome.ok) return outcome.message;
+                setDelivery(outcome);
+                await router.invalidate();
+              })
+            }
+          >
+            Send again
+          </Button>
+          <Button
+            variant="danger"
+            pending={pending === "cancel"}
+            disabled={pending !== null}
+            onClick={() =>
+              run("cancel", async () => {
+                await cancelInvite({ data: { id: invite.id } });
+                await router.invalidate();
+              })
+            }
+          >
+            Cancel invite
+          </Button>
+        </div>
       </div>
       {error && <Notice tone="danger">{error}</Notice>}
       {delivery && <DeliveryNotice email={invite.email} delivery={delivery} />}
@@ -602,11 +604,11 @@ function PersonItem({
         <Avatar person={person} />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="min-w-0 grow">
-            <p className="truncate font-medium">
+            <p className="font-medium">
               {person.name}
               {isYou && <span className="text-secondary"> (you)</span>}
             </p>
-            <p className="text-sm break-words text-secondary">{person.email}</p>
+            <p className="text-sm text-secondary">{person.email}</p>
           </div>
           <div className="flex flex-wrap gap-1.5 empty:hidden">
             {person.role === "admin" && <Badge>Admin</Badge>}
