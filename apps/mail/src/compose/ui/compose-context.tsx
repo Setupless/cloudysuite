@@ -1,4 +1,5 @@
 import type { UserId } from "@cloudysuite/access";
+import { PageArea } from "@cloudysuite/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -17,6 +18,7 @@ import { isOffline, OFFLINE_COMPOSE_REFUSED } from "../../pwa/saved-mail";
 import { runWhileVisible } from "../../pwa/while-visible";
 import type { MailboxId, MessageId, ThreadId } from "../../types";
 import { mailboxesQuery } from "../../queries";
+import { MAIL_PAGES } from "../../ui/pending";
 import { useToast } from "../../ui/toast";
 import { keptNoteText, withoutAccess } from "../kept";
 import {
@@ -392,10 +394,12 @@ export function ComposeProvider({
             onOpen={() => void reopen(keptHere[0]!.id)}
           />
         )}
-        {/* Positioned, so screen-reader-only controls further down can't stretch the document. */}
-        <div className="relative min-h-0 flex-1 overflow-y-auto">
-          {children}
-        </div>
+        <PageArea pages={MAIL_PAGES} className="flex min-h-0 flex-1 flex-col">
+          {/* Positioned, so screen-reader-only controls further down can't stretch the document. */}
+          <div className="relative min-h-0 flex-1 overflow-y-auto">
+            {children}
+          </div>
+        </PageArea>
       </div>
       <SendTray />
     </ComposeContext.Provider>

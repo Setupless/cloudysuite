@@ -25,8 +25,8 @@ import {
   todayIn,
   visibleDays,
 } from "../schedule";
-import { parseTimeZone } from "../time";
-import type { CivilDate, EventUid, TimeZone } from "../types";
+import { deviceZone } from "../time";
+import type { CivilDate, EventUid } from "../types";
 import { TitlePicker } from "./date-picker";
 import { EventCard, EventPanel } from "./event-details";
 import { DeleteEventDialog, EventDialog, type Opening } from "./event-dialog";
@@ -38,6 +38,14 @@ import {
 } from "./event-form";
 import { dayTitle, monthTitle, shortDayTitle, weekTitle } from "./event-text";
 import { MonthGrid } from "./month-grid";
+import {
+  listedTasks,
+  shownTasks,
+  TASKS_FAILED,
+  unreachableBoards,
+  unreachableText,
+  useDueTasks,
+} from "./my-tasks";
 import { daySpanOf } from "./schedule-layout";
 import { type ShownEvent, shownEvents } from "./shown-event";
 import { type EventHandlers, TimeGrid } from "./time-grid";
@@ -89,10 +97,6 @@ export function focusFirst(
   });
 }
 
-export const deviceZone = () =>
-  parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
-  ("UTC" as TimeZone);
-
 function useNow(): number {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -132,6 +136,11 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
     () => shownEvents(listing.data, calendars.data),
     [listing.data, calendars.data],
   );
+  const { tasksHref, due } = useDueTasks(window.from, window.to);
+  // A disabled query keeps its last answer, so once Tasks is off, ignore it.
+  const dueData = tasksHref === undefined ? undefined : due.data;
+  const tasks = useMemo(() => shownTasks(listedTasks(dueData)), [dueData]);
+  const unreachable = unreachableBoards(dueData);
   const at = `${place.view}/${place.date}`;
   const [openCard, setCard] = useState<OpenCard | null>(null);
   const card = openCard?.at === at ? openCard : null;
@@ -360,6 +369,16 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
           </Notice>
         </div>
       )}
+      {tasksHref !== undefined && due.error && (
+        <div className="px-4 pb-2">
+          <Notice tone="info">{TASKS_FAILED}</Notice>
+        </div>
+      )}
+      {unreachable > 0 && (
+        <div className="px-4 pb-2">
+          <Notice tone="info">{unreachableText(unreachable)}</Notice>
+        </div>
+      )}
       <div
         className="relative flex min-h-0 flex-1 border-t border-line"
         aria-busy={listing.isPending || calendars.isPending || undefined}
@@ -369,10 +388,17 @@ function LiveSchedule({ search }: { search: ScheduleSearch }) {
             date={place.date}
             window={window}
             events={events}
+            tasks={tasks}
             handlers={handlers}
           />
         ) : (
-          <TimeGrid days={days} events={events} now={now} handlers={handlers} />
+          <TimeGrid
+            days={days}
+            events={events}
+            tasks={tasks}
+            now={now}
+            handlers={handlers}
+          />
         )}
         {panelEvent && (
           <EventPanel

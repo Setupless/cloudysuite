@@ -1,4 +1,4 @@
-import { TEAM_CALENDAR_COLOURS } from "@cloudysuite/access";
+import { TEAM_BOARD_COLOURS, TEAM_CALENDAR_COLOURS } from "@cloudysuite/access";
 import { and, asc, eq, type Name, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
@@ -11,6 +11,7 @@ import {
   type ToHand,
 } from "./handover-text";
 import {
+  boards,
   calendars,
   type DriveId,
   drives,
@@ -31,13 +32,17 @@ const NAME_WHEN_PERSON_UNKNOWN = "Files from someone who was removed";
 
 const nextColour = sql`((SELECT count(*) FROM drives AS team WHERE team.kind = 'team') % ${TEAM_COLOURS}) + 1`;
 
-const nextCalendarColour = sql`(SELECT CASE count(*) % ${sql.raw(String(TEAM_CALENDAR_COLOURS.length))}
-  ${sql.raw(TEAM_CALENDAR_COLOURS.map((colour, index) => `WHEN ${index} THEN ${colour}`).join(" "))}
-  END FROM calendars AS team WHERE team.kind = 'team')`;
+const nextTeamColour = (table: string, colours: readonly number[]) =>
+  sql.raw(`(SELECT CASE count(*) % ${colours.length}
+  ${colours.map((colour, index) => `WHEN ${index} THEN ${colour}`).join(" ")}
+  END FROM ${table} AS team WHERE team.kind = 'team')`);
+
+const nextCalendarColour = nextTeamColour("calendars", TEAM_CALENDAR_COLOURS);
+const nextBoardColour = nextTeamColour("boards", TEAM_BOARD_COLOURS);
 
 type Db = DrizzleD1Database;
 
-// Files and calendars are handed over by the same rules. Each kind names its own tables,
+// Files, calendars, and boards are handed over by the same rules. Each kind names its own tables,
 // and how a person's own one becomes a team one.
 type Space = {
   table: Name;
@@ -74,6 +79,16 @@ const SPACES: Record<SpaceKind, Space> = {
         .where(
           and(eq(calendars.ownerId, personId), eq(calendars.kind, "personal")),
         ),
+  },
+  boards: {
+    table: sql.identifier("boards"),
+    access: sql.identifier("board_access"),
+    key: sql.identifier("board_id"),
+    toTeam: (db, personId, name) =>
+      db
+        .update(boards)
+        .set({ kind: "team", ownerId: null, name, colour: nextBoardColour })
+        .where(and(eq(boards.ownerId, personId), eq(boards.kind, "personal"))),
   },
 };
 
@@ -137,8 +152,8 @@ function handOverIn(
   ];
 }
 
-// For someone with nothing to hand over: their team folders and calendars still need a
-// manager.
+// For someone with nothing to hand over: their team folders, calendars, and boards still
+// need a manager.
 export async function appointNextManagers(
   database: D1Database,
   personId: UserId,
@@ -147,12 +162,13 @@ export async function appointNextManagers(
   await db.batch([
     nextManagers(db, SPACES.files, personId),
     nextManagers(db, SPACES.calendars, personId),
+    nextManagers(db, SPACES.boards, personId),
   ]);
 }
 
 // Everything here is one D1 batch, so it all happens or none of it does. Each part finds
 // its own work from what's there now, so a repeat after the next step failed finds none:
-// their own folder and calendar are team ones by then, and each has its new manager.
+// their own folder, calendar, and board are team ones by then, and each has its new manager.
 export async function handOver(
   database: D1Database,
   personId: UserId,
@@ -211,16 +227,25 @@ export async function readToHand(
   database: D1Database,
 ): Promise<Map<string, ToHand>> {
   const db = drizzle(database);
-  const [fileOwners, fileAccess, calendarOwners, calendarAccess] =
-    await db.batch([
-      ownersIn(db, SPACES.files),
-      teamAccessIn(db, SPACES.files),
-      ownersIn(db, SPACES.calendars),
-      teamAccessIn(db, SPACES.calendars),
-    ]);
+  const [
+    fileOwners,
+    fileAccess,
+    calendarOwners,
+    calendarAccess,
+    boardOwners,
+    boardAccess,
+  ] = await db.batch([
+    ownersIn(db, SPACES.files),
+    teamAccessIn(db, SPACES.files),
+    ownersIn(db, SPACES.calendars),
+    teamAccessIn(db, SPACES.calendars),
+    ownersIn(db, SPACES.boards),
+    teamAccessIn(db, SPACES.boards),
+  ]);
   const toHand = new Map<string, ToHand>();
   tally(toHand, "files", fileOwners, fileAccess);
   tally(toHand, "calendars", calendarOwners, calendarAccess);
+  tally(toHand, "boards", boardOwners, boardAccess);
   return toHand;
 }
 

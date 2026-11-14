@@ -3,6 +3,7 @@ export const APPS = {
   mail: { toggleable: true },
   storage: { toggleable: true },
   calendar: { toggleable: true },
+  tasks: { toggleable: true },
 } as const;
 
 export type AppId = keyof typeof APPS;

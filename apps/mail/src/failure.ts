@@ -2,6 +2,7 @@ export class MailFailure extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly appOff = false,
   ) {
     super(message);
   }

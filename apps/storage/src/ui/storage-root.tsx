@@ -1,53 +1,15 @@
 import { ToastProvider } from "@cloudysuite/ui";
-import {
-  MutationCache,
-  QueryCache,
-  QueryClient,
-  QueryClientProvider,
-} from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { ensureMyFiles } from "../functions";
-import {
-  call,
-  refreshStorage,
-  retryUnlessRefused,
-  StorageFailure,
-} from "../queries";
+import { call, refreshStorage, storageQueryClient } from "../queries";
 import { sendFile } from "./upload-client";
 import { UploadQueue } from "./upload-queue";
 import { UploadsContext } from "./uploads-context";
 
-// An expired session surfaces here first. The reload reaches the route's sign-in check,
-// which sends the person to sign in and back again.
-function reloadIfSignedOut(error: Error) {
-  if (error instanceof StorageFailure && error.status === 401) {
-    window.location.reload();
-  }
-}
-
-function createStorageQueryClient() {
-  return new QueryClient({
-    queryCache: new QueryCache({ onError: reloadIfSignedOut }),
-    mutationCache: new MutationCache({ onError: reloadIfSignedOut }),
-    defaultOptions: {
-      mutations: { networkMode: "always" },
-      queries: {
-        networkMode: "always",
-        // Only long enough that the first HTML's files aren't fetched again as the page
-        // wakes up. Opening a folder after that asks the server.
-        staleTime: 2_000,
-        retry: retryUnlessRefused,
-        refetchOnWindowFocus: true,
-      },
-    },
-  });
-}
-
 export function StorageRoot({ children }: { children: ReactNode }) {
-  // One client per render root: on the server a shared one would leak one person's
-  // files into the next person's page.
-  const [client] = useState(createStorageQueryClient);
+  const [client] = useState(storageQueryClient);
   const [queue] = useState(
     () =>
       new UploadQueue({

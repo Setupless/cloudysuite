@@ -14,11 +14,16 @@ export type Toast = {
   message: string;
   tone?: "info" | "danger";
   action?: { label: string; run: () => void };
+  // For an Undo that lasts as long as the server allows.
+  durationMs?: number;
 };
 
 const ToastContext = createContext<(toast: Toast) => void>(() => {});
 
 export const useToast = () => useContext(ToastContext);
+
+export const toastAction = () =>
+  document.querySelector<HTMLElement>("[data-toast-action]");
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<(Toast & { id: number }) | null>(null);
@@ -26,11 +31,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setCurrent((previous) => ({ ...toast, id: (previous?.id ?? 0) + 1 }));
   }, []);
   const id = current?.id;
+  const duration = current?.durationMs ?? TOAST_MS;
   useEffect(() => {
     if (id === undefined) return;
-    const timer = setTimeout(() => setCurrent(null), TOAST_MS);
+    const timer = setTimeout(() => setCurrent(null), duration);
     return () => clearTimeout(timer);
-  }, [id]);
+  }, [id, duration]);
   const value = useMemo(() => show, [show]);
 
   return (
@@ -46,6 +52,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             {current.action && (
               <button
                 type="button"
+                data-toast-action
                 className="cursor-pointer font-semibold underline outline-page focus-visible:outline-2"
                 onClick={() => {
                   current.action?.run();

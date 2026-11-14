@@ -1,4 +1,3 @@
-import type { CalendarRole } from "@cloudysuite/access";
 import { Avatar, Notice, Working } from "@cloudysuite/ui";
 import { IconMail } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -10,16 +9,6 @@ import { peopleChoices } from "./people-choices";
 const CHOICE =
   "flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-accent enabled:hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:opacity-60";
 const CHOICES_SHOWN = 8;
-
-// The one being saved stays at full strength next to its spinner.
-export const ROLE_SELECT =
-  "flex-none rounded border border-line bg-field px-2 py-1.5 text-[13px] text-text outline-accent focus-visible:outline-2 disabled:not-aria-busy:opacity-60";
-
-export const ROLES = [
-  { value: "editor", label: "Can edit" },
-  { value: "viewer", label: "Can view" },
-  { value: "manager", label: "Manager" },
-] as const satisfies readonly { value: CalendarRole; label: string }[];
 
 // Anyone can be invited by address, from the event dialog. Refused says why not, while
 // emails can't go from the organiser's address.

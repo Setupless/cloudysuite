@@ -41,6 +41,7 @@ import {
   type CalendarOccurrence,
   type ChangeResult,
   type CreatedEvent,
+  CALENDAR_GONE_MESSAGE,
   EVENT_GONE_MESSAGE,
   type EventDraft,
   type EventListing,
@@ -142,6 +143,8 @@ function answerChange(result: ChangeResult): void {
       throw refusal(403, READ_ONLY_MESSAGE);
     case "gone":
       throw refusal(404, EVENT_GONE_MESSAGE);
+    case "calendarGone":
+      throw refusal(404, CALENDAR_GONE_MESSAGE);
     case "notInvitable":
       throw refusal(404, NOT_A_PERSON_MESSAGE);
     case "peopleForOneDate":
@@ -190,16 +193,17 @@ export const countCalendarEvents = createServerFn({ method: "GET" })
     (await openCalendarAs((await me()).id, data.calendarId)).countEvents(),
   );
 
-// D1 first, so the calendar is gone for everyone at once. If emptying the object then
-// fails, nobody can reach what's left.
+// The object first, so a failure leaves the calendar listed for its manager to delete
+// again. Once emptied it refuses every change, so nothing new lands there before D1
+// forgets it.
 export const deleteTeamCalendar = createServerFn({ method: "POST" })
   .validator(parseCalendarInput)
   .handler(async ({ data }): Promise<void> => {
     const calendar = await openTeamAsManager((await me()).id, data.calendarId);
-    await deleteTeam(env.DB, data.calendarId);
     if ((await calendar.erase()).status === "noAccess") {
       throw refusal(403, ONLY_MANAGERS_MESSAGE);
     }
+    await deleteTeam(env.DB, data.calendarId);
   });
 
 export const setCalendarHidden = createServerFn({ method: "POST" })
@@ -354,6 +358,8 @@ export const createEvent = createServerFn({ method: "POST" })
         return result;
       case "noAccess":
         throw refusal(403, VIEW_ONLY_MESSAGE);
+      case "calendarGone":
+        throw refusal(404, CALENDAR_GONE_MESSAGE);
       case "notInvitable":
         throw refusal(404, NOT_A_PERSON_MESSAGE);
       case "outsideNotAllowed":
@@ -407,6 +413,9 @@ export const importCalendarFile = createServerFn({ method: "POST" })
         groups.slice(first, first + IMPORT_BATCH),
       );
       if (result.status === "noAccess") throw refusal(403, VIEW_ONLY_MESSAGE);
+      if (result.status === "calendarGone") {
+        throw refusal(404, CALENDAR_GONE_MESSAGE);
+      }
       addSummary(summary, result.summary);
     }
     return summary;

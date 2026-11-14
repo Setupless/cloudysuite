@@ -1,12 +1,19 @@
-import { requireUser, type SignedIn } from "@cloudysuite/auth/session";
+import {
+  rememberUser,
+  requireRememberedUser,
+  requireUser,
+  type SignedIn,
+} from "@cloudysuite/auth/session";
 import { isRedirect } from "@tanstack/react-router";
-import { isConnectionFailure, markUnreachable } from "../pwa/connectivity";
+import {
+  isConnectionFailure,
+  isOffline,
+  markUnreachable,
+} from "../pwa/connectivity";
 import { clearDevice, readTrustedOwner } from "../pwa/device";
 import { readServerSession } from "../pwa/device-store";
 import { NoSavedIdentity } from "../pwa/offline-notice";
 import { setSavedMailReader } from "../pwa/saved-mail";
-
-let signedIn: SignedIn | undefined;
 
 // With no connection the server cannot be asked, so this device's saved owner stands
 // in, and only to show what they saved here. Every mailbox call still checks the session
@@ -19,20 +26,24 @@ async function fromDevice(): Promise<SignedIn> {
   return owner.user;
 }
 
-// Waiting on the server at each click would make every folder feel slow. Every
-// mailbox call checks the session itself, and a 401 reloads this page, so this
-// copy only ever decides what the shell shows.
-export async function requireMailUser(location: {
-  publicHref: string;
-}): Promise<SignedIn> {
+// A hover must change nothing on this device, so it only asks the server, and not at
+// all while offline. A click can share a hover's question, so it decides what the
+// answer means for this device only once the answer arrives: it clears the device for
+// someone who signed out, and falls back to the saved owner with no connection.
+export async function requireMailUser(
+  location: { publicHref: string },
+  preload = false,
+): Promise<SignedIn> {
   if (import.meta.env.SSR) return requireUser("mail", location);
-  if (signedIn) return signedIn;
-  if (!navigator.onLine) {
-    signedIn = await fromDevice();
-    return signedIn;
+  if (preload) {
+    if (isOffline())
+      throw new Error("Offline, so there is nothing to preload.");
+    return requireRememberedUser("mail", location);
   }
   try {
-    signedIn = await requireUser("mail", location);
+    return await requireRememberedUser("mail", location, () =>
+      navigator.onLine ? requireUser("mail", location) : fromDevice(),
+    );
   } catch (thrown) {
     // A page the service worker started offline finds out here that its person left.
     if (isRedirect(thrown)) {
@@ -40,7 +51,8 @@ export async function requireMailUser(location: {
       if (session.kind === "signed-out") await clearDevice();
     }
     if (!isConnectionFailure(thrown)) throw thrown;
-    signedIn = await fromDevice();
+    const owner = await fromDevice();
+    rememberUser(owner);
+    return owner;
   }
-  return signedIn;
 }

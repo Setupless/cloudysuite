@@ -1,22 +1,14 @@
-import {
-  afterEach,
-  beforeEach,
-  expect,
-  mock,
-  setSystemTime,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import {
   type CalendarId,
   ensurePersonalCalendar,
   type MailboxId,
   type UserId,
 } from "@cloudysuite/access";
-import * as start from "@tanstack/react-start";
-import * as startServer from "@tanstack/react-start/server";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -27,7 +19,7 @@ import {
   createFakeEmail,
   partOfType,
   readEmail,
-} from "../../calendar/src/email/test-support";
+} from "@cloudysuite/app-email/test-support";
 import {
   AUTH,
   calendarAttachment,
@@ -66,22 +58,8 @@ import type { MessageId } from "./types";
 // Each message enters through Mail's inbound path into real Mailbox and Calendar objects
 // that share one directory, and the card is read through Mail's own server functions.
 
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
 let request: Request;
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-mock.module("@tanstack/react-start/server", () => ({
-  ...startServer,
-  getRequest: () => request,
-}));
+readRequestFrom(() => request);
 const card = await import("./invitation-functions");
 const calendarFunctions = await import("../../calendar/src/functions");
 
@@ -686,13 +664,14 @@ test("with Calendar off, the card shows the invitation as plain details, and ref
     standing: { kind: "calendarOff" },
   });
   for (const action of [
-    inMail().answerInvitationFromMail({
-      data: { mailboxId: mailboxes.boss, messageId, answer: "yes" },
-    }),
-    inMail().addInvitationFromMail(target(messageId)),
-    inMail().removeInvitationFromMail(target(messageId)),
+    () =>
+      inMail().answerInvitationFromMail({
+        data: { mailboxId: mailboxes.boss, messageId, answer: "yes" },
+      }),
+    () => inMail().addInvitationFromMail(target(messageId)),
+    () => inMail().removeInvitationFromMail(target(messageId)),
   ]) {
-    expect(await refusalOf(action)).toEqual({
+    expect(await refusalOf(action())).toEqual({
       status: 403,
       message:
         "An admin turned Calendar off, so invitations can't be answered or added from Mail. Nothing was changed. Ask your admin to turn Calendar back on.",

@@ -1,3 +1,4 @@
+import { SignInCheck } from "@cloudysuite/auth/sign-in-check";
 import { GoToOffPage } from "@cloudysuite/ui";
 import {
   ErrorComponent,
@@ -7,5 +8,9 @@ import { isAppOffRefusal } from "../../../../src/routing";
 
 export function StorageRouteError({ error }: ErrorComponentProps) {
   if (isAppOffRefusal(error, "storage")) return <GoToOffPage />;
-  return <ErrorComponent error={error} />;
+  return (
+    <SignInCheck error={error}>
+      <ErrorComponent error={error} />
+    </SignInCheck>
+  );
 }

@@ -21,6 +21,7 @@ test("a real deployment's origins come from the stored domain, not the request",
     mail: "https://mail.example.com",
     storage: "https://storage.example.com",
     calendar: "https://calendar.example.com",
+    tasks: "https://tasks.example.com",
   });
 });
 
@@ -44,6 +45,7 @@ test.each([
     "http://mail.dev.localhost:8787",
     "http://storage.dev.localhost:8787",
     "http://calendar.dev.localhost:8787",
+    "http://tasks.dev.localhost:8787",
   ],
   [
     "http://auth.dev.localhost/",
@@ -52,15 +54,20 @@ test.each([
     "https://mail.dev.localhost",
     "https://storage.dev.localhost",
     "https://calendar.dev.localhost",
+    "https://tasks.dev.localhost",
   ],
-])("local dev server at %s", (url, headers, auth, mail, storage, calendar) => {
-  expect(appOrigins("dev.localhost", request(url, headers))).toEqual({
-    auth,
-    mail,
-    storage,
-    calendar,
-  });
-});
+])(
+  "local dev server at %s",
+  (url, headers, auth, mail, storage, calendar, tasks) => {
+    expect(appOrigins("dev.localhost", request(url, headers))).toEqual({
+      auth,
+      mail,
+      storage,
+      calendar,
+      tasks,
+    });
+  },
+);
 
 test.each([
   "https://mail.example.com/",
@@ -132,6 +139,7 @@ test.each([
     mail: "http://mail.dev.localhost:8787",
     storage: "http://storage.dev.localhost:8787",
     calendar: "http://calendar.dev.localhost:8787",
+    tasks: "http://tasks.dev.localhost:8787",
   });
 });
 

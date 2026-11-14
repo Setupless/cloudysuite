@@ -1,5 +1,5 @@
-import { Button, Modal, Notice, TextField } from "@cloudysuite/ui";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { Button, Modal, Notice, TextField } from "./index";
 
 export function NameDialog({
   title,

@@ -1,24 +1,25 @@
 import type { CalendarId, CalendarRole } from "@cloudysuite/access";
 import {
-  Avatar,
   Button,
+  ColourChoice,
+  MemberLine,
   Modal,
   Notice,
-  Spinner,
-  TextField,
+  RenameForm,
+  ROLE_CHOICES,
+  ROLE_SELECT,
+  SETTINGS_HEADING as HEADING,
   useToast,
   Working,
 } from "@cloudysuite/ui";
 import {
-  IconCheck,
   IconDoorExit,
   IconFileImport,
   IconTrash,
   IconTrashX,
-  IconX,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   addMembers,
   changeMemberRole,
@@ -43,20 +44,10 @@ import {
   IMPORT_TOO_LARGE_MESSAGE,
   MAX_IMPORT_BYTES,
 } from "../types";
-import { COLOUR_NAMES, calendarFill } from "./colours";
 import { dayAndMonth } from "./event-text";
 import { importLines } from "./import-text";
 import { NotSentLine } from "./invitation-parts";
-import { PeoplePicker, ROLE_SELECT, ROLES } from "./people-picker";
-
-const ROLE_LABELS = Object.fromEntries(
-  ROLES.map(({ value, label }) => [value, label]),
-) as Record<CalendarRole, string>;
-
-const REMOVE_BUTTON =
-  "flex-none cursor-pointer rounded p-1 text-secondary outline-accent enabled:hover:bg-field focus-visible:outline-2 disabled:cursor-default disabled:not-aria-busy:opacity-60 aria-busy:cursor-progress";
-
-const HEADING = "text-sm font-medium";
+import { PeoplePicker } from "./people-picker";
 
 // The change being saved. A role or colour is kept so the control shows what was picked,
 // not what it was, until the saved calendar comes back.
@@ -186,47 +177,6 @@ function ImportEvents({
   );
 }
 
-function ColourChoice({
-  colour,
-  disabled,
-  onChoose,
-}: {
-  colour: number;
-  disabled: boolean;
-  onChoose: (colour: number) => void;
-}) {
-  return (
-    <fieldset className="flex flex-col gap-1.5">
-      <legend className={`${HEADING} mb-1.5`}>Colour</legend>
-      <div className="flex gap-2.5">
-        {COLOUR_NAMES.map((name, index) => {
-          const value = index + 1;
-          const chosen = value === colour;
-          return (
-            <label key={name} className="cursor-pointer">
-              <input
-                type="radio"
-                name="colour"
-                className="peer sr-only"
-                checked={chosen}
-                disabled={disabled}
-                aria-label={name}
-                onChange={() => onChoose(value)}
-              />
-              <span
-                aria-hidden
-                className={`flex size-8 items-center justify-center rounded-full text-on-avatar ring-offset-2 ring-offset-panel outline-accent peer-checked:ring-2 peer-checked:ring-text peer-focus-visible:outline-2 peer-focus-visible:outline-offset-4 peer-disabled:cursor-default ${calendarFill(value)}`}
-              >
-                {chosen && <IconCheck size={16} stroke={3} />}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
 function PersonalSettings({
   entry,
   onClose,
@@ -308,50 +258,6 @@ function UnsentCancellations({
         ))}
       </ul>
     </section>
-  );
-}
-
-function RenameForm({
-  calendarId,
-  name,
-  disabled,
-  pending,
-  onRename,
-}: {
-  calendarId: CalendarId;
-  name: string;
-  disabled: boolean;
-  pending: boolean;
-  onRename: (change: () => Promise<unknown>) => void;
-}) {
-  const [text, setText] = useState(name);
-  const changed = text.trim() !== "" && text.trim() !== name;
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!changed) return;
-    onRename(() =>
-      renameTeamCalendar({ data: { calendarId, name: text.trim() } }),
-    );
-  }
-  return (
-    <form onSubmit={submit} className="flex items-end gap-2">
-      <TextField
-        label="Name"
-        value={text}
-        disabled={disabled}
-        onChange={(event) => setText(event.target.value)}
-      />
-      <span className="flex-none">
-        <Button
-          type="submit"
-          variant="secondary"
-          disabled={disabled || !changed}
-          pending={pending}
-        >
-          Rename
-        </Button>
-      </span>
-    </form>
   );
 }
 
@@ -459,11 +365,14 @@ function TeamSettings({
       {canManage && (
         <>
           <RenameForm
-            calendarId={calendarId}
             name={entry.name}
             disabled={busy}
             pending={running?.kind === "rename"}
-            onRename={(change) => void run({ kind: "rename" }, change)}
+            onRename={(name) =>
+              void run({ kind: "rename" }, () =>
+                renameTeamCalendar({ data: { calendarId, name } }),
+              )
+            }
           />
           <ColourChoice
             colour={running?.kind === "colour" ? running.colour : entry.colour}
@@ -498,7 +407,7 @@ function TeamSettings({
             onChange={(event) => setNewRole(event.target.value as CalendarRole)}
             className={ROLE_SELECT}
           >
-            {ROLES.map(({ value, label }) => (
+            {ROLE_CHOICES.map(({ value, label }) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -514,73 +423,31 @@ function TeamSettings({
         {lines.map(({ person, role }) => {
           const mine = runningOn(person.id);
           return (
-            <li key={person.id} className="flex items-center gap-2 text-sm">
-              <Avatar person={person} size="small" />
-              <span className="mr-auto min-w-0 truncate">
-                {person.name}
-                {person.id === meId && (
-                  <span className="text-secondary"> (you)</span>
-                )}
-              </span>
-              {canManage ? (
-                <>
-                  {mine?.kind === "role" && (
-                    <span className="flex-none text-secondary">
-                      <Spinner size={16} />
-                    </span>
-                  )}
-                  <select
-                    aria-label={`What ${person.name} can do`}
-                    value={mine?.kind === "role" ? mine.role : role}
-                    disabled={busy}
-                    aria-busy={mine?.kind === "role" || undefined}
-                    className={ROLE_SELECT}
-                    onChange={(event) => {
-                      const next = event.target.value as CalendarRole;
-                      void run(
-                        { kind: "role", personId: person.id, role: next },
-                        () =>
-                          changeMemberRole({
-                            data: { calendarId, userId: person.id, role: next },
-                          }),
-                      );
-                    }}
-                  >
-                    {ROLES.map(({ value, label }) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  {person.id !== meId && (
-                    <button
-                      type="button"
-                      aria-label={`Remove ${person.name}`}
-                      disabled={busy}
-                      aria-busy={mine?.kind === "remove" || undefined}
-                      className={REMOVE_BUTTON}
-                      onClick={() =>
-                        void run({ kind: "remove", personId: person.id }, () =>
-                          removeCalendarMember({
-                            data: { calendarId, userId: person.id },
-                          }),
-                        )
-                      }
-                    >
-                      {mine?.kind === "remove" ? (
-                        <Spinner size={16} />
-                      ) : (
-                        <IconX size={16} stroke={1.75} aria-hidden />
-                      )}
-                    </button>
-                  )}
-                </>
-              ) : (
-                <em className="flex-none text-xs text-secondary not-italic">
-                  {ROLE_LABELS[role]}
-                </em>
-              )}
-            </li>
+            <MemberLine
+              key={person.id}
+              person={person}
+              role={role}
+              isMe={person.id === meId}
+              canManage={canManage}
+              busy={busy}
+              saving={mine}
+              onRole={(next) =>
+                void run(
+                  { kind: "role", personId: person.id, role: next },
+                  () =>
+                    changeMemberRole({
+                      data: { calendarId, userId: person.id, role: next },
+                    }),
+                )
+              }
+              onRemove={() =>
+                void run({ kind: "remove", personId: person.id }, () =>
+                  removeCalendarMember({
+                    data: { calendarId, userId: person.id },
+                  }),
+                )
+              }
+            />
           );
         })}
       </ul>

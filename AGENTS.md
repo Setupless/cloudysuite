@@ -12,7 +12,7 @@
 - `bun run db:generate` writes a migration. `bun run db:migrate:local` applies it, and `bun run db:seed:local` stores this checkout's portless hostname as the primary domain. Run it again after a worktree's branch changes name.
 - `PR_BRANCH=<branch> PR_TITLE=<title> bun scripts/check-pr.mjs` runs the PR format check.
 - `cp dev.vars.local.example .dev.vars` gives this checkout the local `BETTER_AUTH_SECRET`. `bun run db:seed:user:local <email> <password> [admin|user]` adds a local sign-in.
-- `bun test` runs the tests on Bun, not on the Workers runtime.
+- `bun test` runs the tests on Bun, not on the Workers runtime. Bun shares loaded modules between test files. A test that mocks one of our own modules with `mock.module` must spread the real exports into the mock and put the real module back in `afterAll`.
 - `bun scripts/check-theme.mjs` checks the palette and fails on a raw colour or `app.css?url` in `src`, `apps`, or `packages`.
 
 ## Git
@@ -35,7 +35,7 @@ Do not guess or build around these. Ask the user first.
 
 ## Scope
 
-- The first release contains Auth, Mail, Storage, and Calendar only.
+- The first release contains Auth, Mail, Storage, Calendar, and Tasks only.
 - Do not add a CLI, MCP server, chat integration, public API, or AI feature. Jev is the one exception, and every feature must work without a Jev key.
 - Do not add IMAP or SMTP servers. They cannot run on Workers.
 - Build what the task asks for. Do not add options, abstractions, or fallbacks that no current caller needs.
@@ -50,11 +50,12 @@ Do not guess or build around these. Ask the user first.
 - One Worker serves every app and routes by hostname.
 - The Worker's config, entry, and TanStack Start routes stay at the repository root, because the Deploy button needs them there. Each app's code goes in `apps/<app>`, and shared code goes in `packages/<name>`.
 - Route files in `src/routes/<app>` only render components from `apps/<app>`. `src/router.tsx` adds that prefix from the hostname.
+- A route's `beforeLoad` and `loader` only read, because hovering a link runs them early. They must not clear saved data or call `navigate` or `location`. A thrown `redirect()` is fine, because a preload discards it. `beforeLoad` receives `preload`. Keep `defaultPreloadStaleTime` at 0, so a click after a hover shows the hovered data and then loads it again, as returning to a page does.
 - The hostname router checks that an app is on before it handles any request. Inbound mail still reaches `ingest` when Mail is off. The only other exception is a `GET` of `/pwa/session` on the Mail host, which returns a user id or a 401 and no mail, so a device can clear saved mail when someone signs out with Mail off.
 - Production code runs on Workers, so it cannot use Bun APIs.
-- Each mailbox, each drive, and each calendar is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
-- D1 holds domains, users, addresses, mailbox access, drives, drive access, `calendars`, `calendar_access`, `saved_mail_attachments`, `drive_shares`, an index of shares, and `drive_move_notices`, an index of notes about moves that didn't happen. The Drive object owns the shares and notes themselves, and the Calendar object owns every event.
-- Every mailbox, drive, or calendar read and write goes through its one access-check function.
+- Each mailbox, each drive, each calendar, and each board is one SQLite-backed Durable Object. A row can hold 2 MB, so large bodies, attachments, and files go in R2.
+- D1 holds domains, users, addresses, mailbox access, drives, drive access, `calendars`, `calendar_access`, `boards`, `board_access`, `saved_mail_attachments`, `drive_shares`, an index of shares, and `drive_move_notices` and `board_move_notices`, indexes of notes about moves that didn't happen. The Drive object owns the shares and notes themselves, the Calendar object owns every event, and the Board object owns every task.
+- Every mailbox, drive, calendar, or board read and write goes through its one access-check function.
 - Every message enters a mailbox through `ingest`, including imports.
 - Durable Object alarms handle background work. Do not add Queues or Workflows.
 - Make jobs safe to repeat. A retry must not duplicate messages or skip work.

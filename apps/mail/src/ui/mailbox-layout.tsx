@@ -1,6 +1,6 @@
 import type { SignedIn } from "@cloudysuite/auth/session";
 import { SuiteShell } from "@cloudysuite/auth/shell";
-import { NAV_ITEM, NAV_ITEM_ACTIVE } from "@cloudysuite/ui";
+import { NAV_ITEM, NAV_ITEM_ACTIVE, useChosenParam } from "@cloudysuite/ui";
 import {
   IconAlertOctagon,
   IconArchive,
@@ -225,7 +225,12 @@ function MailboxShell({
     ...mailboxesQuery(),
     refetchInterval: () => (queryClient.isMutating() ? false : REFRESH_MS),
   });
-  const current = mailboxes.find((mailbox) => mailbox.id === mailboxId);
+  // The sidebar follows a mailbox from the click, so its folders, labels, and mark
+  // all belong to the one being opened. The page stays with the one on screen.
+  const chosen =
+    (useChosenParam("/mail/$mailboxId/$view", "mailboxId") as
+      MailboxId | undefined) ?? mailboxId;
+  const current = mailboxes.find((mailbox) => mailbox.id === chosen);
   const offline = useOffline();
   return (
     <SuiteShell
@@ -236,7 +241,7 @@ function MailboxShell({
       headerContent={<SearchBox mailboxId={mailboxId} />}
       navigation={
         <MailNavigation
-          mailboxId={mailboxId}
+          mailboxId={chosen}
           mailboxes={mailboxes}
           current={current}
         />

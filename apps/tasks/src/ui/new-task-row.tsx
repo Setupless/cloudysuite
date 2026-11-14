@@ -1,0 +1,149 @@
+import type { UserId } from "@cloudysuite/access";
+import { Button } from "@cloudysuite/ui";
+import { type FormEvent, useRef, useState } from "react";
+import { type Member, type PlainDate, parsePlainDate } from "../types";
+import { AssigneePicker } from "./assignee-picker";
+import { addDays } from "./dates";
+import { FOCUS } from "./parts";
+
+// `adding` is someone from the rest of the organisation, whom a manager chose to add to
+// the board as they assign the task.
+export type DraftAssignee = { id: UserId; name: string; adding: boolean };
+
+export type NewTaskDraft = {
+  title: string;
+  due: PlainDate | null;
+  assignee: DraftAssignee | null;
+};
+
+// On a team board, who the task can go to.
+export type Assigning = {
+  boardName: string;
+  canAdd: boolean;
+  members: readonly Member[];
+  me: UserId;
+};
+
+const CHIP = `h-7 cursor-pointer rounded-full border px-2.5 text-xs ${FOCUS}`;
+const chipClass = (pressed: boolean) =>
+  `${CHIP} ${pressed ? "border-accent bg-selected font-medium text-accent" : "border-line bg-panel text-text hover:bg-field"}`;
+
+export const FIELD = `h-7 rounded border border-line bg-field px-2 text-xs text-text disabled:opacity-60 ${FOCUS}`;
+
+// The one way to add a task. On a team board it offers someone to assign, and the task
+// starts with nobody.
+export function NewTaskRow({
+  today,
+  assigning,
+  onAdd,
+  onCancel,
+}: {
+  today: PlainDate;
+  assigning: Assigning | null;
+  // Resolves true once saved, so the row empties for the next one.
+  onAdd: (draft: NewTaskDraft) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [due, setDue] = useState<PlainDate | null>(null);
+  const [assignee, setAssignee] = useState<DraftAssignee | null>(null);
+  const [saving, setSaving] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  const tomorrow = addDays(today, 1);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (title.trim() === "" || saving) return;
+    setSaving(true);
+    const saved = await onAdd({ title, due, assignee });
+    setSaving(false);
+    if (saved) {
+      setTitle("");
+      setDue(null);
+      setAssignee(null);
+    }
+    field.current?.focus();
+  }
+
+  const quickDay = (day: PlainDate, label: string) => (
+    <button
+      type="button"
+      aria-pressed={due === day}
+      className={chipClass(due === day)}
+      onClick={() => setDue(due === day ? null : day)}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <li className="border-b border-line bg-panel">
+      <form
+        onSubmit={submit}
+        aria-label="New task"
+        className="flex flex-col gap-2 py-2 pr-2 pl-3"
+      >
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden
+            className="size-[18px] flex-none rounded-full border-[1.5px] border-line"
+          />
+          <input
+            ref={field}
+            autoFocus
+            aria-label="Task title"
+            placeholder="New task"
+            value={title}
+            disabled={saving}
+            maxLength={800}
+            className="min-h-9 min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-secondary"
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 pl-[30px]">
+          {quickDay(today, "Today")}
+          {quickDay(tomorrow, "Tomorrow")}
+          <input
+            type="date"
+            aria-label="Due date"
+            className={FIELD}
+            value={due ?? ""}
+            onChange={(event) => setDue(parsePlainDate(event.target.value))}
+          />
+          {assigning && (
+            <AssigneePicker
+              {...assigning}
+              assignee={assignee}
+              gone={false}
+              compact
+              onPick={async (pick) =>
+                setAssignee(
+                  pick.kind === "nobody"
+                    ? null
+                    : {
+                        id: pick.person.id,
+                        name: pick.person.name,
+                        adding: pick.kind === "addAndAssign",
+                      },
+                )
+              }
+            />
+          )}
+          <span className="ml-auto flex gap-1.5">
+            <Button variant="toolbar" disabled={saving} onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="toolbarAction"
+              pending={saving}
+              disabled={title.trim() === ""}
+            >
+              Add task
+            </Button>
+          </span>
+        </div>
+      </form>
+    </li>
+  );
+}

@@ -251,7 +251,7 @@ export const unsuspendMember = createServerFn({ method: "POST" })
   });
 
 const CHOOSE_RECIPIENT = refuse(
-  "Choose who receives their files and calendars before you remove them.",
+  "Choose who receives their files, calendars, and tasks before you remove them.",
 );
 const RECIPIENT_CANT = refuse(
   "That person can't take these over right now. Choose someone else.",
@@ -266,8 +266,8 @@ async function recipientIsReady(userId: UserId): Promise<boolean> {
 }
 
 // Handing over comes first and is one transaction. If removing the account then fails,
-// choosing Remove again finds the files and calendars already handed over and finishes
-// the job.
+// choosing Remove again finds the files, calendars, and boards already handed over and
+// finishes the job.
 export const removeMember = createServerFn({ method: "POST" })
   .middleware([adminOnly])
   .validator((input: { userId: string; recipientId: string | null }) => ({

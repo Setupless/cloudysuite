@@ -21,6 +21,7 @@ test.each([
   ["mail", "storage", "turned Mail off"],
   ["storage", "mail", "turned Storage off"],
   ["calendar", "storage", "turned Calendar off"],
+  ["tasks", "calendar", "turned Tasks off"],
 ] as const)(
   "%s is on until its own row says off, then refused in plain words",
   async (app, other, words) => {

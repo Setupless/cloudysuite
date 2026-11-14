@@ -34,6 +34,10 @@ export function parseTimeZone(raw: string): TimeZone | null {
   }
 }
 
+export const deviceZone = () =>
+  parseTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ??
+  ("UTC" as TimeZone);
+
 export const wallOfDate = (date: CivilDate) =>
   Date.UTC(
     Number(date.slice(0, 4)),

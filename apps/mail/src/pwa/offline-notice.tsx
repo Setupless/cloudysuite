@@ -1,3 +1,4 @@
+import { SignInCheck } from "@cloudysuite/auth/sign-in-check";
 import { IconAlertCircle, IconCloudOff } from "@tabler/icons-react";
 import { Button, GoToOffPage, Page } from "@cloudysuite/ui";
 import { isAppOffRefusal } from "../../../../src/routing";
@@ -66,8 +67,10 @@ export function MailRouteError({ error }: { error: unknown }) {
     );
   }
   return (
-    <Page icon={IconAlertCircle} title="Something went wrong">
-      <TryAgain>We couldn't open this page. Try again in a moment.</TryAgain>
-    </Page>
+    <SignInCheck error={error}>
+      <Page icon={IconAlertCircle} title="Something went wrong">
+        <TryAgain>We couldn't open this page. Try again in a moment.</TryAgain>
+      </Page>
+    </SignInCheck>
   );
 }

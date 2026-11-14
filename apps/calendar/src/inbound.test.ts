@@ -2,7 +2,6 @@ import {
   afterEach,
   beforeEach,
   expect,
-  mock,
   setSystemTime,
   spyOn,
   test,
@@ -13,9 +12,8 @@ import {
   type MailboxId,
   type UserId,
 } from "@cloudysuite/access";
-import * as start from "@tanstack/react-start";
-import * as startServer from "@tanstack/react-start/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -24,7 +22,11 @@ import {
 } from "../../auth/src/admin/test-kit";
 import { ingest, receiveInbound } from "../../mail/src/ingest";
 import { createTestEnv } from "../../mail/src/test-support";
-import { createFakeEmail, partOfType, readEmail } from "./email/test-support";
+import {
+  createFakeEmail,
+  partOfType,
+  readEmail,
+} from "@cloudysuite/app-email/test-support";
 import {
   AUTH,
   calendarAttachment,
@@ -57,22 +59,8 @@ import { meetingLink } from "./ui/meeting-link";
 // objects that share one directory. Mail's alarm hands calendar parts over, as on the
 // Workers runtime.
 
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
 let request: Request;
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-mock.module("@tanstack/react-start/server", () => ({
-  ...startServer,
-  getRequest: () => request,
-}));
+readRequestFrom(() => request);
 const functions = await import("./functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;

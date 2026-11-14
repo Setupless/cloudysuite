@@ -1,15 +1,7 @@
-import {
-  afterEach,
-  beforeEach,
-  expect,
-  mock,
-  setSystemTime,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import type { CalendarRole, UserId } from "@cloudysuite/access";
-import * as start from "@tanstack/react-start";
-import * as startServer from "@tanstack/react-start/server";
 import { testWorkerEnv } from "../../../src/db/test-database";
+import { readRequestFrom } from "../../../src/test-server-fn";
 import {
   createKit,
   type Kit,
@@ -21,41 +13,27 @@ import {
   partOfType,
   readEmail,
   type SentEmail,
-} from "./email/test-support";
+} from "@cloudysuite/app-email/test-support";
 import { readCalendarFile } from "./outside/ics";
+import { GOOGLE_EXPORT } from "./outside/test-support";
 import { createCalendarTest, SYDNEY, saved, TEAM } from "./test-support";
-import type {
-  CalendarOccurrence,
-  CivilDate,
-  EmailAddress,
-  EventDraft,
-  EventTime,
-  EventUid,
-  NotSentReason,
-  OccurrenceId,
-  PersonKey,
-  PersonToInvite,
-  UnsentCancellation,
+import {
+  CALENDAR_GONE_MESSAGE,
+  type CalendarOccurrence,
+  type CivilDate,
+  type EmailAddress,
+  type EventDraft,
+  type EventTime,
+  type EventUid,
+  type NotSentReason,
+  type OccurrenceId,
+  type PersonKey,
+  type PersonToInvite,
+  type UnsentCancellation,
 } from "./types";
 
-// Outside Vite a server function never reaches its handler, so this runs the validator
-// and handler as the compiled server function would.
-type Handler = (context: { data?: unknown }) => unknown;
-const createServerFn = () => ({
-  validator: (parse: (raw: unknown) => unknown) => ({
-    handler:
-      (run: Handler) =>
-      ({ data }: { data: unknown }) =>
-        run({ data: parse(data) }),
-  }),
-  handler: (run: Handler) => () => run({}),
-});
 let request: Request;
-mock.module("@tanstack/react-start", () => ({ ...start, createServerFn }));
-mock.module("@tanstack/react-start/server", () => ({
-  ...startServer,
-  getRequest: () => request,
-}));
+readRequestFrom(() => request);
 const functions = await import("./functions");
 
 const env = testWorkerEnv as unknown as Record<string, unknown>;
@@ -888,6 +866,117 @@ test("deleting a team calendar sends nothing from a suspended organiser's addres
   await as(people.manager).deleteTeamCalendar({ data: { calendarId: TEAM } });
   await objects.settle();
   expect(sentTo(OUTSIDE)).toHaveLength(1);
+});
+
+const teamInD1 = () =>
+  kit.rows(`SELECT id FROM calendars WHERE id = '${TEAM}'`).length > 0;
+
+const eventsLeft = () => objects.sqlite().query("SELECT uid FROM events").all();
+
+const cancellationsTo = (address: string) =>
+  sentTo(address).filter((one) =>
+    readEmail(one.raw).subject.startsWith("Cancelled:"),
+  );
+
+const deleteTeam = () =>
+  as(people.manager).deleteTeamCalendar({ data: { calendarId: TEAM } });
+
+// As if the call to the calendar's object failed before it did anything, or after.
+function failErase(fault: "silent" | "loseAnswer" | null) {
+  const real = objects.env.CALENDAR;
+  env.CALENDAR =
+    fault === null
+      ? real
+      : {
+          idFromName: real.idFromName,
+          get: (id: DurableObjectId) =>
+            new Proxy(real.get(id), {
+              get(target, property) {
+                const value = Reflect.get(target, property);
+                if (property !== "erase") return value;
+                return async (...args: unknown[]) => {
+                  if (fault === "silent") throw new Error("Calendar is silent");
+                  await value(...args);
+                  throw new Error("Calendar's answer was lost");
+                };
+              },
+            }),
+        };
+}
+
+for (const fault of ["silent", "loseAnswer"] as const) {
+  test(`a delete whose calendar object fails (${fault}) leaves the calendar listed, and deleting again sends each cancellation once`, async () => {
+    await invite([people.colleague, outside(OUTSIDE)]);
+    failErase(fault);
+    await expect(deleteTeam()).rejects.toThrow();
+    expect(teamInD1()).toBe(true);
+
+    failErase(null);
+    await deleteTeam();
+    await objects.settle();
+    expect(teamInD1()).toBe(false);
+    expect(eventsLeft()).toEqual([]);
+    for (const address of [OUTSIDE, "jo@example.com"]) {
+      expect(cancellationsTo(address)).toHaveLength(1);
+    }
+    expect(objects.alarmOf(TEAM)).toBeNull();
+  });
+}
+
+test("a delete whose D1 step fails leaves a calendar that refuses every change, sends its cancellations, and deleting again finishes it", async () => {
+  const uid = await invite([people.colleague, outside(OUTSIDE)]);
+  kit.sqlite.run(
+    `CREATE TRIGGER d1_fails BEFORE DELETE ON calendars
+     BEGIN SELECT RAISE(ABORT, 'D1 is unreachable'); END`,
+  );
+  await expect(deleteTeam()).rejects.toThrow();
+  expect(teamInD1()).toBe(true);
+  await objects.settle();
+  for (const address of [OUTSIDE, "jo@example.com"]) {
+    expect(cancellationsTo(address)).toHaveLength(1);
+  }
+
+  // As from a page still open from before the delete.
+  const gone = { status: 404, message: CALENDAR_GONE_MESSAGE };
+  expect(
+    await refused(
+      as(people.editor).createEvent({
+        data: { calendarId: TEAM, draft: planning() },
+      }),
+    ),
+  ).toEqual(gone);
+  expect(
+    await refused(
+      as(people.editor).importCalendarFile({
+        data: { calendarId: TEAM, file: GOOGLE_EXPORT, timeZone: SYDNEY },
+      }),
+    ),
+  ).toEqual(gone);
+  const target = { uid, occurrenceId: null };
+  expect(
+    await refused(
+      as(people.editor).updateEvent({
+        data: { calendarId: TEAM, target, scope: "all", draft: planning() },
+      }),
+    ),
+  ).toEqual(gone);
+  expect(
+    await refused(
+      as(people.editor).deleteEvent({
+        data: { calendarId: TEAM, target, scope: "all" },
+      }),
+    ),
+  ).toEqual(gone);
+  expect(eventsLeft()).toEqual([]);
+
+  kit.sqlite.run("DROP TRIGGER d1_fails");
+  await deleteTeam();
+  await objects.settle();
+  expect(teamInD1()).toBe(false);
+  for (const address of [OUTSIDE, "jo@example.com"]) {
+    expect(cancellationsTo(address)).toHaveLength(1);
+  }
+  expect(objects.alarmOf(TEAM)).toBeNull();
 });
 
 test("nothing in a title, place or notes can add a line to the invitation", async () => {

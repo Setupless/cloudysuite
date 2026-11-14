@@ -5,10 +5,9 @@ import { type ReactNode, useState } from "react";
 import { calendarsQuery, searchQuery } from "../queries";
 import { searchOf, todayIn } from "../schedule";
 import { parseEventSearch } from "../search-query";
-import { startOfDay } from "../time";
+import { deviceZone, startOfDay } from "../time";
 import type { CivilDate, EventTime, TimeZone } from "../types";
 import { calendarFill } from "./colours";
-import { deviceZone } from "./schedule-screen";
 import { daySpanOf } from "./schedule-layout";
 import {
   type ShownEvent,

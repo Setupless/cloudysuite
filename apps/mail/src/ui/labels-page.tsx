@@ -16,6 +16,7 @@ import { isOffline, OFFLINE_ACTION_REFUSED } from "../pwa/saved-mail";
 import {
   asMailFailure,
   callAction,
+  fetchForClick,
   refreshMailbox,
   rulesQuery,
 } from "../queries";
@@ -219,7 +220,8 @@ function LabelRow({
           if (isOffline()) return;
           setWorking("checkDelete");
           try {
-            const { rules } = await queryClient.fetchQuery(
+            const { rules } = await fetchForClick(
+              queryClient,
               rulesQuery(mailboxId),
             );
             setConfirming({

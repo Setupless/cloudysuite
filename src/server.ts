@@ -10,6 +10,7 @@ import { settingsFor } from "./settings";
 export { Mailbox } from "@cloudysuite/mail/mailbox";
 export { Drive } from "@cloudysuite/storage/drive";
 export { Calendar } from "@cloudysuite/calendar/calendar";
+export { Board } from "@cloudysuite/tasks/board";
 
 async function refuseWhileOff(request: Request, app: ToggleableApp) {
   await drain(request);

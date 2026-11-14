@@ -1,11 +1,12 @@
-import { AuthShell } from "@cloudysuite/auth";
-import { requireUser } from "@cloudysuite/auth/session";
+import { AuthRouteError, AuthShell } from "@cloudysuite/auth";
+import { requireAuthUser, type SignedIn } from "@cloudysuite/auth/session";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/auth/_shell")({
-  beforeLoad: async ({ location }) => ({
-    user: await requireUser("auth", location),
+  beforeLoad: async (load): Promise<{ user: SignedIn }> => ({
+    user: await requireAuthUser(load),
   }),
+  errorComponent: AuthRouteError,
   component: () => (
     <AuthShell user={Route.useRouteContext().user}>
       <Outlet />

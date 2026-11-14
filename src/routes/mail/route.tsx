@@ -4,8 +4,8 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/mail")({
   head: () => mailHead(),
-  beforeLoad: async ({ location }) => ({
-    user: await requireMailUser(location),
+  beforeLoad: async ({ location, preload }) => ({
+    user: await requireMailUser(location, preload),
   }),
   errorComponent: ({ error }) => <MailRouteError error={error} />,
   component: () => (
