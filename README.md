@@ -549,7 +549,7 @@ Tasks replaces Google Tasks and simple team to-do boards, and should feel like R
 
 - **Search finds tasks by title and notes** on every board the person is on, private and done tasks included, on a page of its own as in Calendar. Matching works like [Storage's](#search-and-starred) words, with no operators. Results come under Still to do, soonest due first, then Done, most recently done first, each with its board or "Only you". It shows up to 50 tasks for each board and 100 in all, and says when there are more. Boards are asked five at a time for up to 5 seconds, and a note says if any couldn't be searched.
 - **A result opens on its board with the panel.** A private task opens on My tasks, or on the person's own board once it was done before today, because My tasks no longer lists it.
-- **Search also lists up to 8 people, never with how many tasks they have,** because that would show a colleague's workload. Nobody suspended is listed. From a board, it lists the board's members, then others, and choosing someone shows only their tasks there, in a chip that clears it. From anywhere else, it lists the people the searcher shares a board with, then everyone else, and choosing someone lists their open tasks on those shared boards.
+- **Search also lists up to 8 people in each of its two groups, never with how many tasks they have,** because that would show a colleague's workload. Nobody suspended is listed. From a board, it lists the board's members, then others, and choosing someone shows only their tasks there, in a chip that clears it. From anywhere else, it lists the people the searcher shares a board with, then everyone else, and choosing someone lists their open tasks on those shared boards.
 
 ### The assignment email
 
