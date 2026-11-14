@@ -1,6 +1,11 @@
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import {
+  boardAccess,
+  type BoardId,
+  type BoardKind,
+  type BoardRole,
+  boards,
   calendarAccess,
   type CalendarId,
   type CalendarKind,
@@ -19,6 +24,9 @@ import {
 } from "../../../src/db/schema";
 
 export type {
+  BoardId,
+  BoardKind,
+  BoardRole,
   CalendarId,
   CalendarKind,
   CalendarRole,
@@ -120,6 +128,29 @@ export type CalendarGrant = CalendarGrantRecord;
 export type CalendarAccess =
   { allowed: true; grant: CalendarGrant } | { allowed: false };
 
+// The same rules as Grant above. The kind comes too, because a private task has no
+// assignee, so the Board object refuses one on a person's own board.
+class BoardGrantRecord {
+  readonly #issuedByCheck = true;
+
+  constructor(
+    token: symbol,
+    readonly userId: UserId,
+    readonly boardId: BoardId,
+    readonly role: BoardRole,
+    readonly kind: BoardKind,
+  ) {
+    if (token !== ISSUE)
+      throw new Error("Only the access check issues grants.");
+    Object.freeze(this);
+  }
+}
+
+export type BoardGrant = BoardGrantRecord;
+
+export type BoardAccess =
+  { allowed: true; grant: BoardGrant } | { allowed: false };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseMailboxId(raw: string): MailboxId | null {
@@ -132,6 +163,10 @@ export function parseDriveId(raw: string): DriveId | null {
 
 export function parseCalendarId(raw: string): CalendarId | null {
   return UUID.test(raw) ? (raw as CalendarId) : null;
+}
+
+export function parseBoardId(raw: string): BoardId | null {
+  return UUID.test(raw) ? (raw as BoardId) : null;
 }
 
 // Matches Better Auth's admin plugin: a ban with no end date never expires, and
@@ -242,6 +277,31 @@ export async function checkCalendarAccess(
   };
 }
 
+export async function checkBoardAccess(
+  database: D1Database,
+  userId: UserId,
+  boardId: BoardId,
+): Promise<BoardAccess> {
+  const [row] = await drizzle(database)
+    .select({
+      role: boardAccess.role,
+      kind: boards.kind,
+      banned: user.banned,
+      banExpires: user.banExpires,
+    })
+    .from(boardAccess)
+    .innerJoin(boards, eq(boards.id, boardAccess.boardId))
+    .innerJoin(user, eq(user.id, boardAccess.userId))
+    .where(
+      and(eq(boardAccess.userId, userId), eq(boardAccess.boardId, boardId)),
+    );
+  if (!row || isBanned(row)) return { allowed: false };
+  return {
+    allowed: true,
+    grant: new BoardGrantRecord(ISSUE, userId, boardId, row.role, row.kind),
+  };
+}
+
 // Safe to repeat under the unique index, so two tabs can't make two. Put these first in
 // a batch, so whatever follows sees the drive.
 export const ensurePersonalDrive = (db: DrizzleD1Database, userId: UserId) =>
@@ -300,5 +360,39 @@ export async function ensurePersonalCalendar(
   ]);
   const id = found[0]?.id;
   if (!id) throw new Error("A personal calendar should exist by now.");
+  return id;
+}
+
+export const PERSONAL_BOARD_COLOUR = PERSONAL_CALENDAR_COLOUR;
+export const TEAM_BOARD_COLOURS = TEAM_CALENDAR_COLOURS;
+
+// Safe to repeat for the same reason as ensurePersonalCalendar.
+export async function ensurePersonalBoard(
+  database: D1Database,
+  userId: UserId,
+): Promise<BoardId> {
+  const db = drizzle(database);
+  const [, , found] = await db.batch([
+    db
+      .insert(boards)
+      .values({
+        kind: "personal",
+        colour: PERSONAL_BOARD_COLOUR,
+        ownerId: userId,
+      })
+      .onConflictDoNothing(),
+    db.run(
+      sql`INSERT INTO board_access (board_id, user_id, role)
+          SELECT id, ${userId}, 'manager' FROM boards
+          WHERE owner_id = ${userId} AND kind = 'personal'
+          ON CONFLICT DO NOTHING`,
+    ),
+    db
+      .select({ id: boards.id })
+      .from(boards)
+      .where(and(eq(boards.ownerId, userId), eq(boards.kind, "personal"))),
+  ]);
+  const id = found[0]?.id;
+  if (!id) throw new Error("A personal board should exist by now.");
   return id;
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@cloudysuite/app-email",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./src/test-support.ts"
+  },
+  "dependencies": {
+    "@cloudysuite/access": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.5"
+  }
+}

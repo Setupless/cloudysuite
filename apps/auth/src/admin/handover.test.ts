@@ -1,5 +1,18 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { CalendarId, DriveId, UserId } from "../../../../src/db/schema";
+import type {
+  BoardId,
+  CalendarId,
+  DriveId,
+  UserId,
+} from "../../../../src/db/schema";
+import {
+  ALICE,
+  BOB,
+  create,
+  createBoardTest,
+  MARKETING,
+  newTaskId,
+} from "../../../tasks/src/test-support";
 import {
   appointNextManagers,
   claimDrive,
@@ -23,6 +36,11 @@ const THEIR_CALENDAR = "55555555-5555-4555-8555-555555555555" as CalendarId;
 const CALENDAR_ALONE = "66666666-6666-4666-8666-666666666666" as CalendarId;
 const WITH_AN_EDITOR = "77777777-7777-4777-8777-777777777777" as CalendarId;
 const ALL_VIEWERS = "88888888-8888-4888-8888-888888888888" as CalendarId;
+
+const THEIR_BOARD = "99999999-9999-4999-8999-999999999999" as BoardId;
+const BOARD_ALONE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as BoardId;
+const BOARD_WITH_AN_EDITOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" as BoardId;
+const BOARD_ALL_VIEWERS = "cccccccc-cccc-4ccc-8ccc-cccccccccccc" as BoardId;
 
 async function person(email: string, name: string) {
   const { user } = await kit.auth.api.createUser({
@@ -67,6 +85,35 @@ const calendar = (id: CalendarId) =>
     }[]
   )[0];
 
+const boardAccess = (boardId: BoardId) =>
+  kit.rows(
+    `SELECT user_id, role FROM board_access WHERE board_id = '${boardId}' ORDER BY user_id`,
+  ) as { user_id: string; role: string }[];
+
+const rolesOnBoard = (boardId: BoardId) =>
+  Object.fromEntries(
+    boardAccess(boardId).map(({ user_id, role }) => [user_id, role]),
+  );
+
+const board = (id: BoardId) =>
+  (
+    kit.rows(
+      `SELECT kind, name, owner_id, colour FROM boards WHERE id = '${id}'`,
+    ) as {
+      kind: string;
+      name: string | null;
+      owner_id: string | null;
+      colour: number;
+    }[]
+  )[0];
+
+const ALL_BOARDS = [
+  THEIR_BOARD,
+  BOARD_ALONE,
+  BOARD_WITH_AN_EDITOR,
+  BOARD_ALL_VIEWERS,
+];
+
 const everything = () =>
   JSON.stringify([
     drive(MY_FILES),
@@ -75,6 +122,8 @@ const everything = () =>
     ...[THEIR_CALENDAR, CALENDAR_ALONE, WITH_AN_EDITOR, ALL_VIEWERS].map(
       calendarAccess,
     ),
+    ...ALL_BOARDS.map(board),
+    ...ALL_BOARDS.map(boardAccess),
   ]);
 
 beforeEach(async () => {
@@ -136,6 +185,34 @@ beforeEach(async () => {
   join(ALL_VIEWERS, ben, "manager", 1);
   join(ALL_VIEWERS, cam, "viewer", 2);
   join(ALL_VIEWERS, ada, "viewer", 3);
+
+  kit.sqlite.run(
+    "INSERT INTO boards (id, kind, colour, owner_id) VALUES (?, 'personal', 4, ?)",
+    [THEIR_BOARD, ben],
+  );
+  for (const [id, name] of [
+    [BOARD_ALONE, "Ben's chores"],
+    [BOARD_WITH_AN_EDITOR, "Launch"],
+    [BOARD_ALL_VIEWERS, "Rota"],
+  ] as const) {
+    kit.sqlite.run(
+      "INSERT INTO boards (id, kind, name, colour) VALUES (?, 'team', ?, 1)",
+      [id, name],
+    );
+  }
+  const onBoard = (id: string, userId: string, role: string, at: number) =>
+    kit.sqlite.run(
+      "INSERT INTO board_access (board_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
+      [id, userId, role, at],
+    );
+  onBoard(THEIR_BOARD, ben, "manager", 1);
+  onBoard(BOARD_ALONE, ben, "manager", 1);
+  onBoard(BOARD_WITH_AN_EDITOR, ben, "manager", 1);
+  onBoard(BOARD_WITH_AN_EDITOR, cam, "viewer", 2);
+  onBoard(BOARD_WITH_AN_EDITOR, ada, "editor", 3);
+  onBoard(BOARD_ALL_VIEWERS, ben, "manager", 1);
+  onBoard(BOARD_ALL_VIEWERS, cam, "viewer", 2);
+  onBoard(BOARD_ALL_VIEWERS, ada, "viewer", 3);
 });
 
 async function remove(personId: UserId) {
@@ -150,6 +227,7 @@ test("the dialog learns what would have nobody", async () => {
   expect(toHand.get(ben)).toEqual({
     files: { personal: true, aloneIn: 1, managedAlone: 1 },
     calendars: { personal: true, aloneIn: 1, managedAlone: 2 },
+    boards: { personal: true, aloneIn: 1, managedAlone: 2 },
   });
   expect(toHand.get(cam)).toBeUndefined();
 });
@@ -197,13 +275,19 @@ test("a team folder with another manager gets no new manager", async () => {
   expect(access(MANAGED)).toContainEqual({ user_id: ada, role: "editor" });
 });
 
-test("with nothing to hand over, their team folders and calendars still get a manager", async () => {
+test("with nothing to hand over, their team folders, calendars, and boards still get a manager", async () => {
   await appointNextManagers(kit.database, ben);
   expect(access(MANAGED)).toContainEqual({ user_id: ada, role: "manager" });
   expect(calendarAccess(WITH_AN_EDITOR)).toContainEqual({
     user_id: ada,
     role: "manager",
   });
+  expect(boardAccess(BOARD_WITH_AN_EDITOR)).toContainEqual({
+    user_id: ada,
+    role: "manager",
+  });
+  expect(board(THEIR_BOARD)?.kind).toBe("personal");
+  expect(boardAccess(BOARD_ALONE)).toEqual([{ user_id: ben, role: "manager" }]);
   // Not My files, and not the folder only they were on.
   expect(drive(MY_FILES)?.kind).toBe("personal");
   expect(access(ALONE)).toEqual([{ user_id: ben, role: "manager" }]);
@@ -245,12 +329,19 @@ test("a failure part way leaves nothing changed, and the repeat finishes it", as
   expect(calendarAccess(CALENDAR_ALONE)).toEqual([
     { user_id: ben, role: "manager" },
   ]);
+  expect(board(THEIR_BOARD)?.kind).toBe("personal");
+  expect(boardAccess(BOARD_ALONE)).toEqual([{ user_id: ben, role: "manager" }]);
 
   kit.sqlite.run("DROP TRIGGER refuse_promotion");
   await handOver(kit.database, ben, "Ben Okafor", cam);
   expect(drive(MY_FILES)?.kind).toBe("team");
   expect(access(ALONE)).toContainEqual({ user_id: cam, role: "manager" });
   expect(calendar(THEIR_CALENDAR)?.kind).toBe("team");
+  expect(board(THEIR_BOARD)?.kind).toBe("team");
+  expect(boardAccess(BOARD_ALONE)).toContainEqual({
+    user_id: cam,
+    role: "manager",
+  });
 });
 
 test("their calendar arrives as a team calendar named after them, and managed by the recipient", async () => {
@@ -292,6 +383,97 @@ test("each team calendar they managed alone gets a manager, the way a team folde
 test("their own calendar's name fits the longest name a calendar can have", async () => {
   await handOver(kit.database, ben, "B".repeat(300), cam);
   expect(calendar(THEIR_CALENDAR)?.name).toHaveLength(100);
+});
+
+test("their private tasks arrive as a team board named after them, and managed by the recipient", async () => {
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  await remove(ben);
+  const handed = board(THEIR_BOARD);
+  expect(handed).toMatchObject({
+    kind: "team",
+    name: "Ben Okafor's tasks",
+    owner_id: null,
+  });
+  // A team board never takes the private tasks' colour.
+  expect([1, 2, 3, 5, 6]).toContain(handed?.colour ?? 0);
+  expect(boardAccess(THEIR_BOARD)).toEqual([{ user_id: cam, role: "manager" }]);
+});
+
+test("each team board they managed alone gets a manager, the way a team calendar does", async () => {
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  await remove(ben);
+  // Nobody else was on it, so it goes to the person chosen.
+  expect(boardAccess(BOARD_ALONE)).toEqual([{ user_id: cam, role: "manager" }]);
+  expect(board(BOARD_ALONE)?.name).toBe("Ben's chores");
+  // Can edit counts first, even for someone who joined later.
+  expect(rolesOnBoard(BOARD_WITH_AN_EDITOR)).toEqual({
+    [ada]: "manager",
+    [cam]: "viewer",
+  });
+  // With only Can view left, whoever has been on it longest.
+  expect(rolesOnBoard(BOARD_ALL_VIEWERS)).toEqual({
+    [ada]: "viewer",
+    [cam]: "manager",
+  });
+  expect(
+    kit.rows(`SELECT 1 FROM board_access WHERE user_id = '${ben}'`),
+  ).toEqual([]);
+});
+
+test("their own board's name fits the longest name a board can have", async () => {
+  await handOver(kit.database, ben, "B".repeat(300), cam);
+  expect(board(THEIR_BOARD)?.name).toHaveLength(100);
+});
+
+test("someone who never opened Tasks hands over no board, and the rest still goes", async () => {
+  kit.sqlite.run("DELETE FROM boards WHERE id = ?", [THEIR_BOARD]);
+  const toHand = await readToHand(kit.database);
+  expect(toHand.get(ben)?.boards.personal).toBe(false);
+  await handOver(kit.database, ben, "Ben Okafor", cam);
+  expect(kit.count("boards")).toBe(3);
+  expect(
+    kit.rows("SELECT 1 FROM boards WHERE name = 'Ben Okafor''s tasks'"),
+  ).toEqual([]);
+  expect(drive(MY_FILES)?.kind).toBe("team");
+  expect(calendar(THEIR_CALENDAR)?.kind).toBe("team");
+});
+
+test("the recipient finds the private tasks on the new team board", async () => {
+  const tasks = createBoardTest();
+  const theirs = await tasks.personalBoardOf(ALICE);
+  const own = await tasks.as(ALICE, theirs);
+  const id = newTaskId();
+  await own.change(create(id, { title: "Renew the lease" }));
+
+  await handOver(tasks.d1, ALICE.id, ALICE.name, BOB.id);
+  tasks.directory.run("DELETE FROM user WHERE id = ?", [ALICE.id]);
+
+  const handed = await tasks.as(BOB, theirs);
+  expect(handed.kind).toBe("team");
+  expect(handed.role).toBe("manager");
+  expect((await handed.listTasks()).map((task) => task.title)).toEqual([
+    "Renew the lease",
+  ]);
+  // Nobody is assigned to a private task, so it lists on the board, not in My tasks.
+  expect(await handed.listMyTasks(0)).toEqual([]);
+});
+
+test("a task assigned to them on a team board keeps their name", async () => {
+  const tasks = createBoardTest();
+  tasks.join(BOB, "editor");
+  const id = newTaskId();
+  await (await tasks.as(ALICE)).change(create(id, { assignee: ALICE }));
+
+  await handOver(tasks.d1, ALICE.id, ALICE.name, BOB.id);
+  tasks.directory.run("DELETE FROM user WHERE id = ?", [ALICE.id]);
+
+  const [task] = await (await tasks.as(BOB)).listTasks();
+  expect(task?.assignee).toEqual(ALICE);
+  expect(
+    tasks.directory
+      .query("SELECT user_id, role FROM board_access WHERE board_id = ?")
+      .all(MARKETING),
+  ).toEqual([{ user_id: BOB.id, role: "manager" }]);
 });
 
 // Storage limits arrive in their own change. Once the column exists this test runs for

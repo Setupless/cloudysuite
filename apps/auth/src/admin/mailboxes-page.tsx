@@ -91,8 +91,11 @@ function MailboxCard({
       <h3 className="text-sm font-semibold">Addresses</h3>
       <ul className="flex flex-col gap-1">
         {mailbox.addresses.map(({ address, kind }) => (
-          <li key={address} className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate">
+          <li
+            key={address}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+          >
+            <span className="min-w-0 grow">
               {address}
               {kind === "primary" && (
                 <span className="text-secondary"> (main address)</span>
@@ -145,8 +148,11 @@ function MailboxCard({
       )}
       <ul className="flex flex-col gap-1">
         {mailbox.access.map((access) => (
-          <li key={access.userId} className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate">
+          <li
+            key={access.userId}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+          >
+            <span className="min-w-0 grow">
               {access.name}{" "}
               <span className="text-secondary">
                 ({access.role === "manager" ? "manager" : "member"})
@@ -239,7 +245,7 @@ function NewMailboxSection({ view }: { view: MailboxesView }) {
       description="A shared mailbox, such as support@, can be opened by several people. A personal mailbox belongs to one person."
     >
       <form className="flex flex-col gap-3" onSubmit={submit}>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant={kind === "shared" ? "action" : "quiet"}
             icon={IconUsers}

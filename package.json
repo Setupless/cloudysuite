@@ -23,6 +23,7 @@
     "@cloudysuite/calendar": "workspace:*",
     "@cloudysuite/mail": "workspace:*",
     "@cloudysuite/storage": "workspace:*",
+    "@cloudysuite/tasks": "workspace:*",
     "@cloudysuite/transfer": "workspace:*",
     "@cloudysuite/ui": "workspace:*",
     "@tabler/icons-react": "3.50.0",

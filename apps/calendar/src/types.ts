@@ -227,9 +227,13 @@ export type NoDatesLeft = {
   needs: Exclude<RepeatEnd, { kind: "never" }>;
 };
 
+// A deleted team calendar refuses every change while D1 still lists it.
+export type CalendarGone = { status: "calendarGone" };
+
 export type CreateResult =
   | CreatedEvent
   | { status: "noAccess" }
+  | CalendarGone
   // Someone asked for can't be invited, because they were removed or suspended.
   | { status: "notInvitable" }
   | NoDatesLeft
@@ -242,6 +246,7 @@ export type ChangeResult =
   // Organised somewhere else, or a repeat from outside, which can only be removed.
   | { status: "readOnly" }
   | { status: "gone" }
+  | CalendarGone
   | { status: "notInvitable" }
   // Who's invited changes from a date onwards, or for every date, never for one.
   | { status: "peopleForOneDate" }
@@ -396,6 +401,8 @@ export const READ_ONLY_MESSAGE =
   "This event was set up somewhere else, so it can't be changed here. You can still remove it from your calendar.";
 export const EVENT_GONE_MESSAGE =
   "This event isn't on the calendar any more. Someone may have changed or removed it.";
+export const CALENDAR_GONE_MESSAGE =
+  "This calendar has been deleted, so it can't be changed.";
 export const ONLY_MANAGERS_MESSAGE =
   "Only a manager of this calendar can do that.";
 export const LAST_MANAGER_MESSAGE =

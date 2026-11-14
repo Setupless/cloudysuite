@@ -1,9 +1,17 @@
 import {
   dehydrate,
+  type FetchQueryOptions,
   infiniteQueryOptions,
+  MutationCache,
+  noop,
+  QueryCache,
   QueryClient,
+  type QueryExecuteOptions,
+  type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
+import { answerRefusals } from "@cloudysuite/auth/session";
+import { isAppOffRefusal } from "../../../src/routing";
 import { MailFailure, NotSavedOnDevice } from "./failure";
 import {
   findThreadOfMessage,
@@ -14,6 +22,8 @@ import {
   searchThreads,
 } from "./functions";
 import { type MailListing, parseViewParam, viewParam } from "./model";
+import { isPageHidden } from "./pwa/connectivity";
+import { clearDevice } from "./pwa/device";
 import {
   isOffline,
   OFFLINE_ACTION_REFUSED,
@@ -50,6 +60,7 @@ export async function asMailFailure(thrown: unknown): Promise<MailFailure> {
   return new MailFailure(
     thrown.status,
     typeof body?.message === "string" ? body.message : SOMETHING_WENT_WRONG,
+    isAppOffRefusal(thrown, "mail"),
   );
 }
 
@@ -196,36 +207,112 @@ export const isRefusal = (error: Error): boolean =>
 export const retryUnlessRefused = (failures: number, error: Error): boolean =>
   !isRefusal(error) && !(error instanceof NotSavedOnDevice) && failures < 2;
 
+// An expired session surfaces here first. What was saved for this person goes first,
+// because the next person to use this browser may be someone else. The reload reaches
+// the route's sign-in check, which sends the person to sign in and back again.
+const refused = answerRefusals(MailFailure, () => {
+  void clearDevice().finally(() => window.location.reload());
+});
+
+// A click that reads something no page shows, such as the rules before a label is
+// deleted, has a person waiting on the answer as much as a page does. A hover may have
+// started the same request, so the click answers the refusal itself.
+export async function fetchForClick<Data, Key extends QueryKey>(
+  client: QueryClient,
+  query: FetchQueryOptions<Data, Error, Data, Key>,
+): Promise<Data> {
+  try {
+    return await client.fetchQuery(query);
+  } catch (thrown) {
+    if (thrown instanceof Error) refused.notice(thrown, thrown, false);
+    throw thrown;
+  }
+}
+
+function createMailQueryClient() {
+  return new QueryClient({
+    // A click that reads without showing goes through `fetchForClick`.
+    queryCache: new QueryCache({ onError: refused.query }),
+    mutationCache: new MutationCache({ onError: refused.mutation }),
+    defaultOptions: {
+      // Offline, a read goes to this device's saved mail and an action is refused
+      // out loud. Query's default would quietly pause both, and run the actions later.
+      mutations: { networkMode: "always" },
+      queries: {
+        networkMode: "always",
+        // Only long enough that the mail in the first HTML isn't fetched again as the
+        // page wakes up. Opening a folder or a conversation after that asks the server.
+        staleTime: 2_000,
+        retry: retryUnlessRefused,
+        refetchOnWindowFocus: true,
+        // Query only stops its timed refresh while hidden. A request from a tab nobody
+        // is looking at would renew the session, so reconnecting waits for their return.
+        refetchOnReconnect: () => !isPageHidden(),
+      },
+    },
+  });
+}
+
+let browserClient: QueryClient | undefined;
+
+// The browser keeps one for the page, which the route loaders fill and the screens read.
+// The server makes a new one each time: a shared one would leak one person's mail into
+// the next person's page.
+export function mailQueryClient(): QueryClient {
+  if (import.meta.env.SSR) return createMailQueryClient();
+  browserClient ??= createMailQueryClient();
+  return browserClient;
+}
+
+// In the browser a navigation starts the page's first requests and doesn't wait for them,
+// so the page draws its own loading state meanwhile. Only what the page doesn't hold yet
+// is asked for, so preloading a page twice asks once: what it holds shows at once, and
+// the page's own query asks again as it opens.
+function startInBrowser<Data, Key extends QueryKey>(
+  query: QueryExecuteOptions<Data, Error, Data, Data, Key>,
+) {
+  void mailQueryClient()
+    .query({ ...query, staleTime: "static" })
+    .catch(noop);
+  return undefined;
+}
+
 // The first HTML holds the mail, so a reload shows the list and not a skeleton.
 // A failed prefetch leaves the query empty, and the page shows the failure.
 export async function prefetchMailboxes() {
-  if (!import.meta.env.SSR) return undefined;
+  if (!import.meta.env.SSR) return startInBrowser(mailboxesQuery());
   const client = new QueryClient();
   await client.prefetchQuery(mailboxesQuery());
   return dehydrate(client);
 }
 
 export async function prefetchRules(mailboxId: string) {
-  if (!import.meta.env.SSR) return undefined;
+  const query = rulesQuery(mailboxId as MailboxId);
+  if (!import.meta.env.SSR) return startInBrowser(query);
   const client = new QueryClient();
-  await client.prefetchQuery(rulesQuery(mailboxId as MailboxId));
+  await client.prefetchQuery(query);
   return dehydrate(client);
 }
 
 export async function prefetchSenders(mailboxId: string) {
-  if (!import.meta.env.SSR) return undefined;
+  const query = sendersQuery(mailboxId as MailboxId);
+  if (!import.meta.env.SSR) return startInBrowser(query);
   const client = new QueryClient();
-  await client.prefetchQuery(sendersQuery(mailboxId as MailboxId));
+  await client.prefetchQuery(query);
   return dehydrate(client);
 }
 
 export async function prefetchThreads(mailboxId: string, viewRaw: string) {
-  if (!import.meta.env.SSR) return undefined;
   const view = parseViewParam(viewRaw);
   if (!view) return undefined;
+  const query = threadsQuery(mailboxId as MailboxId, view);
+  if (!import.meta.env.SSR) {
+    void mailQueryClient()
+      .infiniteQuery({ ...query, staleTime: "static" })
+      .catch(noop);
+    return undefined;
+  }
   const client = new QueryClient();
-  await client.prefetchInfiniteQuery(
-    threadsQuery(mailboxId as MailboxId, view),
-  );
+  await client.prefetchInfiniteQuery(query);
   return dehydrate(client);
 }

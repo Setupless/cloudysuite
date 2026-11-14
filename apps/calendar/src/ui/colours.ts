@@ -1,12 +1,6 @@
+import { teamColourFill } from "@cloudysuite/ui";
+
 // Written out in full, because Tailwind only makes the classes it finds in the source.
-const FILLS = [
-  "bg-avatar-1",
-  "bg-avatar-2",
-  "bg-avatar-3",
-  "bg-avatar-4",
-  "bg-avatar-5",
-  "bg-avatar-6",
-];
 const BORDERS = [
   "border-avatar-1",
   "border-avatar-2",
@@ -24,19 +18,8 @@ const TINTS = [
   "bg-event-6",
 ];
 
-export const calendarFill = (colour: number) =>
-  FILLS[(colour - 1) % FILLS.length];
+export const calendarFill = teamColourFill;
 export const calendarBorder = (colour: number) =>
   BORDERS[(colour - 1) % BORDERS.length];
 export const calendarTint = (colour: number) =>
   TINTS[(colour - 1) % TINTS.length];
-
-// In the order of the avatar roles, so colour n is COLOUR_NAMES[n - 1].
-export const COLOUR_NAMES = [
-  "Blue",
-  "Purple",
-  "Green",
-  "Brown",
-  "Slate",
-  "Red",
-] as const;

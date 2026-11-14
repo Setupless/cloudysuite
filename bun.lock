@@ -9,6 +9,7 @@
         "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/storage": "workspace:*",
+        "@cloudysuite/tasks": "workspace:*",
         "@cloudysuite/transfer": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
@@ -54,10 +55,12 @@
       "name": "@cloudysuite/calendar",
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/mail": "workspace:*",
         "@cloudysuite/object-sql": "workspace:*",
         "@cloudysuite/search": "workspace:*",
+        "@cloudysuite/tasks": "workspace:*",
         "@cloudysuite/ui": "workspace:*",
         "@tabler/icons-react": "3.50.0",
         "@tanstack/react-hotkeys": "0.20.1",
@@ -73,6 +76,7 @@
       "name": "@cloudysuite/mail",
       "dependencies": {
         "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
         "@cloudysuite/auth": "workspace:*",
         "@cloudysuite/calendar": "workspace:*",
         "@cloudysuite/jev": "workspace:*",
@@ -108,9 +112,35 @@
         "react": "19.3.1",
       },
     },
+    "apps/tasks": {
+      "name": "@cloudysuite/tasks",
+      "dependencies": {
+        "@cloudysuite/access": "workspace:*",
+        "@cloudysuite/app-email": "workspace:*",
+        "@cloudysuite/auth": "workspace:*",
+        "@cloudysuite/mail": "workspace:*",
+        "@cloudysuite/object-sql": "workspace:*",
+        "@cloudysuite/search": "workspace:*",
+        "@cloudysuite/ui": "workspace:*",
+        "@tabler/icons-react": "3.50.0",
+        "@tanstack/react-hotkeys": "0.20.1",
+        "@tanstack/react-query": "5.105.0",
+        "@tanstack/react-router": "1.170.46",
+        "@tanstack/react-start": "1.169.4",
+        "drizzle-orm": "1.0.0-rc.5",
+        "react": "19.3.1",
+      },
+    },
     "packages/access": {
       "name": "@cloudysuite/access",
       "dependencies": {
+        "drizzle-orm": "1.0.0-rc.5",
+      },
+    },
+    "packages/app-email": {
+      "name": "@cloudysuite/app-email",
+      "dependencies": {
+        "@cloudysuite/access": "workspace:*",
         "drizzle-orm": "1.0.0-rc.5",
       },
     },
@@ -133,6 +163,7 @@
       "name": "@cloudysuite/ui",
       "dependencies": {
         "@tabler/icons-react": "3.50.0",
+        "@tanstack/react-router": "1.170.46",
         "react": "19.3.1",
       },
     },
@@ -208,6 +239,8 @@
 
     "@cloudysuite/access": ["@cloudysuite/access@workspace:packages/access"],
 
+    "@cloudysuite/app-email": ["@cloudysuite/app-email@workspace:packages/app-email"],
+
     "@cloudysuite/auth": ["@cloudysuite/auth@workspace:apps/auth"],
 
     "@cloudysuite/calendar": ["@cloudysuite/calendar@workspace:apps/calendar"],
@@ -221,6 +254,8 @@
     "@cloudysuite/search": ["@cloudysuite/search@workspace:packages/search"],
 
     "@cloudysuite/storage": ["@cloudysuite/storage@workspace:apps/storage"],
+
+    "@cloudysuite/tasks": ["@cloudysuite/tasks@workspace:apps/tasks"],
 
     "@cloudysuite/transfer": ["@cloudysuite/transfer@workspace:packages/transfer"],
 

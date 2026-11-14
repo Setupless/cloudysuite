@@ -9,6 +9,8 @@ const OFF_MESSAGE: Record<ToggleableApp, string> = {
     "An admin turned Storage off. Your files are safe, and they come back when it's turned on again.",
   calendar:
     "An admin turned Calendar off. Your events are safe, and they come back when it's turned on again.",
+  tasks:
+    "An admin turned Tasks off. Your tasks are safe, and they come back when it's turned on again.",
 };
 
 export async function isAppOff(

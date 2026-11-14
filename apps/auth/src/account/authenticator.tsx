@@ -31,7 +31,7 @@ function BackupCodes({
         Save these backup codes somewhere safe. Each one works once, and they
         get you in if you lose your phone. We won't show them again.
       </p>
-      <ul className="grid grid-cols-2 gap-1 rounded bg-field p-3 font-mono text-sm">
+      <ul className="grid grid-cols-1 gap-1 rounded bg-field p-3 font-mono text-sm min-[22rem]:grid-cols-2">
         {codes.map((code) => (
           <li key={code}>{code}</li>
         ))}
@@ -91,7 +91,7 @@ export function AuthenticatorSetup({
             hint="Enter it to confirm that this is you."
             required
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               type="submit"
               variant="action"
@@ -210,7 +210,7 @@ function TurnOffForm({ onClose }: { onClose: () => void }) {
         hint="Your backup codes will stop working too."
         required
       />
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="danger" pending={pending !== null}>
           Turn off authenticator app
         </Button>

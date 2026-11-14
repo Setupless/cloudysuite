@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import type { UserId } from "@cloudysuite/access";
 import { testWorkerEnv } from "../../../../src/db/test-database";
 import { createKit, type Kit, signIn } from "../../../auth/src/admin/test-kit";
@@ -6,9 +6,17 @@ import { createTestEnv, MAILBOX_A } from "../test-support";
 import type { MailboxId } from "../types";
 import { emptyLedger } from "./offline-model";
 
+// Bun shares loaded modules across test files, so a module mocked here stays mocked for
+// the files after this one. Each mock keeps the real module's other exports, and
+// afterAll puts the real module back.
+const realDeviceStore = { ...(await import("./device-store")) };
+const realFunctions = { ...(await import("../functions")) };
+const realSavedFunctions = { ...(await import("./functions")) };
+
 // IndexedDB isn't in Bun, so this stands in for what the device holds, by mailbox.
 const device = new Map<MailboxId, string>();
 mock.module("./device-store", () => ({
+  ...realDeviceStore,
   saveMailboxes: async () => true,
   savedMailboxIds: async () => [...device.keys()],
   saveLists: async () => true,
@@ -31,6 +39,7 @@ let whileSyncing: () => void;
 // The server's answers, with its real refusals: each mailbox call goes through the
 // same check as a Mail server function.
 mock.module("../functions", () => ({
+  ...realFunctions,
   listMailboxes: async () => {
     whileSyncing();
     return [{ id: MAILBOX_A }];
@@ -41,8 +50,15 @@ mock.module("../functions", () => ({
   },
 }));
 mock.module("./functions", () => ({
+  ...realSavedFunctions,
   getSavedThreadBatch: async () => ({ threads: [], bodies: [] }),
 }));
+
+afterAll(() => {
+  mock.module("./device-store", () => realDeviceStore);
+  mock.module("../functions", () => realFunctions);
+  mock.module("./functions", () => realSavedFunctions);
+});
 
 const { saveMailForOffline } = await import("./sync");
 
